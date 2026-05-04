@@ -1,0 +1,47 @@
+Chatz — Railway (โดเมน *.up.railway.app หรือ custom domain)
+================================================================
+
+สิ่งที่อัปโหลด / เชื่อมกับ Railway
+---------------------------------
+ใช้ทั้ง repository โปรเจกต์ Chatz (รากที่มี package.json)
+ไม่ใช่แค่โฟลเดอร์ deploy-domian อย่างเดียว — โฟลเดอร์นี้มีแค่คู่มือ (เล็ก ไม่มี node_modules)
+
+ไฟล์ config ที่รากโปรเจกต์ (มีอยู่แล้ว)
+---------------------------------------
+  Dockerfile       → build แบบ multi-stage (ไม่พึ่ง Railpack)
+  .dockerignore    → ลด context ไม่ส่ง node_modules / .env
+  railway.toml     → builder = DOCKERFILE + start + healthcheck /api/health
+
+ถ้าใน Railway ขึ้น "Apply … changes" / Deploy ม่วง
+------------------------------------------
+ต้องกด **Apply** แล้วกด **Deploy** ให้การตั้งค่าใน dashboard ถูกใช้จริง — ไม่งั้นจะไม่มี active deployment
+
+repo บน GitHub ต้องมีไฟล์ชุดนี้แล้ว (push จากเครื่องคุณ)
+------------------------------------------
+ถ้า Railway ชี้ไป `…/Chatz01` ให้ push โค้ดล่าสุด (รวม Dockerfile + railway.toml) ไป branch ที่ service ใช้ (มักเป็น main)
+
+ขั้นตอนสั้นๆ
+------------
+1. Railway → New Project → Deploy from GitHub → เลือก repo (เช่น Chatz01)
+2. Variables (ตัวอย่าง — ใส่เฉพาะที่คุณใช้จริง):
+
+   PUBLIC_BASE_URL=https://<ชื่อเซอร์วิส>.up.railway.app
+   (จำเป็นถ้าใช้ Connect Facebook / OAuth — ให้ตรง URL สาธารณะ ไม่มี / ท้าย)
+
+   LINE_CHANNEL_SECRET=...
+   LINE_CHANNEL_ACCESS_TOKEN=...
+   FB_VERIFY_TOKEN=...
+   FB_APP_ID=...
+   FB_APP_SECRET=...
+   FB_PAGE_ACCESS_TOKEN=...   (ถ้าไม่ใช้ OAuth เก็บ token ใน env)
+   (ถ้ามี) FB_GRAPH_VERSION=v21.0
+
+3. Generate Domain ใน Railway แล้วอัปเดต PUBLIC_BASE_URL ให้ตรงโดเมนนั้น
+4. Redeploy หลังแก้ env
+
+Webhook หลังมีโดเมน (แทน trycloudflare)
+----------------------------------------
+  LINE:  https://<โดเมน>/api/line/webhook
+  Meta:  https://<โดเมน>/api/fb/webhook
+
+ห้าม commit .env ขึ้น git — ตั้งค่าใน Railway Variables เท่านั้น

@@ -1,0 +1,35 @@
+{
+  "name": "chatz",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "npm run dev:ui",
+    "dev:ui": "vite --port 8080 --host",
+    "dev:server": "node --watch server/index.js",
+    "start": "node server/index.js",
+    "start:server": "node server/index.js",
+    "tunnel": "node scripts/tunnel-line.mjs",
+    "tunnel:line": "node scripts/tunnel-line.mjs",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --port 8080"
+  },
+  "dependencies": {
+    "@line/bot-sdk": "^11.0.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.14",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}
