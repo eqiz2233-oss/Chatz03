@@ -92,6 +92,13 @@ export async function removePage(pageId) {
   return true;
 }
 
+/** Clear all connected Pages (used by Disconnect + Meta data-deletion). */
+export async function clearAllPages() {
+  const cur = loadIntegrationsSync();
+  cur.pages.length = 0;
+  await persist();
+}
+
 /** All connected pages. */
 export function listPages() {
   return loadIntegrationsSync().pages;

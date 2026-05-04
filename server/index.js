@@ -9,7 +9,7 @@ import * as line from '@line/bot-sdk';
 import {
   loadIntegrationsSync,
   upsertPage,
-  removePage,
+  clearAllPages,
   listPages,
   findPageByPageId,
   findPageByIgId,
@@ -53,6 +53,35 @@ let fbConfigured = fbHasVerify;
 
 function refreshFbState() {
   fbHasAnyPage = listPages().length > 0 || Boolean(fbConfig.fallbackPageAccessToken);
+}
+
+function fbHasPageToken() {
+  return listPages().some((p) => Boolean(p.pageAccessToken)) || Boolean(fbConfig.fallbackPageAccessToken);
+}
+
+/** Page access token: first OAuth-connected Page, else .env fallback. */
+function primaryPageAccessToken() {
+  const fromPage = listPages().find((p) => p.pageAccessToken)?.pageAccessToken;
+  return String(fromPage || fbConfig.fallbackPageAccessToken || '').trim();
+}
+
+/** First connected page — shape used by Settings + OAuth popup (no secrets). */
+function primaryFbPageForApi() {
+  const p = listPages()[0];
+  if (!p?.id) return null;
+  return {
+    id: p.id,
+    name: p.name,
+    category: p.category,
+    picture: typeof p.picture === 'string' ? p.picture : p.picture,
+    instagram: p.instagram || null,
+    connectedAt: p.connectedAt || null,
+  };
+}
+
+async function disconnectFb() {
+  await clearAllPages();
+  refreshFbState();
 }
 
 /** Page token resolver — returns null if we have no token for that page. */
@@ -105,10 +134,11 @@ function getOrCreateFbThread(targetId, channel = 'fb') {
   return fbThreads.get(key);
 }
 
-async function enrichFbProfile(psid, thread) {
-  if (!fbHasToken) return;
+async function enrichFbProfile(psid, thread, pageId) {
+  const tok = pageId ? tokenForPageId(String(pageId)) : primaryPageAccessToken();
+  if (!tok) return;
   try {
-    const url = `https://graph.facebook.com/${fbConfig.apiVersion}/${encodeURIComponent(psid)}?fields=name,profile_pic&access_token=${encodeURIComponent(fbConfig.pageAccessToken)}`;
+    const url = `https://graph.facebook.com/${fbConfig.apiVersion}/${encodeURIComponent(psid)}?fields=name,profile_pic&access_token=${encodeURIComponent(tok)}`;
     const r = await fetch(url);
     const d = await r.json();
     if (d?.error) {
@@ -315,12 +345,13 @@ app.get('/api/health', (_req, res) => {
     lineConversationsCount,
     lineWebhook: lineWebhookDebug,
     fbConfigured,
-    fbReplyEnabled: fbHasToken,
+    fbReplyEnabled: fbHasPageToken(),
     fbAppSecretSet: fbHasAppSecret,
     fbOauthAvailable,
-    fbConnectedPage: fbConnectedPage
-      ? { id: fbConnectedPage.id, name: fbConnectedPage.name, category: fbConnectedPage.category, picture: fbConnectedPage.picture }
-      : null,
+    fbConnectedPage: (() => {
+      const p = primaryFbPageForApi();
+      return p ? { id: p.id, name: p.name, category: p.category, picture: p.picture } : null;
+    })(),
     fbThreads: fbThreads.size,
     fbConversationsCount,
     fbWebhook: fbWebhookDebug,
@@ -591,7 +622,7 @@ app.post(
           // FB Page DMs use Graph user-profile lookup; IG profile lookup needs a different
           // endpoint (skip enrichment for IG for now — name will fall back to "IG • <id-tail>").
           if (!thread.displayName && !isInstagram) {
-            void enrichFbProfile(psid, thread);
+            void enrichFbProfile(psid, thread, entry.id);
           }
         }
       }
@@ -640,9 +671,10 @@ async function sendLineMessage({ conversationId, text, asAi }) {
 }
 
 async function sendMetaMessage({ conversationId, text, asAi }) {
-  if (!fbHasToken) {
+  if (!fbHasPageToken()) {
     return { status: 503, error: 'No connected Page. Connect Facebook in Settings → Integrations.' };
   }
+  const pageToken = primaryPageAccessToken();
   const body = typeof text === 'string' ? text.trim() : '';
   if (!conversationId || !body) return { status: 400, error: 'conversationId and text are required' };
   const m = /^(fb|ig):user:(.+)$/.exec(String(conversationId));
@@ -651,7 +683,7 @@ async function sendMetaMessage({ conversationId, text, asAi }) {
   const targetId = m[2];
   const sender = asAi ? 'ai' : 'agent';
   try {
-    const url = `https://graph.facebook.com/${fbConfig.apiVersion}/me/messages?access_token=${encodeURIComponent(fbConfig.pageAccessToken)}`;
+    const url = `https://graph.facebook.com/${fbConfig.apiVersion}/me/messages?access_token=${encodeURIComponent(pageToken)}`;
     const r = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -686,54 +718,9 @@ app.post('/api/messages/send', express.json({ limit: '50kb' }), async (req, res)
 });
 
 app.post('/api/fb/send', express.json({ limit: '50kb' }), async (req, res) => {
-  if (!fbHasToken) {
-    return res.status(503).json({ error: 'No connected Page. Connect Facebook in Settings → Integrations.' });
-  }
-  const { conversationId, text, asAi } = req.body || {};
-  const body = typeof text === 'string' ? text.trim() : '';
-  if (!conversationId || !body) {
-    return res.status(400).json({ error: 'conversationId and text are required' });
-  }
-  // Accept both fb:user:<PSID> and ig:user:<IGSID>. The Page Access Token works for both
-  // because the connected IG Business account is linked to the same Page.
-  const m = /^(fb|ig):user:(.+)$/.exec(String(conversationId));
-  if (!m) {
-    return res.status(400).json({ error: 'invalid conversationId (expected fb:user:<PSID> or ig:user:<IGSID>)' });
-  }
-  const channel = m[1]; // 'fb' | 'ig'
-  const targetId = m[2];
-  const sender = asAi ? 'ai' : 'agent';
-  try {
-    const url = `https://graph.facebook.com/${fbConfig.apiVersion}/me/messages?access_token=${encodeURIComponent(fbConfig.pageAccessToken)}`;
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        recipient: { id: targetId },
-        messaging_type: 'RESPONSE',
-        message: { text: body },
-      }),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok || data?.error) {
-      const msg = data?.error?.message || `HTTP ${r.status}`;
-      console.error(`${channel.toUpperCase()} send failed:`, msg);
-      return res.status(502).json({ error: msg });
-    }
-    const thread = getOrCreateFbThread(targetId, channel);
-    const now = new Date().toISOString();
-    thread.messages.push({
-      id: data?.message_id || crypto.randomUUID(),
-      receivedAt: now,
-      sender,
-      text: body,
-    });
-    thread.updatedAt = now;
-    return res.json({ ok: true });
-  } catch (e) {
-    console.error('FB/IG send exception:', e?.message || e);
-    return res.status(502).json({ error: String(e?.message || e) });
-  }
+  const result = await sendMetaMessage(req.body || {});
+  if (result.status >= 400) return res.status(result.status).json({ error: result.error });
+  return res.json({ ok: true });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -774,9 +761,10 @@ function publicBaseUrl(req) {
 const fbOauthStates = new Map();
 
 app.get('/api/fb/integration/status', (_req, res) => {
+  const page = primaryFbPageForApi();
   res.json({
-    connected: fbHasToken && Boolean(fbConnectedPage),
-    page: fbConnectedPage,
+    connected: fbHasPageToken() && Boolean(page),
+    page,
     oauthAvailable: fbOauthAvailable,
     appId: fbConfig.appId || null,
     needsAppSecret: !fbHasAppSecret,
@@ -999,20 +987,19 @@ app.post('/api/fb/integration/connect', express.json({ limit: '20kb' }), async (
         .status(502)
         .json({ error: `Page subscribe failed: ${subJson?.error?.message || subRes.statusText}` });
     }
-    await setFbConnection({
+    await upsertPage({
+      id,
+      name,
+      category,
+      picture,
       pageAccessToken: access_token,
-      page: {
-        id,
-        name,
-        category,
-        picture,
-        instagram: instagram
-          ? { id: instagram.id, username: instagram.username, name: instagram.name, picture: instagram.picture }
-          : null,
-        connectedAt: new Date().toISOString(),
-      },
+      instagram: instagram
+        ? { id: instagram.id, username: instagram.username, name: instagram.name, picture: instagram.picture }
+        : null,
+      connectedAt: new Date().toISOString(),
     });
-    return res.json({ ok: true, page: fbConnectedPage });
+    refreshFbState();
+    return res.json({ ok: true, page: primaryFbPageForApi() });
   } catch (e) {
     return res.status(500).json({ error: String(e?.message || e) });
   }
@@ -1094,9 +1081,9 @@ app.use((err, req, res, _next) => {
   if (!res.headersSent) res.status(500).json({ error: 'server error' });
 });
 
-app.listen(port, () => {
+app.listen(port, '0.0.0.0', () => {
   const base = (process.env.PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '') || `http://localhost:${port}`;
-  console.log(`Backend listening on http://localhost:${port}`);
+  console.log(`Backend listening on http://0.0.0.0:${port}`);
   console.log(`Public base URL : ${base}${process.env.PUBLIC_BASE_URL ? '' : '  (set PUBLIC_BASE_URL in .env for production OAuth)'}`);
   console.log(`LINE Webhook URL: ${base}/api/line/webhook`);
   console.log(`FB   Webhook URL: ${base}/api/fb/webhook`);
@@ -1105,7 +1092,7 @@ app.listen(port, () => {
   console.log(`Loaded .env from: ${path.join(__dirname, '..', '.env')}`);
   if (!hasSecret) console.warn('Missing LINE_CHANNEL_SECRET (LINE webhook + inbox sync disabled)');
   if (!hasToken) console.warn('Missing LINE_CHANNEL_ACCESS_TOKEN (LINE push + profile disabled)');
-  if (!fbHasToken) console.warn('No connected Page yet — user must click Connect Facebook in Settings.');
+  if (!fbHasPageToken()) console.warn('No connected Page yet — user must click Connect Facebook in Settings.');
   if (!fbHasVerify) console.warn('Missing FB_VERIFY_TOKEN (FB webhook subscription will fail)');
   if (!fbHasAppSecret) console.warn('Missing FB_APP_SECRET (FB webhook signature check disabled — NOT recommended for production)');
   if (!fbConfig.appId) console.warn('Missing FB_APP_ID (Connect Facebook button will be disabled)');
