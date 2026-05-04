@@ -238,9 +238,10 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
   const handleSend = async (text: string, sender: 'agent' | 'ai') => {
     if (!active) return;
 
-    const isLineRemote = active.id.startsWith('line:');
-    if (isLineRemote) {
-      const res = await fetch('/api/line/send', {
+    const isLine = active.id.startsWith('line:');
+    const isMeta = active.id.startsWith('fb:') || active.id.startsWith('ig:');
+    if (isLine || isMeta) {
+      const res = await fetch('/api/messages/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ conversationId: active.id, text, asAi: sender === 'ai' }),
@@ -253,32 +254,11 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
         if (!res.ok) errMsg = res.statusText;
       }
       if (!res.ok) {
-        window.alert(errMsg || t('chat.sendFailed'));
+        window.alert(errMsg || (isLine ? t('chat.sendFailed') : t('chat.fbSendFailed')));
         throw new Error(errMsg || 'send failed');
       }
-      await refetchLine();
-      return;
-    }
-
-    const isFbRemote = active.id.startsWith('fb:');
-    if (isFbRemote) {
-      const res = await fetch('/api/fb/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ conversationId: active.id, text, asAi: sender === 'ai' }),
-      });
-      let errMsg = '';
-      try {
-        const data = (await res.json()) as { error?: string };
-        if (!res.ok) errMsg = data?.error || res.statusText;
-      } catch {
-        if (!res.ok) errMsg = res.statusText;
-      }
-      if (!res.ok) {
-        window.alert(errMsg || t('chat.fbSendFailed'));
-        throw new Error(errMsg || 'fb send failed');
-      }
-      await refetchFb();
+      if (isLine) await refetchLine();
+      else await refetchFb();
       return;
     }
 

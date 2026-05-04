@@ -6,7 +6,14 @@ import dotenv from 'dotenv';
 import express from 'express';
 import cors from 'cors';
 import * as line from '@line/bot-sdk';
-import { loadIntegrationsSync, setFbIntegration, clearFbIntegration } from './integrations.js';
+import {
+  loadIntegrationsSync,
+  upsertPage,
+  removePage,
+  listPages,
+  findPageByPageId,
+  findPageByIgId,
+} from './integrations.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
@@ -24,40 +31,40 @@ const lineConfig = {
 const hasSecret = Boolean(lineConfig.channelSecret);
 const hasToken = Boolean(lineConfig.channelAccessToken);
 
+// App-level FB config (shared across all connected Pages).
 const fbConfig = {
-  // Page token may come from .env OR from OAuth-stored integrations.json (OAuth wins).
-  pageAccessToken:
-    (savedIntegrations?.fb?.pageAccessToken || process.env.FB_PAGE_ACCESS_TOKEN || '').trim(),
   appSecret: (process.env.FB_APP_SECRET || '').trim(),
   verifyToken: (process.env.FB_VERIFY_TOKEN || '').trim(),
   apiVersion: (process.env.FB_GRAPH_VERSION || 'v21.0').trim(),
   appId: (process.env.FB_APP_ID || '').trim(),
+  // Optional fallback Page token from .env (used if no Pages were OAuth-connected yet —
+  // mostly for initial dev setup; the OAuth flow is the recommended path).
+  fallbackPageAccessToken: (process.env.FB_PAGE_ACCESS_TOKEN || '').trim(),
 };
 
-// Connected page metadata (id/name/picture) from OAuth — null if .env-only or not connected.
-let fbConnectedPage = savedIntegrations?.fb?.page || null;
-
-// These flags get re-evaluated whenever fbConfig.pageAccessToken changes (via setFbConnection).
-let fbHasToken = Boolean(fbConfig.pageAccessToken);
-let fbHasVerify = Boolean(fbConfig.verifyToken);
-let fbHasAppSecret = Boolean(fbConfig.appSecret);
-let fbConfigured = fbHasToken && fbHasVerify;
+const fbHasVerify = Boolean(fbConfig.verifyToken);
+const fbHasAppSecret = Boolean(fbConfig.appSecret);
 const fbOauthAvailable = Boolean(fbConfig.appId && fbConfig.appSecret);
 
-async function setFbConnection({ pageAccessToken, page }) {
-  fbConfig.pageAccessToken = (pageAccessToken || '').trim();
-  fbConnectedPage = page || null;
-  fbHasToken = Boolean(fbConfig.pageAccessToken);
-  fbConfigured = fbHasToken && fbHasVerify;
-  await setFbIntegration({ pageAccessToken: fbConfig.pageAccessToken, page: fbConnectedPage });
+// `fbConfigured` now means "webhook is set up at app level" — i.e. verify token present.
+// `fbHasAnyPage` means at least one Page is connected and ready to send/receive.
+let fbHasAnyPage = listPages().length > 0 || Boolean(fbConfig.fallbackPageAccessToken);
+let fbConfigured = fbHasVerify;
+
+function refreshFbState() {
+  fbHasAnyPage = listPages().length > 0 || Boolean(fbConfig.fallbackPageAccessToken);
 }
 
-async function disconnectFb() {
-  fbConfig.pageAccessToken = '';
-  fbConnectedPage = null;
-  fbHasToken = false;
-  fbConfigured = false;
-  await clearFbIntegration();
+/** Page token resolver — returns null if we have no token for that page. */
+function tokenForPageId(pageId) {
+  const p = findPageByPageId(pageId);
+  if (p?.pageAccessToken) return p.pageAccessToken;
+  return fbConfig.fallbackPageAccessToken || null;
+}
+function tokenForIgId(igId) {
+  const p = findPageByIgId(igId);
+  if (p?.pageAccessToken) return p.pageAccessToken;
+  return fbConfig.fallbackPageAccessToken || null;
 }
 
 const eventsBuffer = [];
@@ -459,16 +466,41 @@ app.get('/api/fb/conversations', (_req, res) => {
   res.json({ conversations: arr, count: arr.length });
 });
 
+/**
+ * Meta sends hub.mode, hub.verify_token, hub.challenge as dotted query keys.
+ * Express's qs parser often nests them under req.query.hub — so req.query['hub.mode'] is undefined
+ * and verification always returns 403. Parse from the raw URL instead.
+ */
+function readMetaWebhookVerifyParams(req) {
+  try {
+    const pathAndQuery = req.originalUrl || req.url || '/';
+    const u = new URL(pathAndQuery, 'http://meta-webhook-verify.local');
+    return {
+      mode: u.searchParams.get('hub.mode'),
+      token: (u.searchParams.get('hub.verify_token') || '').trim(),
+      challenge: u.searchParams.get('hub.challenge'),
+    };
+  } catch {
+    return { mode: null, token: '', challenge: null };
+  }
+}
+
 // Webhook verification (FB calls this once when you set the URL)
 app.get('/api/fb/webhook', (req, res) => {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-  if (mode === 'subscribe' && token && token === fbConfig.verifyToken) {
+  const { mode, token, challenge } = readMetaWebhookVerifyParams(req);
+  if (mode === 'subscribe' && token && fbConfig.verifyToken && token === fbConfig.verifyToken) {
     console.log('[FB webhook] verified');
     return res.status(200).send(String(challenge ?? ''));
   }
-  console.warn('[FB webhook] verify failed: token mismatch or missing');
+  const reason =
+    mode !== 'subscribe'
+      ? 'hub.mode not subscribe'
+      : !fbConfig.verifyToken
+        ? 'FB_VERIFY_TOKEN missing on server'
+        : !token
+          ? 'hub.verify_token missing in request'
+          : 'verify token mismatch (check Railway FB_VERIFY_TOKEN vs Meta)';
+  console.warn('[FB webhook] verify failed:', reason);
   return res.sendStatus(403);
 });
 
@@ -582,6 +614,76 @@ app.post(
     }
   },
 );
+
+async function sendLineMessage({ conversationId, text, asAi }) {
+  if (!lineClient) {
+    return { status: 503, error: 'LINE_CHANNEL_ACCESS_TOKEN is missing (push disabled)' };
+  }
+  const body = typeof text === 'string' ? text.trim() : '';
+  if (!conversationId || !body) return { status: 400, error: 'conversationId and text are required' };
+  const m = /^line:(user|group|room):(.+)$/.exec(String(conversationId));
+  if (!m) return { status: 400, error: 'invalid conversationId (expected line:user|group|room:<id>)' };
+  const kind = m[1];
+  const targetId = m[2];
+  const sender = asAi ? 'ai' : 'agent';
+  try {
+    await lineClient.pushMessage({ to: targetId, messages: [{ type: 'text', text: body }] });
+    const thread = getOrCreateThread(kind, targetId);
+    const now = new Date().toISOString();
+    thread.messages.push({ id: crypto.randomUUID(), receivedAt: now, sender, text: body });
+    thread.updatedAt = now;
+    return { status: 200, ok: true };
+  } catch (e) {
+    console.error('LINE pushMessage failed:', e?.message || e);
+    return { status: 502, error: String(e?.message || e) };
+  }
+}
+
+async function sendMetaMessage({ conversationId, text, asAi }) {
+  if (!fbHasToken) {
+    return { status: 503, error: 'No connected Page. Connect Facebook in Settings → Integrations.' };
+  }
+  const body = typeof text === 'string' ? text.trim() : '';
+  if (!conversationId || !body) return { status: 400, error: 'conversationId and text are required' };
+  const m = /^(fb|ig):user:(.+)$/.exec(String(conversationId));
+  if (!m) return { status: 400, error: 'invalid conversationId (expected fb:user:<PSID> or ig:user:<IGSID>)' };
+  const channel = m[1];
+  const targetId = m[2];
+  const sender = asAi ? 'ai' : 'agent';
+  try {
+    const url = `https://graph.facebook.com/${fbConfig.apiVersion}/me/messages?access_token=${encodeURIComponent(fbConfig.pageAccessToken)}`;
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipient: { id: targetId }, messaging_type: 'RESPONSE', message: { text: body } }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || data?.error) {
+      const msg = data?.error?.message || `HTTP ${r.status}`;
+      console.error(`${channel.toUpperCase()} send failed:`, msg);
+      return { status: 502, error: msg };
+    }
+    const thread = getOrCreateFbThread(targetId, channel);
+    const now = new Date().toISOString();
+    thread.messages.push({ id: data?.message_id || crypto.randomUUID(), receivedAt: now, sender, text: body });
+    thread.updatedAt = now;
+    return { status: 200, ok: true };
+  } catch (e) {
+    console.error('FB/IG send exception:', e?.message || e);
+    return { status: 502, error: String(e?.message || e) };
+  }
+}
+
+app.post('/api/messages/send', express.json({ limit: '50kb' }), async (req, res) => {
+  const { conversationId } = req.body || {};
+  const id = String(conversationId || '');
+  let result;
+  if (id.startsWith('line:')) result = await sendLineMessage(req.body || {});
+  else if (id.startsWith('fb:') || id.startsWith('ig:')) result = await sendMetaMessage(req.body || {});
+  else result = { status: 400, error: 'unknown conversationId prefix (expected line:/fb:/ig:)' };
+  if (result.status >= 400) return res.status(result.status).json({ error: result.error });
+  return res.json({ ok: true });
+});
 
 app.post('/api/fb/send', express.json({ limit: '50kb' }), async (req, res) => {
   if (!fbHasToken) {
@@ -914,6 +1016,43 @@ app.post('/api/fb/integration/connect', express.json({ limit: '20kb' }), async (
   } catch (e) {
     return res.status(500).json({ error: String(e?.message || e) });
   }
+});
+
+app.get('/api/privacy', (_req, res) => {
+  res.set('Content-Type', 'text/html; charset=utf-8').send(`<!doctype html><html><head><meta charset="utf-8"><title>Chatz Privacy Policy</title>
+<style>body{font:15px/1.6 system-ui,sans-serif;max-width:720px;margin:40px auto;padding:0 20px;color:#0f172a}h1{font-size:24px}h2{font-size:17px;margin-top:28px}code{background:#f1f5f9;padding:1px 6px;border-radius:4px}</style></head><body>
+<h1>Chatz — Privacy Policy</h1>
+<p><b>Effective date:</b> ${new Date().toISOString().slice(0, 10)}</p>
+<h2>What we collect</h2>
+<p>When you connect Facebook Pages or Instagram Business accounts to Chatz, we receive: your Page id/name/picture, the linked Instagram username/id, the messages your customers send to you, and the access tokens needed to reply. We do not collect your personal Facebook profile beyond your name and id used to authenticate.</p>
+<h2>How we use it</h2>
+<p>Solely to display your inbox and let you reply. We do not sell or share your data with third parties.</p>
+<h2>Storage</h2>
+<p>Tokens and messages are stored on the server you deploy. Disconnecting from <i>Settings → Integrations</i> deletes the stored token immediately.</p>
+<h2>Data deletion</h2>
+<p>To request deletion, disconnect from Settings, or send a request to the data-deletion endpoint at <code>/api/fb/data-deletion</code> (configured in your Meta App Settings → Data Deletion Callback URL).</p>
+<h2>Contact</h2>
+<p>support@chatz.local</p>
+</body></html>`);
+});
+
+app.post('/api/fb/data-deletion', express.urlencoded({ extended: false }), async (req, res) => {
+  const signed = req.body?.signed_request || '';
+  const confirmCode = crypto.randomBytes(8).toString('hex');
+  try {
+    await disconnectFb();
+  } catch (e) {
+    console.warn('data-deletion: disconnect failed:', e?.message || e);
+  }
+  console.log('[FB data-deletion] received signed_request len=', signed.length, 'code=', confirmCode);
+  res.json({
+    url: `${publicBaseUrl(req)}/api/fb/data-deletion/status?code=${confirmCode}`,
+    confirmation_code: confirmCode,
+  });
+});
+
+app.get('/api/fb/data-deletion/status', (req, res) => {
+  res.set('Content-Type', 'text/html; charset=utf-8').send(`<!doctype html><html><body style="font:15px/1.6 system-ui;padding:40px;max-width:560px;margin:0 auto"><h2>Data deletion request received</h2><p>Reference code: <code>${escHtml(String(req.query?.code || ''))}</code></p><p>Your stored Page tokens and inbox cache have been removed from this server.</p></body></html>`);
 });
 
 app.post('/api/fb/integration/disconnect', async (_req, res) => {

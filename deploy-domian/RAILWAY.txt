@@ -1,47 +1,74 @@
-Chatz — Railway (โดเมน *.up.railway.app หรือ custom domain)
-================================================================
+Chatz — Railway production deploy
+====================================
 
-สิ่งที่อัปโหลด / เชื่อมกับ Railway
----------------------------------
-ใช้ทั้ง repository โปรเจกต์ Chatz (รากที่มี package.json)
-ไม่ใช่แค่โฟลเดอร์ deploy-domian อย่างเดียว — โฟลเดอร์นี้มีแค่คู่มือ (เล็ก ไม่มี node_modules)
+ตัวอย่าง URL: https://chatz02-production.up.railway.app
+URL นี้คือทั้ง UI และ webhook endpoint (Express เสิร์ฟ /api + dist/ พอร์ตเดียวกัน)
 
 ไฟล์ config ที่รากโปรเจกต์ (มีอยู่แล้ว)
 ---------------------------------------
-  Dockerfile       → build แบบ multi-stage (ไม่พึ่ง Railpack)
+  Dockerfile       → multi-stage build (npm ci → npm run build → runtime image)
   .dockerignore    → ลด context ไม่ส่ง node_modules / .env
-  railway.toml     → builder = DOCKERFILE + start + healthcheck /api/health
+  railway.toml     → builder = DOCKERFILE + start = npm start + healthcheck /api/health
 
-ถ้าใน Railway ขึ้น "Apply … changes" / Deploy ม่วง
-------------------------------------------
-ต้องกด **Apply** แล้วกด **Deploy** ให้การตั้งค่าใน dashboard ถูกใช้จริง — ไม่งั้นจะไม่มี active deployment
+Variables (ตั้งใน Railway → service → Variables)
+-------------------------------------------------
+  PUBLIC_BASE_URL=https://chatz02-production.up.railway.app
 
-repo บน GitHub ต้องมีไฟล์ชุดนี้แล้ว (push จากเครื่องคุณ)
-------------------------------------------
-ถ้า Railway ชี้ไป `…/Chatz01` ให้ push โค้ดล่าสุด (รวม Dockerfile + railway.toml) ไป branch ที่ service ใช้ (มักเป็น main)
+  # LINE
+  LINE_CHANNEL_SECRET=...
+  LINE_CHANNEL_ACCESS_TOKEN=...
 
-ขั้นตอนสั้นๆ
-------------
-1. Railway → New Project → Deploy from GitHub → เลือก repo (เช่น Chatz01)
-2. Variables (ตัวอย่าง — ใส่เฉพาะที่คุณใช้จริง):
+  # Meta (Facebook + Instagram)
+  FB_APP_ID=...
+  FB_APP_SECRET=...
+  FB_VERIFY_TOKEN=chatz-verify-... (อะไรก็ได้ — ใส่ค่าเดียวกันใน Meta App)
+  # FB_GRAPH_VERSION=v21.0   (optional)
 
-   PUBLIC_BASE_URL=https://<ชื่อเซอร์วิส>.up.railway.app
-   (จำเป็นถ้าใช้ Connect Facebook / OAuth — ให้ตรง URL สาธารณะ ไม่มี / ท้าย)
+  # ไม่ต้องใส่ FB_PAGE_ACCESS_TOKEN — ระบบเก็บผ่าน OAuth ใน server/integrations.json อัตโนมัติ
 
-   LINE_CHANNEL_SECRET=...
-   LINE_CHANNEL_ACCESS_TOKEN=...
-   FB_VERIFY_TOKEN=...
-   FB_APP_ID=...
-   FB_APP_SECRET=...
-   FB_PAGE_ACCESS_TOKEN=...   (ถ้าไม่ใช้ OAuth เก็บ token ใน env)
-   (ถ้ามี) FB_GRAPH_VERSION=v21.0
+URL ที่ต้องตั้งใน Meta App Dashboard (ทำครั้งเดียว)
+--------------------------------------------------
+  Webhook (Page + Instagram products)
+    Callback URL : https://chatz02-production.up.railway.app/api/fb/webhook
+    Verify Token : ค่าเดียวกับ FB_VERIFY_TOKEN
 
-3. Generate Domain ใน Railway แล้วอัปเดต PUBLIC_BASE_URL ให้ตรงโดเมนนั้น
-4. Redeploy หลังแก้ env
+  ถ้า Meta ขึ้น "callback URL or verify token couldn't be validated"
+    → เกือบทั้งหมดคือ FB_VERIFY_TOKEN ใน Railway ไม่ตรงกับช่อง Verify Token ใน Meta
+    → ตรวจว่ามีตัวแปร FB_VERIFY_TOKEN ใน Railway จริง (ไม่ว่าง) ไม่มี space หัวท้าย
+    → ทดสอบด้วยเบราว์เซอร์ (แทน YOUR_TOKEN ด้วยค่าเดียวกับ Railway):
+      https://chatz02-production.up.railway.app/api/fb/webhook?hub.mode=subscribe&hub.verify_token=YOUR_TOKEN&hub.challenge=ok
+      ถ้าถูกต้องหน้าจะแสดงแค่คำว่า ok
 
-Webhook หลังมีโดเมน (แทน trycloudflare)
-----------------------------------------
-  LINE:  https://<โดเมน>/api/line/webhook
-  Meta:  https://<โดเมน>/api/fb/webhook
+  Facebook Login
+    Valid OAuth Redirect URIs:
+      https://chatz02-production.up.railway.app/api/fb/oauth/callback
 
-ห้าม commit .env ขึ้น git — ตั้งค่าใน Railway Variables เท่านั้น
+  App Settings → Basic
+    Privacy Policy URL          : https://chatz02-production.up.railway.app/api/privacy
+    Data Deletion Callback URL  : https://chatz02-production.up.railway.app/api/fb/data-deletion
+
+Webhook ของ LINE (ตั้งใน LINE Developers Console)
+--------------------------------------------------
+  Webhook URL : https://chatz02-production.up.railway.app/api/line/webhook
+  เปิด Use webhook + กด Verify
+
+ที่ผู้ใช้ปลายทางต้องทำ
+---------------------
+  1. เปิด UI → Settings → Integrations → Connect Facebook & Instagram
+  2. Login Facebook → เลือกเพจ → จบ
+  ระบบจะ subscribe webhook ให้อัตโนมัติ ทั้ง FB Page DMs และ IG Business DMs
+  ไม่ต้องวาง token หรือ tunnel เอง
+
+API endpoints หลัก
+------------------
+  GET  /api/health
+  POST /api/messages/send       → unified (รับ line: / fb: / ig: prefix)
+  POST /api/fb/webhook          → รองรับทั้ง object=page และ object=instagram
+  POST /api/line/webhook
+  GET  /api/fb/oauth/start      → เริ่ม Facebook OAuth
+  GET  /api/fb/oauth/callback   → callback (วาง URL นี้ใน Meta)
+  GET  /api/privacy             → privacy policy (วาง URL นี้ใน Meta)
+  POST /api/fb/data-deletion    → data-deletion callback (วางใน Meta)
+
+ห้าม commit .env ขึ้น git — ตั้งใน Railway Variables เท่านั้น
+ถ้าเปลี่ยน env ต้อง redeploy ใหม่ (Railway auto-redeploy เมื่อ Variables เปลี่ยน)

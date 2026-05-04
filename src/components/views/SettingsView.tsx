@@ -59,8 +59,7 @@ export function SettingsView() {
           </div>
           <div className="grid gap-2">
             <FacebookIntegrationCard />
-            <Channel name="LINE Official — @glowco" id="line" status="connected" volume="624 ข้อความ/วัน" t={t} />
-            <Channel name="Instagram — coming soon" id="ig" status="soon" volume="—" t={t} />
+            <LineStatusCard t={t} />
           </div>
         </section>
 
@@ -154,37 +153,53 @@ function Segmented<T extends string>({
   );
 }
 
-function Channel({
-  name,
-  id,
-  status,
-  volume,
-  t,
-}: {
-  name: string;
-  id: 'line' | 'ig' | 'facebook';
-  status: 'connected' | 'soon';
-  volume: string;
-  t: (key: string) => string;
-}) {
+interface HealthSnapshot {
+  ok?: boolean;
+  lineConfigured?: boolean;
+  lineReplyEnabled?: boolean;
+  lineConversationsCount?: number;
+}
+
+function LineStatusCard({ t }: { t: (k: string) => string }) {
+  const [health, setHealth] = useState<HealthSnapshot | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/health')
+      .then((r) => r.json())
+      .then((d: HealthSnapshot) => alive && setHealth(d))
+      .catch(() => alive && setHealth({}));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const configured = !!health?.lineConfigured;
+  const reply = !!health?.lineReplyEnabled;
+  const count = health?.lineConversationsCount ?? 0;
+  const fullyConnected = configured && reply;
+  const subtitle = !health
+    ? '…'
+    : !configured
+      ? 'LINE_CHANNEL_SECRET ไม่ถูกตั้งค่า'
+      : !reply
+        ? 'รับข้อความได้ แต่ส่งกลับยังไม่ได้ (ตั้ง LINE_CHANNEL_ACCESS_TOKEN)'
+        : `${count} ห้องแชท`;
   return (
     <div className="flex items-center gap-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
-      <ChannelIcon channel={id} className="h-7 w-7" />
+      <ChannelIcon channel="line" className="h-7 w-7" />
       <div className="flex-1">
-        <div className="text-sm font-medium text-slate-900 dark:text-slate-100">{name}</div>
-        <div className="text-xs text-slate-500 dark:text-slate-400">{volume}</div>
+        <div className="text-sm font-medium text-slate-900 dark:text-slate-100">LINE Official</div>
+        <div className="text-xs text-slate-500 dark:text-slate-400">{subtitle}</div>
       </div>
-      {status === 'connected' ? (
+      {fullyConnected ? (
         <span className="chip bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
           <I.Check className="h-3 w-3" />
           {t('settings.connected')}
         </span>
+      ) : configured ? (
+        <span className="chip bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200">Read-only</span>
       ) : (
-        <span className="chip bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">{t('settings.soon')}</span>
+        <span className="chip bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">Not configured</span>
       )}
-      <button className="btn-ghost p-1.5">
-        <I.Settings className="h-4 w-4" />
-      </button>
     </div>
   );
 }
