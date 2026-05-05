@@ -77,25 +77,26 @@ export function Sidebar({ active, onChange }: Props) {
       onMouseEnter={narrow ? peelOpen : undefined}
       onMouseLeave={narrow ? scheduleClose : undefined}
       className={
-        'flex h-screen w-[244px] shrink-0 flex-col overflow-hidden border-r border-slate-200 bg-white select-none dark:border-slate-800 dark:bg-slate-900 ' +
+        'flex h-screen w-[248px] shrink-0 flex-col overflow-hidden border-r border-slate-200/90 bg-white select-none dark:border-slate-800 dark:bg-slate-900 ' +
         (narrow
           ? 'fixed left-0 top-0 z-[45] shadow-2xl transition-transform duration-200 ease-out ' +
             (peeled ? 'translate-x-0' : '-translate-x-full pointer-events-none')
           : '')
       }
     >
-      <div className="shrink-0 px-5 pt-5">
-        <div className="flex items-center gap-2">
-          <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-brand-500 to-fuchsia-500 text-white shadow-md">
-            <I.Zap className="h-4.5 w-4.5" />
+      <div className="shrink-0 px-5 pt-6 pb-2">
+        <div className="flex items-center gap-2.5">
+          <div className="grid h-10 w-10 place-items-center rounded-2xl bg-brand-600 text-white shadow-sm dark:bg-brand-500">
+            <I.Zap className="h-[18px] w-[18px]" />
           </div>
           <div>
-            <div className="text-[15px] font-bold leading-none tracking-tight text-slate-900 dark:text-white">Chatz</div>
+            <div className="text-[16px] font-bold leading-none tracking-tight text-slate-900 dark:text-white">Chatz</div>
+            <div className="mt-0.5 text-[11px] font-medium text-slate-400 dark:text-slate-500">{t('sidebar.workspace')}</div>
           </div>
         </div>
       </div>
 
-      <nav className="mt-6 min-h-0 flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden overscroll-y-contain px-3">
+      <nav className="mt-4 min-h-0 flex-1 space-y-1 overflow-y-auto overflow-x-hidden overscroll-y-contain px-3 pb-2">
         {items.map((it) => {
           const isActive = active === it.key;
           return (
@@ -107,13 +108,19 @@ export function Sidebar({ active, onChange }: Props) {
                 if (narrow) scheduleClose();
               }}
               className={
-                'group flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition ' +
+                'group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ' +
                 (isActive
-                  ? 'bg-brand-50 text-brand-700 dark:bg-brand-950/50 dark:text-brand-300'
-                  : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white')
+                  ? 'bg-brand-600 text-white shadow-sm dark:bg-brand-500'
+                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white')
               }
             >
-              <span className={isActive ? 'text-brand-600 dark:text-brand-400' : 'text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300'}>
+              <span
+                className={
+                  isActive
+                    ? 'text-white'
+                    : 'text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300'
+                }
+              >
                 {it.icon}
               </span>
               <span className="min-w-0 flex-1 truncate text-left">{t(it.labelKey)}</span>
@@ -121,9 +128,11 @@ export function Sidebar({ active, onChange }: Props) {
                 <span
                   className={
                     'shrink-0 chip ' +
-                    (typeof it.badge === 'number'
-                      ? 'bg-brand-100 text-brand-700 dark:bg-brand-900/50 dark:text-brand-200'
-                      : 'bg-gradient-to-r from-brand-500 to-fuchsia-500 text-white')
+                    (isActive
+                      ? 'bg-white/20 text-white'
+                      : typeof it.badge === 'number'
+                        ? 'bg-brand-100 text-brand-700 dark:bg-brand-900/50 dark:text-brand-200'
+                        : 'bg-brand-600 text-white dark:bg-brand-500')
                   }
                 >
                   {it.badge}

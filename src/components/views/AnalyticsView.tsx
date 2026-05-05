@@ -1,5 +1,4 @@
 import { useMemo } from 'react';
-import { I } from '../Icons';
 import { useAppPreferences } from '../../context/AppPreferencesContext';
 
 const HOURS = Array.from({ length: 12 }, (_, i) => 8 + i);
@@ -91,13 +90,6 @@ export function AnalyticsView() {
                 </div>
               </div>
             ))}
-          </div>
-          <div className="mt-5 rounded-lg border border-brand-100 bg-brand-50/40 p-3 text-xs text-slate-700 dark:border-brand-900/50 dark:bg-brand-950/30 dark:text-slate-300">
-            <div className="flex items-center gap-1.5 text-brand-700 dark:text-brand-300">
-              <I.Sparkle className="h-3.5 w-3.5" />
-              <span className="font-semibold">{t('analytics.insight')}</span>
-            </div>
-            <p className="mt-1 leading-relaxed">{t('analytics.insightBody')}</p>
           </div>
         </div>
       </div>

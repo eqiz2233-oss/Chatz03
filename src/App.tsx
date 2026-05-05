@@ -16,7 +16,7 @@ export default function App() {
   const clearInboxFocus = useCallback(() => setInboxFocus(null), []);
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-slate-50 dark:bg-slate-950">
+    <div className="flex h-screen w-screen overflow-hidden bg-[#f3f1f8] text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <Sidebar active={view} onChange={setView} />
       {view === 'inbox' && (
         <InboxView focusRequest={inboxFocus} onFocusRequestConsumed={clearInboxFocus} />

@@ -28,9 +28,16 @@ Variables (ตั้งใน Railway → service → Variables)
 
 URL ที่ต้องตั้งใน Meta App Dashboard (ทำครั้งเดียว)
 --------------------------------------------------
-  Webhook (Page + Instagram products)
-    Callback URL : https://chatz02-production.up.railway.app/api/fb/webhook
-    Verify Token : ค่าเดียวกับ FB_VERIFY_TOKEN
+  Webhook — ต้องทำแยก 2 ที่ (ทั้งคู่ใช้ URL เดียวกันได้)
+    Messenger (Facebook Page):
+      Callback URL : https://<โดเมน-railway>/api/fb/webhook
+      Verify Token : ค่าเดียวกับ FB_VERIFY_TOKEN
+      ในตาราง Webhook fields ให้ Subscribe อย่างน้อย: messages
+    Instagram (สำคัญ — ถ้าไม่ทำ IG จะไม่เข้า):
+      ในแอป Meta → สินค้า "Instagram" → หัวข้อ Webhooks
+      ใส่ Callback URL เดียวกัน: https://<โดเมน-railway>/api/fb/webhook
+      Verify + Subscribe field **messages** (และอื่นๆ ตามต้องการ)
+      Meta ระบุว่า IG webhook ต้องตั้งใน Dashboard นี้ — ไม่ได้มาจาก POST Page subscribed_apps อย่างเดียว
 
   ถ้า Meta ขึ้น "callback URL or verify token couldn't be validated"
     → เกือบทั้งหมดคือ FB_VERIFY_TOKEN ใน Railway ไม่ตรงกับช่อง Verify Token ใน Meta
@@ -54,10 +61,11 @@ Webhook ของ LINE (ตั้งใน LINE Developers Console)
 
 ที่ผู้ใช้ปลายทางต้องทำ
 ---------------------
-  1. เปิด UI → Settings → Integrations → Connect Facebook & Instagram
-  2. Login Facebook → เลือกเพจ → จบ
-  ระบบจะ subscribe webhook ให้อัตโนมัติ ทั้ง FB Page DMs และ IG Business DMs
-  ไม่ต้องวาง token หรือ tunnel เอง
+  1. ตั้ง Webhook ทั้ง Messenger และ Instagram ใน Meta (ดูหัวข้อ Webhook ด้านบน)
+  2. เปิด UI → Settings → Integrations → Connect Facebook & Instagram → Login → เลือกเพจ
+     (ขั้นนี้ subscribe ฝั่ง Facebook Page — คู่กับ Messenger)
+  3. IG: เพจต้องผูก Instagram Professional/Business; แอปต้องมี instagram_manage_messages (App Review ถ้าผู้ส่งไม่ใช่ role บนแอป)
+  4. Meta กำหนดว่าแอปต้องอยู่สถานะ Published จึงจะรับ webhook บางประเภทจาก Instagram
 
 API endpoints หลัก
 ------------------

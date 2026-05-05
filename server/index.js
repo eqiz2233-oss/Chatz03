@@ -153,6 +153,94 @@ async function enrichFbProfile(psid, thread, pageId) {
   }
 }
 
+function fbLastSnippet(m) {
+  if (!m) return '';
+  if (m.text) return String(m.text).slice(0, 120);
+  if (m.video) return 'Video';
+  if (m.image) return 'Photo';
+  return '';
+}
+
+/** Messenger + Instagram DM: attachments often include payload.url; otherwise resolve via Graph (see fetchMessengerAttachmentsFromMid). */
+function metaMessagingMediaFromEvent(ev) {
+  const msg = ev?.message;
+  let textOut = typeof msg?.text === 'string' ? msg.text.trim() : '';
+  if (!textOut) textOut = null;
+  let imageUrl = null;
+  let videoUrl = null;
+  for (const att of msg?.attachments || []) {
+    const u = att?.payload?.url;
+    if (typeof u === 'string' && /^https?:\/\//i.test(u)) {
+      const t = String(att.type || '').toLowerCase();
+      if (t === 'image' || t === 'sticker' || t === 'story_mention') {
+        if (!imageUrl) imageUrl = u;
+      } else if (t === 'video' || t === 'ig_reel' || t === 'reel') {
+        if (!videoUrl) videoUrl = u;
+      } else if (t === 'audio') {
+        if (!videoUrl) videoUrl = u;
+      } else if (t === 'file') {
+        if (/\.(jpe?g|png|gif|webp)(\?|$)/i.test(u)) {
+          if (!imageUrl) imageUrl = u;
+        } else if (!videoUrl) {
+          videoUrl = u;
+        }
+      } else if (t === 'share' || t === 'fallback') {
+        if (!imageUrl) imageUrl = u;
+      }
+      continue;
+    }
+  }
+  if (!textOut && !imageUrl && !videoUrl && msg?.attachments?.length) {
+    textOut = `[${msg.attachments[0].type || 'attachment'}]`;
+  }
+  return { textOut, imageUrl, videoUrl };
+}
+
+/**
+ * When webhook attachments omit payload.url (common for Instagram), Meta still provides message `mid`.
+ * Pages API: GET /{mid}/attachments → data[].file_url + mime_type.
+ */
+async function fetchMessengerAttachmentsFromMid(pageAccessToken, messageMid) {
+  const out = { imageUrl: null, videoUrl: null };
+  if (!pageAccessToken || !messageMid) return out;
+  const url = `https://graph.facebook.com/${fbConfig.apiVersion}/${encodeURIComponent(messageMid)}/attachments?access_token=${encodeURIComponent(pageAccessToken)}`;
+  try {
+    const r = await fetch(url);
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || data?.error) {
+      console.warn('[Meta] GET .../attachments failed:', messageMid, data?.error?.message || r.status);
+      return out;
+    }
+    const list = Array.isArray(data?.data) ? data.data : [];
+    for (const a of list) {
+      const fu = a?.file_url;
+      if (typeof fu !== 'string' || !/^https?:\/\//i.test(fu)) continue;
+      const mt = String(a.mime_type || '').toLowerCase();
+      if (mt.startsWith('video/')) {
+        if (!out.videoUrl) out.videoUrl = fu;
+      } else if (mt.startsWith('image/')) {
+        if (!out.imageUrl) out.imageUrl = fu;
+      } else if (mt.startsWith('audio/')) {
+        if (!out.videoUrl) out.videoUrl = fu;
+      } else if (!out.imageUrl && !out.videoUrl) {
+        if (!out.imageUrl) out.imageUrl = fu;
+      }
+    }
+  } catch (e) {
+    console.warn('[Meta] attachments fetch error:', messageMid, e?.message || e);
+  }
+  return out;
+}
+
+const META_PLACEHOLDER_TEXT = /^\[(image|video|audio|file|attachment|ig_reel|reel|story_mention|sticker|photo|share|fallback)\]$/i;
+
+function stripMetaMediaPlaceholderText(textOut, imageUrl, videoUrl) {
+  if (!(imageUrl || videoUrl) || textOut == null) return textOut;
+  const s = String(textOut).trim();
+  if (META_PLACEHOLDER_TEXT.test(s)) return null;
+  return textOut;
+}
+
 function fbThreadToApiConversation(thread) {
   const isIg = thread.channel === 'ig';
   const id = isIg ? `ig:user:${thread.targetId}` : `fb:user:${thread.targetId}`;
@@ -170,7 +258,7 @@ function fbThreadToApiConversation(thread) {
     customerName: name,
     channel: isIg ? 'ig' : 'facebook',
     avatar,
-    lastSnippet: last?.text ? String(last.text).slice(0, 120) : '',
+    lastSnippet: fbLastSnippet(last),
     updatedAt: thread.updatedAt,
     unread: 0,
     online: false,
@@ -179,6 +267,7 @@ function fbThreadToApiConversation(thread) {
       sender: m.sender,
       text: m.text,
       image: m.image,
+      video: m.video,
       receivedAt: m.receivedAt,
     })),
   };
@@ -574,6 +663,14 @@ app.post(
       return res.sendStatus(200);
     }
     const isInstagram = payload?.object === 'instagram';
+    console.log(
+      '[Meta webhook]',
+      new Date().toISOString(),
+      'object=',
+      payload?.object,
+      'entries=',
+      Array.isArray(payload?.entry) ? payload.entry.length : 0,
+    );
 
     let total = 0;
     try {
@@ -601,21 +698,37 @@ app.post(
           // can render them with the correct channel icon and so PSID/IGSID don't collide.
           const thread = getOrCreateFbThread(psid, isInstagram ? 'ig' : 'fb');
           let textOut = null;
-          if (ev?.message?.text) {
-            textOut = ev.message.text;
-          } else if (Array.isArray(ev?.message?.attachments) && ev.message.attachments.length > 0) {
-            const a = ev.message.attachments[0];
-            textOut = a?.type === 'image' ? '[image]' : a?.type === 'video' ? '[video]' : a?.type === 'audio' ? '[audio]' : a?.type === 'file' ? '[file]' : `[${a?.type || 'attachment'}]`;
+          let imageUrl = null;
+          let videoUrl = null;
+          if (ev?.message) {
+            const parsed = metaMessagingMediaFromEvent(ev);
+            textOut = parsed.textOut;
+            imageUrl = parsed.imageUrl;
+            videoUrl = parsed.videoUrl;
+            const mid = ev.message.mid;
+            const attCount = Array.isArray(ev.message.attachments) ? ev.message.attachments.length : 0;
+            if (mid && attCount > 0 && !imageUrl && !videoUrl) {
+              const pageTok = isInstagram
+                ? tokenForIgId(String(entry.id)) || primaryPageAccessToken()
+                : tokenForPageId(String(entry.id)) || primaryPageAccessToken();
+              const g = await fetchMessengerAttachmentsFromMid(pageTok, mid);
+              if (g.imageUrl) imageUrl = g.imageUrl;
+              if (g.videoUrl) videoUrl = g.videoUrl;
+              textOut = stripMetaMediaPlaceholderText(textOut, imageUrl, videoUrl);
+            }
           } else if (ev?.postback?.title) {
             textOut = `[postback] ${ev.postback.title}`;
           }
-          if (textOut) {
-            thread.messages.push({
+          if (textOut || imageUrl || videoUrl) {
+            const row = {
               id: ev?.message?.mid || crypto.randomUUID(),
               receivedAt: new Date().toISOString(),
               sender: 'customer',
-              text: textOut,
-            });
+            };
+            if (textOut) row.text = textOut;
+            if (imageUrl) row.image = imageUrl;
+            if (videoUrl) row.video = videoUrl;
+            thread.messages.push(row);
             thread.updatedAt = new Date().toISOString();
           }
 

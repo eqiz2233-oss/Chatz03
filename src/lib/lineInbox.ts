@@ -36,7 +36,7 @@ export function mapLineConversationDto(dto: LineConversationDto, listTime: (iso:
     lastAt: listTime(dto.updatedAt),
     unread: dto.unread,
     online: dto.online,
-    messages: dto.messages.map(
+    messages: (dto.messages ?? []).map(
       (m): Message => ({
         id: m.id,
         sender: asSender(m.sender),

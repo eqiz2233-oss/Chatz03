@@ -46,28 +46,134 @@ export function ConversationList({ conversations, activeId, onSelect }: Props) {
     return true;
   });
 
+  const totalUnread = useMemo(() => conversations.reduce((acc, c) => acc + (c.unread > 0 ? c.unread : 0), 0), [conversations]);
+  const { pinnedRows, otherRows } = useMemo(() => {
+    const pinned = filtered.filter((c) => Boolean(c.pinnedMessageId));
+    const other = filtered.filter((c) => !c.pinnedMessageId);
+    return { pinnedRows: pinned, otherRows: other };
+  }, [filtered]);
+
+  const renderRow = (c: Conversation) => {
+    const isActive = c.id === activeId;
+    return (
+      <button
+        key={c.id}
+        onClick={() => onSelect(c.id)}
+        className={
+          'flex w-full items-start gap-3 border-b border-slate-100/90 px-4 py-3.5 text-left transition dark:border-slate-800/90 ' +
+          (isActive
+            ? 'bg-brand-600 text-white dark:bg-brand-500'
+            : 'text-slate-900 hover:bg-slate-50 dark:text-slate-100 dark:hover:bg-slate-800/60')
+        }
+      >
+        <div className="relative shrink-0">
+          <img
+            src={c.avatar}
+            className={'h-12 w-12 rounded-full ring-2 ' + (isActive ? 'ring-white/30' : 'ring-white dark:ring-slate-900')}
+            alt=""
+          />
+          <span
+            className={
+              'absolute -bottom-0.5 -right-0.5 grid h-5 w-5 place-items-center rounded-full ' +
+              (isActive ? 'bg-brand-700 dark:bg-brand-600' : 'bg-white dark:bg-slate-900')
+            }
+          >
+            <ChannelIcon channel={c.channel} className="h-4 w-4" />
+          </span>
+          {c.online && (
+            <span
+              className={
+                'absolute -top-0.5 right-0 h-2.5 w-2.5 rounded-full border-2 ' +
+                (isActive ? 'border-brand-600 bg-emerald-300 dark:border-brand-500' : 'border-white bg-emerald-500 dark:border-slate-900')
+              }
+            />
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-2">
+            <div className={'truncate text-sm font-semibold ' + (isActive ? 'text-white' : 'text-slate-900 dark:text-slate-100')}>
+              {c.customerName}
+            </div>
+            <div className={'shrink-0 text-[11px] ' + (isActive ? 'text-white/75' : 'text-slate-400 dark:text-slate-500')}>{c.lastAt}</div>
+          </div>
+          <div className={'mt-0.5 truncate text-xs ' + (isActive ? 'text-white/85' : 'text-slate-500 dark:text-slate-400')}>{c.lastSnippet}</div>
+          <div className="mt-1.5 flex flex-wrap items-center gap-1">
+            {c.tags?.map((tag) => (
+              <span
+                key={tag}
+                className={
+                  'chip ' +
+                  (isActive ? 'bg-white/15 text-white' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300')
+                }
+              >
+                {tag}
+              </span>
+            ))}
+            {c.intent === 'ready_to_buy' && (
+              <span
+                className={
+                  'chip ' +
+                  (isActive ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300')
+                }
+              >
+                🔥 {t('inbox.intentReady')}
+              </span>
+            )}
+            {c.intent === 'paid' && (
+              <span
+                className={
+                  'chip ' +
+                  (isActive ? 'bg-white/20 text-white' : 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300')
+                }
+              >
+                ✓ {t('inbox.intentPaid')}
+              </span>
+            )}
+          </div>
+        </div>
+        {c.unread > 0 && (
+          <span
+            className={
+              'grid h-5 min-w-[1.25rem] place-items-center rounded-full px-1 text-[10px] font-semibold ' +
+              (isActive ? 'bg-white text-brand-600' : 'bg-brand-600 text-white dark:bg-brand-500')
+            }
+          >
+            {c.unread}
+          </span>
+        )}
+      </button>
+    );
+  };
+
   return (
-    <div className="flex h-full min-h-0 w-[340px] shrink-0 flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-      <div className="border-b border-slate-200 px-4 pb-3 pt-5 dark:border-slate-800">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-bold tracking-tight text-slate-900 dark:text-white">{t('inbox.title')}</h2>
-          <div className="flex items-center gap-1">
-            <button className="btn-ghost p-1.5">
+    <div className="flex h-full min-h-0 w-[360px] shrink-0 flex-col border-r border-slate-200/90 bg-white dark:border-slate-800 dark:bg-slate-900">
+      <div className="border-b border-slate-200/90 px-4 pb-4 pt-6 dark:border-slate-800">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-baseline gap-2">
+            <h2 className="text-lg font-bold tracking-tight text-slate-900 dark:text-white">{t('inbox.title')}</h2>
+            {totalUnread > 0 && (
+              <span className="shrink-0 rounded-full bg-fuchsia-100 px-2 py-0.5 text-[11px] font-semibold text-fuchsia-700 dark:bg-fuchsia-950/60 dark:text-fuchsia-200">
+                {t('inbox.newCount', { n: totalUnread })}
+              </span>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-0.5">
+            <button type="button" className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200">
               <I.Filter className="h-4 w-4" />
             </button>
-            <button className="btn-ghost p-1.5">
+            <button type="button" className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200">
               <I.Plus className="h-4 w-4" />
             </button>
           </div>
         </div>
-        <div className="relative mt-3">
-          <I.Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" />
+        <div className="relative mt-4">
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder={t('inbox.searchPlaceholder')}
-            className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-8 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:bg-slate-900 dark:focus:ring-brand-900/40"
+            className="w-full rounded-2xl border border-slate-200/90 bg-slate-50 py-2.5 pl-3 pr-10 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:bg-slate-900 dark:focus:ring-brand-900/40"
           />
+          <I.Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         </div>
         <div className="mt-3 flex flex-wrap gap-1.5">
           {FILTERS.map((f) => {
@@ -85,9 +191,9 @@ export function ConversationList({ conversations, activeId, onSelect }: Props) {
                   else toggleKey(f.key);
                 }}
                 className={
-                  'shrink-0 rounded-full px-2.5 py-1 text-xs font-medium transition ' +
+                  'shrink-0 rounded-full px-3 py-1 text-xs font-medium transition ' +
                   (isOn
-                    ? 'bg-slate-900 text-white dark:bg-brand-600 dark:text-white'
+                    ? 'bg-brand-600 text-white shadow-sm dark:bg-brand-500'
                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700')
                 }
               >
@@ -99,54 +205,22 @@ export function ConversationList({ conversations, activeId, onSelect }: Props) {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {filtered.map((c) => {
-          const isActive = c.id === activeId;
-          return (
-            <button
-              key={c.id}
-              onClick={() => onSelect(c.id)}
-              className={
-                'flex w-full items-start gap-3 border-b border-slate-100 px-4 py-3 text-left transition dark:border-slate-800 ' +
-                (isActive ? 'bg-brand-50/50 dark:bg-brand-950/30' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50')
-              }
-            >
-              <div className="relative shrink-0">
-                <img src={c.avatar} className="h-11 w-11 rounded-full bg-slate-100 dark:bg-slate-800" alt="" />
-                <span className="absolute -bottom-0.5 -right-0.5 grid h-5 w-5 place-items-center rounded-full bg-white dark:bg-slate-900">
-                  <ChannelIcon channel={c.channel} className="h-4 w-4" />
-                </span>
-                {c.online && (
-                  <span className="absolute -top-0.5 right-0 h-2.5 w-2.5 rounded-full border-2 border-white bg-emerald-500 dark:border-slate-900" />
-                )}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{c.customerName}</div>
-                  <div className="shrink-0 text-[11px] text-slate-400 dark:text-slate-500">{c.lastAt}</div>
-                </div>
-                <div className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400">{c.lastSnippet}</div>
-                <div className="mt-1.5 flex items-center gap-1">
-                  {c.tags?.map((tag) => (
-                    <span key={tag} className="chip bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                      {tag}
-                    </span>
-                  ))}
-                  {c.intent === 'ready_to_buy' && (
-                    <span className="chip bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">🔥 {t('inbox.intentReady')}</span>
-                  )}
-                  {c.intent === 'paid' && (
-                    <span className="chip bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">✓ {t('inbox.intentPaid')}</span>
-                  )}
-                </div>
-              </div>
-              {c.unread > 0 && (
-                <span className="grid h-5 w-5 place-items-center rounded-full bg-brand-600 text-[10px] font-semibold text-white dark:bg-brand-500">
-                  {c.unread}
-                </span>
-              )}
-            </button>
-          );
-        })}
+        {pinnedRows.length > 0 && (
+          <div>
+            <div className="sticky top-0 z-[1] bg-white px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:bg-slate-900 dark:text-slate-500">
+              {t('inbox.sectionPinned')}
+            </div>
+            {pinnedRows.map((c) => renderRow(c))}
+          </div>
+        )}
+        <div>
+          {pinnedRows.length > 0 && (
+            <div className="sticky top-0 z-[1] bg-white px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:bg-slate-900 dark:text-slate-500">
+              {t('inbox.sectionAll')}
+            </div>
+          )}
+          {otherRows.map((c) => renderRow(c))}
+        </div>
       </div>
     </div>
   );

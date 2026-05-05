@@ -56,6 +56,9 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
   });
   const [lineConversations, setLineConversations] = useState<Conversation[]>([]);
   const [fbConversations, setFbConversations] = useState<Conversation[]>([]);
+  /** กัน merge ด้วย [] ก่อน fetch ครั้งแรกเสร็จ — ไม่งั้น seed หายแล้วหน้าว่าง */
+  const [lineInboxFetched, setLineInboxFetched] = useState(false);
+  const [fbInboxFetched, setFbInboxFetched] = useState(false);
   const [list, setList] = useState<Conversation[]>(seed);
   const [activeId, setActiveId] = useState(seed[0].id);
   /** ปักหมุดแชทต่อห้อง (ร้านเท่านั้น) — override ค่า pinnedMessageId จาก seed/API */
@@ -63,6 +66,14 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
 
   const lineBackend = health.loaded && health.lineConfigured && !health.fetchFailed;
   const fbBackend = health.loaded && health.fbConfigured && !health.fetchFailed;
+
+  useEffect(() => {
+    if (!lineBackend) setLineInboxFetched(false);
+  }, [lineBackend]);
+
+  useEffect(() => {
+    if (!fbBackend) setFbInboxFetched(false);
+  }, [fbBackend]);
 
   useEffect(() => {
     let cancelled = false;
@@ -119,6 +130,8 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
       setLineConversations(mapped);
     } catch {
       setLineConversations([]);
+    } finally {
+      setLineInboxFetched(true);
     }
   }, [lineBackend, locale, t]);
 
@@ -139,6 +152,8 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
       setFbConversations(mapped);
     } catch {
       setFbConversations([]);
+    } finally {
+      setFbInboxFetched(true);
     }
   }, [fbBackend, locale, t]);
 
@@ -152,20 +167,26 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
   useEffect(() => {
     setList((prev) => {
       let next = prev;
-      if (lineBackend) {
+      /** แทนที่ seed เฉพาะเมื่อ API มีรายการ — ถ้า [] ยังใช้ seed ต่อ (กัน race FB ว่างก่อนแล้วตัด ig/fb พอ LINE ว่างทีหลังจน list หายหมด) */
+      if (lineBackend && lineInboxFetched && lineConversations.length > 0) {
         const nonLine = next.filter((c) => c.channel !== 'line');
         next = [...lineConversations, ...nonLine];
       }
-      if (fbBackend) {
-        const nonFb = next.filter((c) => c.channel !== 'facebook');
-        next = [...fbConversations, ...nonFb];
+      if (fbBackend && fbInboxFetched && fbConversations.length > 0) {
+        const nonMeta = next.filter((c) => c.channel !== 'facebook' && c.channel !== 'ig');
+        next = [...fbConversations, ...nonMeta];
       }
+      if (next.length === 0 && prev.length > 0) return prev;
       return next;
     });
-  }, [lineBackend, lineConversations, fbBackend, fbConversations]);
+  }, [lineBackend, lineInboxFetched, lineConversations, fbBackend, fbInboxFetched, fbConversations]);
 
   useEffect(() => {
-    if (list.length && !list.some((c) => c.id === activeId)) {
+    if (!list.length) {
+      setActiveId('');
+      return;
+    }
+    if (!list.some((c) => c.id === activeId)) {
       setActiveId(list[0].id);
     }
   }, [list, activeId]);
@@ -210,7 +231,10 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
     return undefined;
   }, [focusRequest, list, lineBackend, t]);
 
-  const active = useMemo(() => list.find((c) => c.id === activeId) ?? list[0], [list, activeId]);
+  const active = useMemo(() => {
+    if (!list.length) return null;
+    return list.find((c) => c.id === activeId) ?? list[0];
+  }, [list, activeId]);
 
   const conversationForThread = useMemo(() => {
     if (!active) return null;
@@ -272,14 +296,6 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
     );
   };
 
-  if (!active) {
-    return (
-      <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center bg-slate-50 text-sm text-slate-500 dark:bg-slate-950 dark:text-slate-400">
-        {t('inbox.empty')}
-      </div>
-    );
-  }
-
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       {notice && (
@@ -292,8 +308,12 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
       )}
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <ConversationList conversations={list} activeId={activeId} onSelect={setActiveId} />
-        {conversationForThread && (
+        {conversationForThread ? (
           <ChatThread conversation={conversationForThread} onSend={handleSend} onPinMessage={handlePinMessage} />
+        ) : (
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center bg-[#f5f4fa] px-6 text-center text-sm text-slate-500 dark:bg-slate-950/80 dark:text-slate-400">
+            {t('inbox.empty')}
+          </div>
         )}
       </div>
     </div>

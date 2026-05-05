@@ -58,49 +58,55 @@ export function ChatThread({ conversation, onSend, onPinMessage }: Props) {
   };
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-slate-50 dark:bg-slate-950">
-      <div className="flex items-center justify-between border-b border-slate-200 bg-white px-5 py-3 dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex items-center gap-3">
-          <img src={conversation.avatar} className="h-10 w-10 rounded-full bg-slate-100 dark:bg-slate-800" alt="" />
-          <div>
-            <div className="flex items-center gap-2">
-              <div className="text-[15px] font-semibold text-slate-900 dark:text-slate-100">{conversation.customerName}</div>
-              <ChannelIcon channel={conversation.channel} className="h-4 w-4" />
+    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-white dark:bg-slate-900">
+      <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-200/90 px-4 py-3 dark:border-slate-800 sm:gap-3 sm:px-5 sm:py-3.5">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <img src={conversation.avatar} className="h-11 w-11 shrink-0 rounded-full bg-slate-100 ring-2 ring-slate-100 dark:bg-slate-800 dark:ring-slate-800" alt="" />
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="truncate text-[16px] font-semibold text-slate-900 dark:text-slate-50">{conversation.customerName}</h1>
+              <ChannelIcon channel={conversation.channel} className="h-4 w-4 shrink-0" />
               {conversation.online && (
-                <span className="chip bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> {t('chat.online')}
                 </span>
               )}
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-1.5">
-          <button type="button" className="btn-secondary text-xs">
-            <I.Tag className="h-3.5 w-3.5" />
-            {t('chat.tag')}
+        <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-1 sm:w-auto sm:justify-end">
+          <button type="button" className="rounded-xl p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200" aria-label="Phone">
+            <I.Phone className="h-[18px] w-[18px]" />
           </button>
-          <button type="button" className="btn-secondary text-xs">
-            <I.Box className="h-3.5 w-3.5" />
-            {t('chat.createOrder')}
+          <button type="button" className="rounded-xl p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200" aria-label="Video">
+            <I.VideoCam className="h-[18px] w-[18px]" />
+          </button>
+          <button type="button" className="rounded-xl p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200" aria-label="More">
+            <I.MoreVertical className="h-[18px] w-[18px]" />
           </button>
         </div>
-      </div>
+      </header>
 
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+      {pinnedMessage && (
+        <div className="w-full shrink-0 border-b border-slate-300/90 dark:border-slate-700/90">
+          <PinnedBanner
+            message={pinnedMessage}
+            onJump={() => scrollToMessageAnchor(pinnedMessage.id)}
+            onUnpin={() => {
+              onPinMessage(null);
+              setOpenMenuId(null);
+            }}
+            t={t}
+          />
+        </div>
+      )}
+
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto bg-[#f5f4fa] px-4 py-5 dark:bg-slate-950/80 sm:px-6">
         <div className="mx-auto max-w-3xl space-y-3">
-          {pinnedMessage && (
-            <PinnedBanner
-              message={pinnedMessage}
-              onJump={() => scrollToMessageAnchor(pinnedMessage.id)}
-              onUnpin={() => {
-                onPinMessage(null);
-                setOpenMenuId(null);
-              }}
-              t={t}
-            />
-          )}
-          <div className="flex justify-center">
-            <span className="rounded-full bg-slate-200/60 px-3 py-1 text-[11px] text-slate-500 dark:bg-slate-800 dark:text-slate-400">{t('chat.today')}</span>
+          <div className="flex justify-center py-1">
+            <span className="rounded-full bg-white/90 px-3 py-1 text-[11px] font-medium text-slate-500 shadow-sm dark:bg-slate-800/90 dark:text-slate-400">
+              {t('chat.today')}
+            </span>
           </div>
           {conversation.messages.map((m) => (
             <MessageBubble
@@ -124,23 +130,23 @@ export function ChatThread({ conversation, onSend, onPinMessage }: Props) {
         </div>
       </div>
 
-      <div className="border-t border-slate-200 bg-white px-6 py-3 dark:border-slate-800 dark:bg-slate-900">
+      <footer className="shrink-0 border-t border-slate-200/90 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900 sm:px-6">
         <div className="mx-auto max-w-3xl">
-          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+          <div className="mb-2 flex flex-wrap gap-1.5">
             {quickReplies.map((q) => (
               <button
                 key={q}
                 type="button"
                 onClick={() => setText(q)}
-                className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 hover:border-brand-300 hover:text-brand-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-brand-500 dark:hover:text-brand-300"
+                className="rounded-full border border-slate-200/90 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600 transition hover:border-brand-300 hover:bg-white hover:text-brand-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-brand-500"
               >
                 {q}
               </button>
             ))}
           </div>
-          <div className="flex items-end gap-2 rounded-xl border border-slate-200 bg-white p-2 focus-within:border-brand-400 focus-within:ring-2 focus-within:ring-brand-100 dark:border-slate-700 dark:bg-slate-900 dark:focus-within:border-brand-500 dark:focus-within:ring-brand-900/40">
-            <button type="button" className="btn-ghost p-1.5">
-              <I.Image className="h-4 w-4" />
+          <div className="flex items-end gap-2 rounded-2xl border border-slate-200/90 bg-slate-50/90 p-1.5 shadow-sm focus-within:border-brand-400 focus-within:bg-white focus-within:ring-2 focus-within:ring-brand-100 dark:border-slate-600 dark:bg-slate-800/80 dark:focus-within:border-brand-500 dark:focus-within:bg-slate-900 dark:focus-within:ring-brand-900/30">
+            <button type="button" className="shrink-0 rounded-xl p-2 text-slate-500 transition hover:bg-white hover:text-slate-800 dark:hover:bg-slate-700 dark:hover:text-slate-200" aria-label="Attach">
+              <I.Paperclip className="h-[18px] w-[18px]" />
             </button>
             <textarea
               value={text}
@@ -151,16 +157,29 @@ export function ChatThread({ conversation, onSend, onPinMessage }: Props) {
                   void send();
                 }
               }}
-              placeholder={t('chat.placeholder')}
+              placeholder={t('chat.writeMessage')}
               rows={1}
-              className="min-w-0 flex-1 resize-none bg-transparent px-1 py-1.5 text-sm text-slate-900 focus:outline-none dark:text-slate-100"
+              className="max-h-32 min-h-[40px] min-w-0 flex-1 resize-none bg-transparent px-1 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none dark:text-slate-100"
             />
-            <button type="button" onClick={() => void send()} className="btn-primary text-xs">
-              <I.Send className="h-4 w-4" /> {t('chat.send')}
-            </button>
+            <div className="flex shrink-0 items-center gap-0.5 pb-0.5">
+              <button type="button" className="rounded-xl p-2 text-slate-500 transition hover:bg-white dark:hover:bg-slate-700" aria-label="Emoji">
+                <I.Smile className="h-[18px] w-[18px]" />
+              </button>
+              <button type="button" className="rounded-xl p-2 text-slate-500 transition hover:bg-white dark:hover:bg-slate-700" aria-label="Voice">
+                <I.Mic className="h-[18px] w-[18px]" />
+              </button>
+              <button
+                type="button"
+                onClick={() => void send()}
+                className="ml-1 grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-600 text-white shadow-sm transition hover:bg-brand-700 active:scale-[0.97] dark:bg-brand-500 dark:hover:bg-brand-400"
+                aria-label={t('chat.send')}
+              >
+                <I.Send className="h-4 w-4" />
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      </footer>
     </div>
   );
 }
@@ -187,7 +206,7 @@ function PinnedBanner({
       role="button"
       tabIndex={0}
       aria-label={t('chat.jumpToMessage')}
-      className="sticky top-0 z-10 cursor-pointer rounded-lg border border-amber-200/90 bg-amber-50/95 px-2.5 py-1 shadow-sm backdrop-blur-sm transition hover:bg-amber-100/90 dark:border-amber-900/50 dark:bg-amber-950/90 dark:hover:bg-amber-900/80"
+      className="flex w-full cursor-pointer items-center gap-2.5 bg-slate-200/95 px-3 py-2.5 transition hover:bg-slate-200 dark:bg-slate-800/95 dark:hover:bg-slate-800 sm:gap-3 sm:px-4"
       onClick={onJump}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -196,29 +215,50 @@ function PinnedBanner({
         }
       }}
     >
-      <div className="flex items-stretch gap-1.5">
-        <div className="flex w-6 shrink-0 flex-col items-center gap-0.5 self-start pt-0.5">
-          <div className="grid h-6 w-6 place-items-center rounded-md bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200">
-            <I.Pin className="h-3.5 w-3.5" />
-          </div>
-          <span className="text-center text-xs tabular-nums leading-none text-amber-900/80 dark:text-amber-200/85">{message.at}</span>
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0 truncate text-sm font-semibold leading-tight text-amber-900 dark:text-amber-100">{t('chat.pinnedBanner')}</div>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onUnpin();
-              }}
-              className="shrink-0 rounded-md border border-amber-300/80 bg-white/80 px-2 py-0.5 text-xs font-medium text-amber-900 hover:bg-white dark:border-amber-800 dark:bg-amber-900/40 dark:text-amber-100 dark:hover:bg-amber-900/70"
-            >
-              {t('chat.unpinChat')}
-            </button>
-          </div>
-          <p className="mt-0.5 line-clamp-2 text-sm leading-snug text-amber-950 dark:text-amber-50">{raw}</p>
-        </div>
+      <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-slate-300/90 text-slate-700 dark:bg-slate-600 dark:text-slate-100">
+        <I.Pin className="h-4 w-4" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="line-clamp-2 text-[15px] font-semibold leading-snug text-slate-900 dark:text-slate-50">{raw}</p>
+        <p className="mt-0.5 truncate text-xs text-slate-600 dark:text-slate-400">{message.at}</p>
+      </div>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onUnpin();
+        }}
+        className="shrink-0 rounded-lg px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-300/70 dark:text-slate-200 dark:hover:bg-slate-600/80"
+      >
+        {t('chat.unpinChat')}
+      </button>
+    </div>
+  );
+}
+
+/** Webhook placeholder like [image] with no usable URL yet. */
+function bareMediaPlaceholder(message: Message): 'image' | 'video' | null {
+  if (message.meta?.slip || message.image === 'slip') return null;
+  const hasHttpImage = typeof message.image === 'string' && /^https?:\/\//i.test(message.image);
+  const hasHttpVideo = typeof message.video === 'string' && /^https?:\/\//i.test(message.video);
+  if (hasHttpImage || hasHttpVideo) return null;
+  const x = String(message.text || '').trim();
+  if (/^\[(image|photo|sticker|ig_reel|reel|story_mention|share|fallback|file)\]$/i.test(x)) return 'image';
+  if (/^\[(video|audio)\]$/i.test(x)) return 'video';
+  return null;
+}
+
+function MediaFallbackCard({ kind, t }: { kind: 'image' | 'video'; t: TFn }) {
+  const Icon = kind === 'video' ? I.VideoCam : I.Image;
+  return (
+    <div className="flex max-w-[280px] items-center gap-3 rounded-2xl border border-slate-200/90 bg-white px-3 py-2.5 shadow-sm dark:border-slate-600 dark:bg-slate-800">
+      <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300">
+        <Icon className="h-5 w-5" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{kind === 'video' ? t('chat.mediaCardVideo') : t('chat.mediaCardImage')}</div>
+        <div className="mt-0.5 text-[11px] leading-snug text-slate-500 dark:text-slate-400">{t('chat.mediaUnavailable')}</div>
+        <div className="mt-1 text-[10px] leading-snug text-slate-400 dark:text-slate-500">{t('chat.mediaUnavailableHint')}</div>
       </div>
     </div>
   );
@@ -246,9 +286,15 @@ function MessageBubble({
   const isCustomer = message.sender === 'customer';
   const isAI = message.sender === 'ai';
   const menuOpen = openMenuId === message.id;
+  const bare = bareMediaPlaceholder(message);
+  const textLooksLikeMediaPlaceholder =
+    Boolean(message.text) &&
+    /^\[(image|video|audio|file|attachment|photo|sticker|ig_reel|reel|share|fallback)\]$/i.test(String(message.text).trim()) &&
+    (Boolean(message.image) || Boolean(message.video));
+  const showTextBubble = Boolean(message.text) && !textLooksLikeMediaPlaceholder && !bare;
 
   const menu = (
-    <div className={'relative shrink-0 ' + (isCustomer ? 'order-3' : 'order-1')} data-msg-actions>
+    <div className="relative shrink-0" data-msg-actions>
       <button
         type="button"
         aria-expanded={menuOpen}
@@ -282,66 +328,78 @@ function MessageBubble({
     </div>
   );
 
+  const outgoingBubble =
+    'whitespace-pre-wrap rounded-2xl rounded-br-md px-3.5 py-2.5 text-sm text-white shadow-sm ' +
+    (isAI ? 'bg-brand-700 dark:bg-brand-600' : 'bg-brand-600 dark:bg-brand-500');
+
   const bubbleColumn = (
-    <div className={'flex max-w-[75%] flex-col ' + (isCustomer ? 'items-start' : 'items-end') + ' ' + (isCustomer ? 'order-2' : 'order-2')}>
-      {message.text && (
-        <div
-          className={
-            'whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-sm shadow-sm ' +
-            (isCustomer
-              ? 'rounded-bl-sm bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100'
-              : isAI
-                ? 'rounded-br-sm bg-gradient-to-br from-brand-600 to-fuchsia-600 text-white'
-                : 'rounded-br-sm bg-slate-900 text-white dark:bg-slate-700')
-          }
-        >
-          {message.text}
-        </div>
-      )}
-      {message.video && /^https?:\/\//i.test(message.video) && (
-        <div
-          className={
-            'mt-1 overflow-hidden rounded-2xl border border-slate-200 shadow-sm dark:border-slate-600 ' +
-            (isCustomer ? 'rounded-bl-sm' : 'rounded-br-sm')
-          }
-        >
-          <video
-            src={message.video}
-            poster={message.image && /^https?:\/\//i.test(message.image) ? message.image : undefined}
-            controls
-            className="max-h-64 max-w-full"
-            playsInline
-            preload="metadata"
-          />
-        </div>
-      )}
-      {message.image && /^https?:\/\//i.test(message.image) && !message.video && (
-        <div
-          className={
-            'mt-1 overflow-hidden rounded-2xl border border-slate-200 shadow-sm dark:border-slate-600 ' +
-            (isCustomer ? 'rounded-bl-sm' : 'rounded-br-sm')
-          }
-        >
-          <img src={message.image} alt="" className="max-h-64 max-w-full object-contain" loading="lazy" />
-        </div>
-      )}
-      {message.meta?.slip && <SlipCard slip={message.meta.slip} />}
-      {message.meta?.productSuggestion && (
-        <div className="mt-1 flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs dark:border-slate-600 dark:bg-slate-800">
-          <div className="grid h-8 w-8 place-items-center rounded-md bg-gradient-to-br from-pink-100 to-amber-100 text-base dark:from-pink-900/50 dark:to-amber-900/50">
-            🧴
-          </div>
-          <div>
-            <div className="font-semibold text-slate-900 dark:text-slate-100">{message.meta.productSuggestion.name}</div>
-            <div className="text-slate-500 dark:text-slate-400">
-              ฿{message.meta.productSuggestion.price.toLocaleString()} • {t('product.left', { n: message.meta.productSuggestion.stock })}
+    <div className={'flex max-w-[78%] flex-col ' + (isCustomer ? 'items-start' : 'items-end') + ' order-2'}>
+      <div
+        className={
+          'flex min-w-0 gap-1 ' + (isCustomer ? 'flex-row items-center' : 'flex-row-reverse items-center')
+        }
+      >
+        <div className={'flex min-w-0 flex-col ' + (isCustomer ? 'items-start' : 'items-end')}>
+          {showTextBubble && (
+            <div
+              className={
+                'whitespace-pre-wrap rounded-2xl px-3.5 py-2.5 text-sm shadow-sm ' +
+                (isCustomer ? 'rounded-bl-md bg-slate-200/90 text-slate-900 dark:bg-slate-700 dark:text-slate-100' : outgoingBubble)
+              }
+            >
+              {message.text}
             </div>
-          </div>
+          )}
+          {bare && (
+            <div className={'mt-1 ' + (isCustomer ? '' : 'flex justify-end')}>
+              <MediaFallbackCard kind={bare} t={t} />
+            </div>
+          )}
+          {message.video && /^https?:\/\//i.test(message.video) && (
+            <div
+              className={
+                'mt-1 max-w-full overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm dark:border-slate-600 ' +
+                (isCustomer ? 'rounded-bl-md' : 'rounded-br-md')
+              }
+            >
+              <video
+                src={message.video}
+                poster={message.image && /^https?:\/\//i.test(message.image) ? message.image : undefined}
+                controls
+                className="max-h-64 max-w-full"
+                playsInline
+                preload="metadata"
+              />
+            </div>
+          )}
+          {message.image && /^https?:\/\//i.test(message.image) && !message.video && (
+            <div
+              className={
+                'mt-1 max-w-full overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm dark:border-slate-600 ' +
+                (isCustomer ? 'rounded-bl-md' : 'rounded-br-md')
+              }
+            >
+              <img src={message.image} alt="" className="max-h-64 max-w-full object-contain" loading="lazy" />
+            </div>
+          )}
+          {message.meta?.slip && <SlipCard slip={message.meta.slip} />}
+          {message.meta?.productSuggestion && (
+            <div className="mt-1 flex items-center gap-2 rounded-xl border border-slate-200/90 bg-white px-2.5 py-1.5 text-xs shadow-sm dark:border-slate-600 dark:bg-slate-800">
+              <div className="grid h-8 w-8 place-items-center rounded-lg bg-pink-100 text-base dark:bg-pink-900/40">🧴</div>
+              <div>
+                <div className="font-semibold text-slate-900 dark:text-slate-100">{message.meta.productSuggestion.name}</div>
+                <div className="text-slate-500 dark:text-slate-400">
+                  ฿{message.meta.productSuggestion.price.toLocaleString()} • {t('product.left', { n: message.meta.productSuggestion.stock })}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
-      )}
-      <div className={'mt-1 flex items-center gap-1.5 text-[10px] text-slate-400 dark:text-slate-500 ' + (isCustomer ? '' : 'justify-end')}>
+        {menu}
+      </div>
+      <div className={'mt-1 flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400 ' + (isCustomer ? '' : 'justify-end')}>
         {isPinned && <span title={t('chat.pinnedBanner')}>📌</span>}
-        {isAI && <span className="chip bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-200">AI</span>}
+        {isAI && <span className="chip bg-brand-100 text-brand-800 dark:bg-brand-900/50 dark:text-brand-200">AI</span>}
         <span>{message.at}</span>
       </div>
     </div>
@@ -350,22 +408,18 @@ function MessageBubble({
   return (
     <div
       data-message-anchor={message.id}
-      className={'group/message flex animate-fade-in items-end gap-1 ' + (isCustomer ? 'justify-start' : 'justify-end')}
+      className={'group/message flex animate-fade-in items-end gap-2 ' + (isCustomer ? 'justify-start' : 'justify-end')}
     >
-      {isCustomer && <img src={avatar} className="order-1 h-6 w-6 shrink-0 rounded-full bg-slate-100 dark:bg-slate-800" alt="" />}
+      {isCustomer && <img src={avatar} className="order-1 h-7 w-7 shrink-0 rounded-full bg-slate-200 ring-2 ring-white dark:bg-slate-700 dark:ring-slate-900" alt="" />}
       {isCustomer ? (
-        <>
-          {bubbleColumn}
-          {menu}
-        </>
+        <>{bubbleColumn}</>
       ) : (
         <>
-          {menu}
           {bubbleColumn}
           <div
             className={
-              'order-3 grid h-6 w-6 shrink-0 place-items-center rounded-full text-[10px] font-bold text-white ' +
-              (isAI ? 'bg-gradient-to-br from-brand-600 to-fuchsia-600' : 'bg-slate-700 dark:bg-slate-600')
+              'order-3 grid h-7 w-7 shrink-0 place-items-center rounded-full text-[9px] font-bold text-white ' +
+              (isAI ? 'bg-brand-700 dark:bg-brand-600' : 'bg-brand-600 dark:bg-brand-500')
             }
           >
             {isAI ? 'AI' : 'A'}

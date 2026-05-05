@@ -1,11 +1,11 @@
-import type { Conversation, Message, MessageSender } from '../types';
+import type { Channel, Conversation, Message, MessageSender } from '../types';
 import { formatMessageClock } from './lineInbox';
 
 /** Payload from `GET /api/fb/conversations` (one item). */
 export interface FbConversationDto {
   id: string;
   customerName: string;
-  channel: 'facebook';
+  channel: 'facebook' | 'ig';
   avatar: string;
   lastSnippet: string;
   updatedAt: string;
@@ -16,6 +16,7 @@ export interface FbConversationDto {
     sender: string;
     text?: string;
     image?: string;
+    video?: string;
     receivedAt: string;
   }>;
 }
@@ -26,21 +27,23 @@ function asSender(s: string): MessageSender {
 }
 
 export function mapFbConversationDto(dto: FbConversationDto, listTime: (iso: string) => string): Conversation {
+  const ch: Channel = dto.channel === 'ig' ? 'ig' : 'facebook';
   return {
     id: dto.id,
     customerName: dto.customerName,
-    channel: 'facebook',
+    channel: ch,
     avatar: dto.avatar,
     lastSnippet: dto.lastSnippet,
     lastAt: listTime(dto.updatedAt),
     unread: dto.unread,
     online: dto.online,
-    messages: dto.messages.map(
+    messages: (dto.messages ?? []).map(
       (m): Message => ({
         id: m.id,
         sender: asSender(m.sender),
         text: m.text,
         image: m.image,
+        video: m.video,
         at: formatMessageClock(m.receivedAt),
       }),
     ),
