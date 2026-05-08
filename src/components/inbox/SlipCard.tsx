@@ -4,6 +4,11 @@ import { useAppPreferences } from '../../context/AppPreferencesContext';
 
 export function SlipCard({ slip }: { slip: SlipResult }) {
   const { t } = useAppPreferences();
+
+  if (slip.mock) {
+    return <MockSlipCard slip={slip} t={t} />;
+  }
+
   const label = t(`slipCard.label.${slip.status}`);
 
   const style = {
@@ -33,7 +38,6 @@ export function SlipCard({ slip }: { slip: SlipResult }) {
             {style.icon}
             {t('slipCard.aiCheck')}: {label}
           </span>
-          {slip.status === 'verified' && <span className="text-[10px] font-medium text-slate-500 dark:text-slate-400">99.7%</span>}
         </div>
         {slip.status === 'verified' && (
           <ul className="mt-2 space-y-0.5 text-[11px] text-slate-600 dark:text-slate-300">
@@ -52,6 +56,28 @@ export function SlipCard({ slip }: { slip: SlipResult }) {
           </ul>
         )}
         {slip.reason && <div className="mt-1.5 text-[11px] text-slate-600 dark:text-slate-300">{slip.reason}</div>}
+      </div>
+    </div>
+  );
+}
+
+function MockSlipCard({ slip, t }: { slip: SlipResult; t: (k: string, v?: Record<string, string>) => string }) {
+  return (
+    <div className="mt-1 w-[280px] overflow-hidden rounded-xl border border-amber-200 bg-amber-50 dark:border-amber-800/60 dark:bg-amber-950/20">
+      <div className="flex items-center gap-1.5 border-b border-amber-200 bg-amber-100/80 px-3 py-1.5 dark:border-amber-800/60 dark:bg-amber-900/30">
+        <I.Sparkle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+        <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-300">{t('slipCard.mockTitle')}</span>
+      </div>
+      <div className="p-2.5">
+        <p className="text-[11px] leading-relaxed text-amber-800 dark:text-amber-200">
+          {t('slipCard.mockBody')}
+        </p>
+        <div className="mt-2 rounded-lg border border-amber-200 bg-white/60 p-2 dark:border-amber-800/40 dark:bg-amber-950/30">
+          <div className="text-[10px] text-slate-500 dark:text-slate-400">{t('slipCard.mockDetected')}</div>
+          <div className="mt-0.5 text-[10px] font-medium text-slate-600 dark:text-slate-300">
+            {slip.bank} • ฿{slip.amount?.toLocaleString()} • {slip.date}
+          </div>
+        </div>
       </div>
     </div>
   );

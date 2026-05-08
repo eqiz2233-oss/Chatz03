@@ -104,6 +104,7 @@ function mockResult(imageHash) {
   const ref = imageHash.slice(0, 14).toUpperCase();
   return {
     status: 'verified',
+    mock: true,
     amount,
     bank,
     ref,

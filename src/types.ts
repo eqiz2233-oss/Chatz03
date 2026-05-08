@@ -33,6 +33,8 @@ export interface SlipResult {
   reason?: string;
   senderName?: string;
   receiverName?: string;
+  /** true when result came from the local mock (no EasySlip token). Never real data. */
+  mock?: boolean;
 }
 
 export interface Conversation {
