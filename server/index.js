@@ -14,6 +14,16 @@ import {
   findPageByPageId,
   findPageByIgId,
 } from './integrations.js';
+import { verifySlipFromUrl, buildCustomerReplyText } from './slipVerifier.js';
+import {
+  listSlips,
+  getSlipById,
+  updateSlipStatus,
+  listShopAccounts,
+  createShopAccount,
+  updateShopAccount,
+  deleteShopAccount,
+} from './slipDb.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
@@ -269,6 +279,7 @@ function fbThreadToApiConversation(thread) {
       image: m.image,
       video: m.video,
       receivedAt: m.receivedAt,
+      meta: m.meta,
     })),
   };
 }
@@ -416,7 +427,105 @@ function threadToApiConversation(thread) {
       image: m.image,
       video: m.video,
       receivedAt: m.receivedAt,
+      meta: m.meta,
     })),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Slip verification — kicked off whenever a customer sends an image attachment.
+// The verifier writes a row to SQLite, attaches the result onto the chat message
+// (so the SlipCard renders in the inbox), and pushes a status reply back to the
+// same channel the slip arrived on.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const slipReplyState = new Map(); // conversationId -> last reply timestamp; cheap throttle
+
+function shouldSendSlipReply(conversationId) {
+  const last = slipReplyState.get(conversationId) || 0;
+  if (Date.now() - last < 1500) return false; // collapse double-fires
+  slipReplyState.set(conversationId, Date.now());
+  return true;
+}
+
+async function downloadLineContent(messageId) {
+  if (!hasToken || !messageId) return null;
+  const url = `https://api-data.line.me/v2/bot/message/${encodeURIComponent(messageId)}/content`;
+  try {
+    const r = await fetch(url, {
+      headers: { Authorization: `Bearer ${lineConfig.channelAccessToken}` },
+    });
+    if (!r.ok) {
+      console.warn('[LINE content] download failed:', r.status);
+      return null;
+    }
+    return Buffer.from(await r.arrayBuffer());
+  } catch (e) {
+    console.warn('[LINE content] error:', e?.message || e);
+    return null;
+  }
+}
+
+/**
+ * Run slip verification for a single inbound image, then auto-reply.
+ *
+ * @param {object} args
+ * @param {{ messages: any[] }} args.thread     The mutable in-memory thread row
+ * @param {{ id: string }} args.msgRow          The message we just appended
+ * @param {string} args.conversationId          API id (line:user:..., fb:user:..., ig:user:...)
+ * @param {string} args.channel                 line | fb | ig
+ * @param {string} args.customerTargetId
+ * @param {string|null} args.customerName
+ * @param {string|null=} args.imageUrl          HTTP URL we can fetch directly
+ * @param {Buffer|null=} args.imageBuffer       Pre-fetched bytes (LINE-internal media)
+ */
+async function runSlipCheck(args) {
+  const { thread, msgRow, conversationId, channel, customerTargetId, customerName, imageUrl, imageBuffer } = args;
+  try {
+    const slip = await verifySlipFromUrl({
+      imageUrl: imageUrl || null,
+      imageBuffer: imageBuffer || null,
+      conversationId,
+      channel,
+      customerTargetId,
+      customerName,
+    });
+
+    // Attach the result onto the customer's message so the chat renders the SlipCard.
+    const target = thread.messages.find((m) => m.id === msgRow.id);
+    if (target) {
+      target.meta = { ...(target.meta || {}), slip: slipToUiResult(slip) };
+      thread.updatedAt = new Date().toISOString();
+    }
+
+    // Auto-reply on the same channel.
+    if (shouldSendSlipReply(conversationId)) {
+      const text = buildCustomerReplyText(slip);
+      try {
+        if (channel === 'line') {
+          await sendLineMessage({ conversationId, text, asAi: true });
+        } else if (channel === 'fb' || channel === 'ig') {
+          await sendMetaMessage({ conversationId, text, asAi: true });
+        }
+      } catch (e) {
+        console.warn('[slip reply] send failed:', e?.message || e);
+      }
+    }
+  } catch (e) {
+    console.error('[slip verify] error:', e?.message || e);
+  }
+}
+
+function slipToUiResult(slip) {
+  if (!slip) return null;
+  return {
+    id: slip.id,
+    status: slip.status,
+    amount: slip.amount,
+    bank: slip.bank || (slip.layers?.qr?.transRef ? 'QR' : '?'),
+    ref: slip.transRef || (slip.imageSha256 ? slip.imageSha256.slice(0, 12) : '?'),
+    date: slip.txnAt || slip.receivedAt,
+    reason: slip.reason || undefined,
   };
 }
 
@@ -547,6 +656,30 @@ app.post(
             if (media.video) row.video = media.video;
             thread.messages.push(row);
             thread.updatedAt = new Date().toISOString();
+
+            // Image attachment in a 1:1 LINE chat → run slip check.
+            if (event.message.type === 'image' && src.kind === 'user') {
+              const conversationId = `line:${src.kind}:${src.targetId}`;
+              const lineMsgId = event.message.id;
+              void (async () => {
+                let imageBuffer = null;
+                let imageUrl = media.image || null;
+                if (lineMsgId && hasToken) {
+                  imageBuffer = await downloadLineContent(lineMsgId);
+                }
+                if (!imageBuffer && !imageUrl) return;
+                await runSlipCheck({
+                  thread,
+                  msgRow: row,
+                  conversationId,
+                  channel: 'line',
+                  customerTargetId: src.targetId,
+                  customerName: thread.displayName || null,
+                  imageUrl,
+                  imageBuffer,
+                });
+              })();
+            }
           }
           if (src.kind === 'user' && lineClient) {
             void enrichUserProfile(src.targetId, thread);
@@ -730,6 +863,22 @@ app.post(
             if (videoUrl) row.video = videoUrl;
             thread.messages.push(row);
             thread.updatedAt = new Date().toISOString();
+
+            // Image attachment from the customer → kick off slip check.
+            if (imageUrl) {
+              const channel = isInstagram ? 'ig' : 'fb';
+              const conversationId = `${channel}:user:${psid}`;
+              void runSlipCheck({
+                thread,
+                msgRow: row,
+                conversationId,
+                channel,
+                customerTargetId: psid,
+                customerName: thread.displayName || null,
+                imageUrl,
+                imageBuffer: null,
+              });
+            }
           }
 
           // FB Page DMs use Graph user-profile lookup; IG profile lookup needs a different
@@ -1162,6 +1311,109 @@ app.post('/api/fb/integration/disconnect', async (_req, res) => {
   } catch (e) {
     res.status(500).json({ error: String(e?.message || e) });
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Slip + shop-account REST API
+// ─────────────────────────────────────────────────────────────────────────────
+
+app.get('/api/slips', (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 200, 1000);
+  const slips = listSlips({ limit });
+  res.json({ slips, count: slips.length });
+});
+
+app.get('/api/slips/:id', (req, res) => {
+  const s = getSlipById(req.params.id);
+  if (!s) return res.status(404).json({ error: 'not found' });
+  res.json({ slip: s });
+});
+
+app.post('/api/slips/:id/confirm', express.json({ limit: '20kb' }), async (req, res) => {
+  const s = getSlipById(req.params.id);
+  if (!s) return res.status(404).json({ error: 'not found' });
+  const reviewedBy = String(req.body?.reviewedBy || 'agent');
+  const updated = updateSlipStatus(s.id, {
+    status: 'verified',
+    reason: 'อนุมัติด้วยตนเองโดยแอดมิน',
+    layers: { ...(s.layers || {}), manual: { ok: true, by: reviewedBy } },
+    reviewedBy,
+  });
+  // Notify the customer on the original channel.
+  try {
+    if (s.conversationId?.startsWith('line:')) {
+      await sendLineMessage({
+        conversationId: s.conversationId,
+        text: buildCustomerReplyText(updated),
+        asAi: true,
+      });
+    } else if (s.conversationId?.startsWith('fb:') || s.conversationId?.startsWith('ig:')) {
+      await sendMetaMessage({
+        conversationId: s.conversationId,
+        text: buildCustomerReplyText(updated),
+        asAi: true,
+      });
+    }
+  } catch (e) {
+    console.warn('manual confirm reply failed:', e?.message || e);
+  }
+  res.json({ slip: updated });
+});
+
+app.post('/api/slips/:id/reject', express.json({ limit: '20kb' }), async (req, res) => {
+  const s = getSlipById(req.params.id);
+  if (!s) return res.status(404).json({ error: 'not found' });
+  const reviewedBy = String(req.body?.reviewedBy || 'agent');
+  const reason = String(req.body?.reason || 'ไม่ผ่านการตรวจสอบโดยแอดมิน');
+  const updated = updateSlipStatus(s.id, {
+    status: 'failed',
+    reason,
+    layers: { ...(s.layers || {}), manual: { ok: false, by: reviewedBy, reason } },
+    reviewedBy,
+  });
+  try {
+    if (s.conversationId?.startsWith('line:')) {
+      await sendLineMessage({
+        conversationId: s.conversationId,
+        text: buildCustomerReplyText(updated),
+        asAi: true,
+      });
+    } else if (s.conversationId?.startsWith('fb:') || s.conversationId?.startsWith('ig:')) {
+      await sendMetaMessage({
+        conversationId: s.conversationId,
+        text: buildCustomerReplyText(updated),
+        asAi: true,
+      });
+    }
+  } catch (e) {
+    console.warn('manual reject reply failed:', e?.message || e);
+  }
+  res.json({ slip: updated });
+});
+
+app.get('/api/shop-accounts', (_req, res) => {
+  res.json({ accounts: listShopAccounts() });
+});
+
+app.post('/api/shop-accounts', express.json({ limit: '5kb' }), (req, res) => {
+  const { bank, accountNo, accountName } = req.body || {};
+  if (!bank || !accountNo || !accountName) {
+    return res.status(400).json({ error: 'bank, accountNo, accountName required' });
+  }
+  const acc = createShopAccount({ bank, accountNo, accountName });
+  res.status(201).json({ account: acc });
+});
+
+app.patch('/api/shop-accounts/:id', express.json({ limit: '5kb' }), (req, res) => {
+  const acc = updateShopAccount(req.params.id, req.body || {});
+  if (!acc) return res.status(404).json({ error: 'not found' });
+  res.json({ account: acc });
+});
+
+app.delete('/api/shop-accounts/:id', (req, res) => {
+  const ok = deleteShopAccount(req.params.id);
+  if (!ok) return res.status(404).json({ error: 'not found' });
+  res.json({ ok: true });
 });
 
 const distIndex = path.join(__dirname, '..', 'dist', 'index.html');

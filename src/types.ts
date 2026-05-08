@@ -25,12 +25,50 @@ export interface ProductSuggestion {
 }
 
 export interface SlipResult {
+  /** Server-side row id (omitted for legacy/mock data). */
+  id?: string;
   status: 'pending' | 'verified' | 'failed' | 'duplicate';
-  amount?: number;
+  amount?: number | null;
   bank?: string;
   ref?: string;
   date?: string;
   reason?: string;
+}
+
+/** Full row returned from `GET /api/slips`. */
+export interface SlipRecord {
+  id: string;
+  conversationId: string | null;
+  channel: 'line' | 'fb' | 'ig' | null;
+  customerTargetId: string | null;
+  customerName: string | null;
+  imageUrl: string | null;
+  imageSha256: string | null;
+  imagePhash: string | null;
+  transRef: string | null;
+  amount: number | null;
+  bank: string | null;
+  senderName: string | null;
+  senderAccount: string | null;
+  receiverName: string | null;
+  receiverAccount: string | null;
+  txnAt: string | null;
+  status: SlipResult['status'];
+  reason: string | null;
+  layers: Record<string, unknown> | null;
+  orderId: string | null;
+  reviewedBy: string | null;
+  receivedAt: string;
+  updatedAt: string;
+}
+
+export interface ShopAccount {
+  id: string;
+  bank: string;
+  accountNo: string;
+  accountName: string;
+  isActive: boolean;
+  createdAt: string;
 }
 
 export interface Conversation {

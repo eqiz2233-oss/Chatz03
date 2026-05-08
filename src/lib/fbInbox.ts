@@ -1,4 +1,4 @@
-import type { Channel, Conversation, Message, MessageSender } from '../types';
+import type { Channel, Conversation, Message, MessageSender, SlipResult } from '../types';
 import { formatMessageClock } from './lineInbox';
 
 /** Payload from `GET /api/fb/conversations` (one item). */
@@ -18,6 +18,7 @@ export interface FbConversationDto {
     image?: string;
     video?: string;
     receivedAt: string;
+    meta?: { slip?: SlipResult };
   }>;
 }
 
@@ -45,6 +46,7 @@ export function mapFbConversationDto(dto: FbConversationDto, listTime: (iso: str
         image: m.image,
         video: m.video,
         at: formatMessageClock(m.receivedAt),
+        meta: m.meta as Message['meta'],
       }),
     ),
     joinedDays: 0,

@@ -9,6 +9,13 @@ import {
   openFbConnectPopup,
   type FbIntegrationStatus,
 } from '../../lib/fbIntegration';
+import {
+  createShopAccount,
+  deleteShopAccount,
+  fetchShopAccounts,
+  updateShopAccount,
+} from '../../lib/slips';
+import type { ShopAccount } from '../../types';
 
 export function SettingsView() {
   const { t, theme, setTheme, locale, setLocale } = useAppPreferences();
@@ -97,18 +104,7 @@ export function SettingsView() {
         <section className="card p-5">
           <div className="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">{t('settings.payment')}</div>
           <div className="space-y-3">
-            <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-sm font-medium text-slate-900 dark:text-slate-100">{t('settings.centralAccount')}</div>
-                  <div className="font-mono text-xs text-slate-500 dark:text-slate-400">KBANK 123-4-56789-0 • Chatz Co.</div>
-                </div>
-                <button className="btn-secondary text-xs">
-                  <I.Copy className="h-3.5 w-3.5" />
-                  {t('settings.copy')}
-                </button>
-              </div>
-            </div>
+            <ShopAccountsCard t={t} />
             <Toggle title={t('settings.ocr')} desc={t('settings.ocrD')} on />
             <Toggle title={t('settings.dedupe')} desc={t('settings.dedupeD')} on />
             <Toggle title={t('settings.bankApi')} desc={t('settings.bankApiD')} on />
@@ -249,6 +245,185 @@ function Toggle({ title, desc, on }: { title: string; desc: string; on?: boolean
         <span className={'block h-4 w-4 rounded-full bg-white shadow transition ' + (on ? 'translate-x-4' : '')} />
       </span>
     </label>
+  );
+}
+
+const THAI_BANKS: { value: string; label: string }[] = [
+  { value: 'KBANK', label: 'กสิกรไทย (KBANK)' },
+  { value: 'SCB', label: 'ไทยพาณิชย์ (SCB)' },
+  { value: 'BBL', label: 'กรุงเทพ (BBL)' },
+  { value: 'KTB', label: 'กรุงไทย (KTB)' },
+  { value: 'BAY', label: 'กรุงศรี (BAY/Krungsri)' },
+  { value: 'TTB', label: 'ทีทีบี (TTB)' },
+  { value: 'GSB', label: 'ออมสิน (GSB)' },
+  { value: 'BAAC', label: 'ธ.ก.ส. (BAAC)' },
+  { value: 'CIMB', label: 'CIMB Thai' },
+  { value: 'UOB', label: 'UOB' },
+  { value: 'TISCO', label: 'TISCO' },
+  { value: 'KKP', label: 'เกียรตินาคินภัทร (KKP)' },
+  { value: 'LH', label: 'LH Bank' },
+  { value: 'TRUEMONEY', label: 'TrueMoney Wallet' },
+  { value: 'PROMPTPAY', label: 'PromptPay' },
+];
+
+function ShopAccountsCard({ t }: { t: (k: string) => string }) {
+  const [accounts, setAccounts] = useState<ShopAccount[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [form, setForm] = useState({ bank: 'KBANK', accountNo: '', accountName: '' });
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setAccounts(await fetchShopAccounts());
+    } catch (e) {
+      setErr(String((e as Error).message || e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const onAdd = async () => {
+    if (!form.accountNo.trim() || !form.accountName.trim()) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await createShopAccount(form);
+      setForm({ bank: form.bank, accountNo: '', accountName: '' });
+      await load();
+    } catch (e) {
+      setErr(String((e as Error).message || e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onToggle = async (acc: ShopAccount) => {
+    setBusy(true);
+    try {
+      await updateShopAccount(acc.id, { isActive: !acc.isActive });
+      await load();
+    } catch (e) {
+      setErr(String((e as Error).message || e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onDelete = async (acc: ShopAccount) => {
+    if (!confirm(t('settings.shopAccount.confirmDelete'))) return;
+    setBusy(true);
+    try {
+      await deleteShopAccount(acc.id);
+      await load();
+    } catch (e) {
+      setErr(String((e as Error).message || e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copy = (text: string) => {
+    void navigator.clipboard?.writeText(text);
+  };
+
+  return (
+    <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+      <div className="mb-2 flex items-center justify-between">
+        <div>
+          <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{t('settings.shopAccount.title')}</div>
+          <div className="text-xs text-slate-500 dark:text-slate-400">{t('settings.shopAccount.subtitle')}</div>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="py-4 text-center text-xs text-slate-400">…</div>
+      ) : accounts.length === 0 ? (
+        <div className="rounded-md border border-dashed border-slate-200 px-3 py-4 text-center text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400">
+          {t('settings.shopAccount.empty')}
+        </div>
+      ) : (
+        <ul className="space-y-2">
+          {accounts.map((a) => (
+            <li
+              key={a.id}
+              className={
+                'flex items-center justify-between gap-3 rounded-md border px-3 py-2 ' +
+                (a.isActive
+                  ? 'border-emerald-200 bg-emerald-50/40 dark:border-emerald-900/40 dark:bg-emerald-950/20'
+                  : 'border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/40')
+              }
+            >
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{a.accountName}</div>
+                <div className="font-mono text-xs text-slate-500 dark:text-slate-400">
+                  {a.bank} • {a.accountNo}
+                </div>
+              </div>
+              <div className="flex items-center gap-1">
+                <button onClick={() => copy(a.accountNo)} className="btn-ghost text-xs" title={t('settings.copy')}>
+                  <I.Copy className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={() => void onToggle(a)}
+                  disabled={busy}
+                  className={
+                    'chip text-xs ' +
+                    (a.isActive
+                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                      : 'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300')
+                  }
+                >
+                  {a.isActive ? t('settings.shopAccount.active') : t('settings.shopAccount.inactive')}
+                </button>
+                <button onClick={() => void onDelete(a)} disabled={busy} className="btn-ghost text-xs text-rose-600 dark:text-rose-400">
+                  <I.X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-[1fr,1fr,1fr,auto]">
+        <select
+          value={form.bank}
+          onChange={(e) => setForm({ ...form, bank: e.target.value })}
+          className="rounded-md border border-slate-200 bg-white px-2 py-2 text-xs dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+        >
+          {THAI_BANKS.map((b) => (
+            <option key={b.value} value={b.value}>
+              {b.label}
+            </option>
+          ))}
+        </select>
+        <input
+          value={form.accountNo}
+          onChange={(e) => setForm({ ...form, accountNo: e.target.value })}
+          placeholder={t('settings.shopAccount.placeholderNo')}
+          className="rounded-md border border-slate-200 bg-white px-2 py-2 font-mono text-xs dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+        />
+        <input
+          value={form.accountName}
+          onChange={(e) => setForm({ ...form, accountName: e.target.value })}
+          placeholder={t('settings.shopAccount.placeholderName')}
+          className="rounded-md border border-slate-200 bg-white px-2 py-2 text-xs dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+        />
+        <button onClick={() => void onAdd()} disabled={busy} className="btn-primary text-xs disabled:opacity-50">
+          {t('settings.shopAccount.add')}
+        </button>
+      </div>
+
+      {err && (
+        <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 p-2 text-[11px] text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-200">
+          {err}
+        </div>
+      )}
+    </div>
   );
 }
 
