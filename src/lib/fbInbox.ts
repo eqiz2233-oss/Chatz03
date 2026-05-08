@@ -1,4 +1,4 @@
-import type { Channel, Conversation, Message, MessageSender } from '../types';
+import type { Channel, Conversation, Message, MessageSender, SlipResult } from '../types';
 import { formatMessageClock } from './lineInbox';
 
 /** Payload from `GET /api/fb/conversations` (one item). */
@@ -11,6 +11,7 @@ export interface FbConversationDto {
   updatedAt: string;
   unread: number;
   online?: boolean;
+  botEnabled?: boolean;
   messages: Array<{
     id: string;
     sender: string;
@@ -18,6 +19,7 @@ export interface FbConversationDto {
     image?: string;
     video?: string;
     receivedAt: string;
+    meta?: { slip?: SlipResult } | null;
   }>;
 }
 
@@ -37,6 +39,7 @@ export function mapFbConversationDto(dto: FbConversationDto, listTime: (iso: str
     lastAt: listTime(dto.updatedAt),
     unread: dto.unread,
     online: dto.online,
+    botEnabled: dto.botEnabled,
     messages: (dto.messages ?? []).map(
       (m): Message => ({
         id: m.id,
@@ -45,6 +48,7 @@ export function mapFbConversationDto(dto: FbConversationDto, listTime: (iso: str
         image: m.image,
         video: m.video,
         at: formatMessageClock(m.receivedAt),
+        meta: m.meta?.slip ? { slip: m.meta.slip } : undefined,
       }),
     ),
     joinedDays: 0,

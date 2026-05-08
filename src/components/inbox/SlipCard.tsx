@@ -19,7 +19,7 @@ export function SlipCard({ slip }: { slip: SlipResult }) {
         <div className="absolute inset-3 rounded-md bg-white p-2 shadow-sm dark:bg-slate-900">
           <div className="flex items-center gap-1.5">
             <div className="h-3 w-3 rounded-sm bg-emerald-500" />
-            <div className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400">KBANK</div>
+            <div className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400">{slip.bank || 'BANK'}</div>
           </div>
           <div className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">{t('slipCard.transferOk')}</div>
           <div className="mt-1 text-base font-bold tabular-nums text-slate-900 dark:text-slate-100">฿ {slip.amount?.toLocaleString()}.00</div>

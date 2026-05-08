@@ -1,4 +1,4 @@
-import type { Conversation, Message, MessageSender } from '../types';
+import type { Conversation, Message, MessageSender, SlipResult } from '../types';
 import type { Locale } from '../i18n/messages';
 
 /** Payload from `GET /api/line/conversations` (one item). */
@@ -11,6 +11,7 @@ export interface LineConversationDto {
   updatedAt: string;
   unread: number;
   online?: boolean;
+  botEnabled?: boolean;
   messages: Array<{
     id: string;
     sender: string;
@@ -18,6 +19,7 @@ export interface LineConversationDto {
     image?: string;
     video?: string;
     receivedAt: string;
+    meta?: { slip?: SlipResult } | null;
   }>;
 }
 
@@ -36,6 +38,7 @@ export function mapLineConversationDto(dto: LineConversationDto, listTime: (iso:
     lastAt: listTime(dto.updatedAt),
     unread: dto.unread,
     online: dto.online,
+    botEnabled: dto.botEnabled,
     messages: (dto.messages ?? []).map(
       (m): Message => ({
         id: m.id,
@@ -44,6 +47,7 @@ export function mapLineConversationDto(dto: LineConversationDto, listTime: (iso:
         image: m.image,
         video: m.video,
         at: formatMessageClock(m.receivedAt),
+        meta: m.meta?.slip ? { slip: m.meta.slip } : undefined,
       }),
     ),
     joinedDays: 0,

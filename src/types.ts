@@ -31,6 +31,8 @@ export interface SlipResult {
   ref?: string;
   date?: string;
   reason?: string;
+  senderName?: string;
+  receiverName?: string;
 }
 
 export interface Conversation {
@@ -48,6 +50,8 @@ export interface Conversation {
   joinedDays?: number;
   /** ร้านปักหมุดข้อความนี้ไว้ด้านบนของห้องแชท (ฝั่งร้านเท่านั้น) */
   pinnedMessageId?: string | null;
+  /** Auto-reply bot toggle (default true). When false, AI cannot send into this thread. */
+  botEnabled?: boolean;
   messages: Message[];
 }
 

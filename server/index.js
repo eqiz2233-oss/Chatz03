@@ -14,6 +14,14 @@ import {
   findPageByPageId,
   findPageByIgId,
 } from './integrations.js';
+import {
+  verifySlipBytes,
+  recordSlip,
+  listSlips,
+  getSlip,
+  slipStats,
+  isEasySlipEnabled,
+} from './slips.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
@@ -98,6 +106,22 @@ function tokenForIgId(igId) {
 
 const eventsBuffer = [];
 const MAX_EVENTS = 200;
+
+/**
+ * Per-conversation auto-reply (bot) toggle. Conversations default to ON; the
+ * UI can flip them off when a human takeover is needed. Any AI auto-reply path
+ * (currently the `asAi` send flag, future webhook-driven autoresponders) must
+ * check `isBotEnabled(conversationId)` before firing.
+ */
+const botStates = new Map(); // conversationId -> boolean
+function isBotEnabled(conversationId) {
+  if (!conversationId) return true;
+  const v = botStates.get(String(conversationId));
+  return v === undefined ? true : Boolean(v);
+}
+function setBotEnabled(conversationId, enabled) {
+  botStates.set(String(conversationId), Boolean(enabled));
+}
 
 /** Last webhook outcome (for /api/health + debugging). */
 let lineWebhookDebug = {
@@ -262,6 +286,7 @@ function fbThreadToApiConversation(thread) {
     updatedAt: thread.updatedAt,
     unread: 0,
     online: false,
+    botEnabled: isBotEnabled(id),
     messages: thread.messages.map((m) => ({
       id: m.id,
       sender: m.sender,
@@ -269,6 +294,7 @@ function fbThreadToApiConversation(thread) {
       image: m.image,
       video: m.video,
       receivedAt: m.receivedAt,
+      meta: m.meta,
     })),
   };
 }
@@ -389,6 +415,58 @@ async function enrichUserProfile(userId, thread) {
   }
 }
 
+/**
+ * LINE images: the public URL is only available for "external" content providers.
+ * For LINE-hosted media we must call the data-api with our channel token.
+ */
+async function fetchLineMessageBytes(messageId) {
+  if (!lineClient || !messageId) return null;
+  try {
+    const blobClient = new line.messagingApi.MessagingApiBlobClient({
+      channelAccessToken: lineConfig.channelAccessToken,
+    });
+    const stream = await blobClient.getMessageContent(messageId);
+    const chunks = [];
+    for await (const chunk of stream) chunks.push(chunk);
+    return Buffer.concat(chunks);
+  } catch (e) {
+    console.warn('LINE getMessageContent failed:', messageId, e?.message || e);
+    return null;
+  }
+}
+
+/**
+ * Run slip verification for a freshly-received image, persist the record, and
+ * mutate the chat message in place so it carries `meta.slip`. Errors are
+ * swallowed — the chat keeps working even if slip checking is down.
+ */
+async function maybeAttachSlip({
+  channel,
+  conversationId,
+  message,           // pushed-onto-thread row, mutated in place
+  thread,            // owning thread, used for customer name/avatar
+  imageUrl,          // public URL if we have one
+  buffer,            // raw bytes (for LINE)
+  mime,
+}) {
+  if (!message || !(imageUrl || buffer)) return;
+  try {
+    const verified = await verifySlipBytes({ imageUrl, buffer, mime });
+    const result = recordSlip(verified, {
+      channel,
+      conversationId,
+      messageId: message.id,
+      customerName: thread.displayName || conversationId,
+      customerAvatar: thread.pictureUrl || '',
+      imageUrl: imageUrl || null,
+    });
+    message.meta = { ...(message.meta || {}), slip: result };
+    thread.updatedAt = new Date().toISOString();
+  } catch (e) {
+    console.warn('[slip] verify failed:', e?.message || e);
+  }
+}
+
 function threadToApiConversation(thread) {
   const id = `line:${thread.kind}:${thread.targetId}`;
   const last = thread.messages[thread.messages.length - 1];
@@ -409,6 +487,7 @@ function threadToApiConversation(thread) {
     updatedAt: thread.updatedAt,
     unread: 0,
     online: false,
+    botEnabled: isBotEnabled(id),
     messages: thread.messages.map((m) => ({
       id: m.id,
       sender: m.sender,
@@ -416,6 +495,7 @@ function threadToApiConversation(thread) {
       image: m.image,
       video: m.video,
       receivedAt: m.receivedAt,
+      meta: m.meta,
     })),
   };
 }
@@ -444,6 +524,7 @@ app.get('/api/health', (_req, res) => {
     fbThreads: fbThreads.size,
     fbConversationsCount,
     fbWebhook: fbWebhookDebug,
+    slipChecker: { enabled: isEasySlipEnabled(), ...slipStats() },
     envPath: path.join(__dirname, '..', '.env'),
   });
 });
@@ -547,6 +628,28 @@ app.post(
             if (media.video) row.video = media.video;
             thread.messages.push(row);
             thread.updatedAt = new Date().toISOString();
+
+            // Slip auto-verify: any image arriving from a customer is treated
+            // as a candidate slip. LINE-hosted images need a channel-token
+            // download; external (contentProvider=external) ones we can fetch
+            // directly via URL.
+            if (event.message.type === 'image') {
+              void (async () => {
+                let buffer = null;
+                if (event.message.contentProvider?.type !== 'external') {
+                  buffer = await fetchLineMessageBytes(event.message.id);
+                }
+                await maybeAttachSlip({
+                  channel: 'line',
+                  conversationId: `line:${src.kind}:${src.targetId}`,
+                  message: row,
+                  thread,
+                  imageUrl: media.image || null,
+                  buffer,
+                  mime: 'image/jpeg',
+                });
+              })();
+            }
           }
           if (src.kind === 'user' && lineClient) {
             void enrichUserProfile(src.targetId, thread);
@@ -577,6 +680,55 @@ app.post(
 // =====================================================================
 // Facebook Messenger
 // =====================================================================
+
+// =====================================================================
+// Bot on/off (per-conversation auto-reply switch)
+// =====================================================================
+
+app.get('/api/bot/state', (req, res) => {
+  const id = String(req.query?.conversationId || '').trim();
+  if (!id) return res.status(400).json({ error: 'conversationId required' });
+  res.json({ conversationId: id, enabled: isBotEnabled(id) });
+});
+
+app.post('/api/bot/state', express.json({ limit: '4kb' }), (req, res) => {
+  const id = String(req.body?.conversationId || '').trim();
+  if (!id) return res.status(400).json({ error: 'conversationId required' });
+  const enabled = req.body?.enabled !== false; // default true if not boolean
+  setBotEnabled(id, enabled);
+  res.json({ conversationId: id, enabled: isBotEnabled(id) });
+});
+
+// =====================================================================
+// Slip verification dashboard
+// =====================================================================
+
+app.get('/api/slips', (_req, res) => {
+  res.json({
+    slips: listSlips(),
+    stats: slipStats(),
+  });
+});
+
+app.get('/api/slips/:id', (req, res) => {
+  const s = getSlip(String(req.params.id || ''));
+  if (!s) return res.status(404).json({ error: 'not found' });
+  res.json({ slip: s });
+});
+
+/** Manually re-verify by URL — useful when an EasySlip token is added later. */
+app.post('/api/slips/verify', express.json({ limit: '50kb' }), async (req, res) => {
+  const url = String(req.body?.imageUrl || '').trim();
+  if (!/^https?:\/\//i.test(url)) {
+    return res.status(400).json({ error: 'imageUrl required' });
+  }
+  try {
+    const result = await verifySlipBytes({ imageUrl: url });
+    res.json({ result, easyslipEnabled: isEasySlipEnabled() });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
 
 app.get('/api/fb/conversations', (_req, res) => {
   const arr = Array.from(fbThreads.values())
@@ -730,6 +882,22 @@ app.post(
             if (videoUrl) row.video = videoUrl;
             thread.messages.push(row);
             thread.updatedAt = new Date().toISOString();
+
+            // Slip auto-verify on inbound images. Meta CDN URLs are public so
+            // we can hand the URL straight to the verifier.
+            if (imageUrl && !videoUrl) {
+              const channel = isInstagram ? 'ig' : 'fb';
+              const conversationId = `${channel}:user:${psid}`;
+              void maybeAttachSlip({
+                channel,
+                conversationId,
+                message: row,
+                thread,
+                imageUrl,
+                buffer: null,
+                mime: null,
+              });
+            }
           }
 
           // FB Page DMs use Graph user-profile lookup; IG profile lookup needs a different
@@ -769,6 +937,9 @@ async function sendLineMessage({ conversationId, text, asAi }) {
   if (!m) return { status: 400, error: 'invalid conversationId (expected line:user|group|room:<id>)' };
   const kind = m[1];
   const targetId = m[2];
+  if (asAi && !isBotEnabled(conversationId)) {
+    return { status: 409, error: 'Bot is turned off for this conversation' };
+  }
   const sender = asAi ? 'ai' : 'agent';
   try {
     await lineClient.pushMessage({ to: targetId, messages: [{ type: 'text', text: body }] });
@@ -794,6 +965,9 @@ async function sendMetaMessage({ conversationId, text, asAi }) {
   if (!m) return { status: 400, error: 'invalid conversationId (expected fb:user:<PSID> or ig:user:<IGSID>)' };
   const channel = m[1];
   const targetId = m[2];
+  if (asAi && !isBotEnabled(conversationId)) {
+    return { status: 409, error: 'Bot is turned off for this conversation' };
+  }
   const sender = asAi ? 'ai' : 'agent';
   try {
     const url = `https://graph.facebook.com/${fbConfig.apiVersion}/me/messages?access_token=${encodeURIComponent(pageToken)}`;

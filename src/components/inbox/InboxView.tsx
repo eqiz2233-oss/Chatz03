@@ -250,6 +250,28 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
     [active],
   );
 
+  const handleToggleBot = useCallback(
+    async (next: boolean) => {
+      if (!active) return;
+      const id = active.id;
+      // Optimistic: flip locally first so the switch feels instant.
+      setList((prev) => prev.map((c) => (c.id === id ? { ...c, botEnabled: next } : c)));
+      try {
+        const r = await fetch('/api/bot/state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ conversationId: id, enabled: next }),
+        });
+        if (!r.ok) throw new Error(String(r.status));
+      } catch {
+        // Roll back on failure.
+        setList((prev) => prev.map((c) => (c.id === id ? { ...c, botEnabled: !next } : c)));
+        window.alert(t('chat.botToggleFailed'));
+      }
+    },
+    [active, t],
+  );
+
   const notice = useMemo(() => {
     if (!health.loaded) return null;
     if (health.fetchFailed) return t('inbox.lineApiUnreachable');
@@ -309,7 +331,7 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <ConversationList conversations={list} activeId={activeId} onSelect={setActiveId} />
         {conversationForThread ? (
-          <ChatThread conversation={conversationForThread} onSend={handleSend} onPinMessage={handlePinMessage} />
+          <ChatThread conversation={conversationForThread} onSend={handleSend} onPinMessage={handlePinMessage} onToggleBot={handleToggleBot} />
         ) : (
           <div className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center bg-[#f5f4fa] px-6 text-center text-sm text-slate-500 dark:bg-slate-950/80 dark:text-slate-400">
             {t('inbox.empty')}

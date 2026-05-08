@@ -9,6 +9,7 @@ interface Props {
   conversation: Conversation;
   onSend: (text: string, sender: 'agent' | 'ai') => void | Promise<void>;
   onPinMessage: (messageId: string | null) => void;
+  onToggleBot?: (enabled: boolean) => void | Promise<void>;
 }
 
 type ChatMediaPreview = { type: 'image' | 'video'; src: string; poster?: string };
@@ -77,12 +78,13 @@ function ChatMediaLightbox({
   );
 }
 
-export function ChatThread({ conversation, onSend, onPinMessage }: Props) {
+export function ChatThread({ conversation, onSend, onPinMessage, onToggleBot }: Props) {
   const { t } = useAppPreferences();
   const [text, setText] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [mediaLightbox, setMediaLightbox] = useState<ChatMediaPreview | null>(null);
+  const botEnabled = conversation.botEnabled !== false;
 
   const quickReplies = useMemo(() => [t('chat.q1'), t('chat.q2'), t('chat.q3'), t('chat.q4')], [t]);
 
@@ -144,6 +146,13 @@ export function ChatThread({ conversation, onSend, onPinMessage }: Props) {
           </div>
         </div>
         <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-1 sm:w-auto sm:justify-end">
+          {onToggleBot && (
+            <BotToggle
+              enabled={botEnabled}
+              onChange={(next) => void onToggleBot(next)}
+              t={t}
+            />
+          )}
           <button type="button" className="rounded-xl p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200" aria-label="Phone">
             <I.Phone className="h-[18px] w-[18px]" />
           </button>
@@ -155,6 +164,13 @@ export function ChatThread({ conversation, onSend, onPinMessage }: Props) {
           </button>
         </div>
       </header>
+
+      {!botEnabled && (
+        <div className="w-full shrink-0 border-b border-amber-200/80 bg-amber-50 px-4 py-2 text-[12px] text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
+          <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-amber-500" />
+          {t('chat.botOffBanner')}
+        </div>
+      )}
 
       {pinnedMessage && (
         <div className="w-full shrink-0 border-b border-slate-300/90 dark:border-slate-700/90">
@@ -305,6 +321,52 @@ function PinnedBanner({
         {t('chat.unpinChat')}
       </button>
     </div>
+  );
+}
+
+/** Slider switch in the chat header for toggling the AI auto-reply bot. */
+function BotToggle({
+  enabled,
+  onChange,
+  t,
+}: {
+  enabled: boolean;
+  onChange: (next: boolean) => void;
+  t: TFn;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={enabled}
+      aria-label={t('chat.botToggleLabel')}
+      onClick={() => onChange(!enabled)}
+      className={
+        'group/bot ml-1 mr-1 flex items-center gap-2 rounded-full border px-2 py-1 text-[11px] font-semibold transition ' +
+        (enabled
+          ? 'border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 dark:border-brand-700/60 dark:bg-brand-950/50 dark:text-brand-200'
+          : 'border-slate-200 bg-slate-100 text-slate-500 hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400')
+      }
+    >
+      <span className="hidden sm:inline">{t('chat.botToggleLabel')}</span>
+      <span
+        aria-hidden
+        className={
+          'relative inline-block h-4 w-7 rounded-full transition ' +
+          (enabled ? 'bg-brand-500 dark:bg-brand-400' : 'bg-slate-300 dark:bg-slate-600')
+        }
+      >
+        <span
+          className={
+            'absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition-all ' +
+            (enabled ? 'left-3.5' : 'left-0.5')
+          }
+        />
+      </span>
+      <span className={enabled ? '' : 'text-slate-500 dark:text-slate-400'}>
+        {enabled ? t('chat.botOn') : t('chat.botOff')}
+      </span>
+    </button>
   );
 }
 
