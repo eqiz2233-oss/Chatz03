@@ -9,37 +9,36 @@ const COLUMN_KEYS: {
   key: OrderStatus;
   labelKey: string;
   emoji: string;
-  /** แถบสีซ้าย (border-l) ให้แต่ละหมวดแยกสายตาชัด */
-  stripe: string;
   headTint: string;
+  topAccent: string;
 }[] = [
   {
     key: 'paid',
     labelKey: 'orders.col.paid',
     emoji: '💰',
-    stripe: 'border-l-[6px] border-l-amber-500',
     headTint: 'bg-amber-50/95 dark:bg-amber-950/35',
+    topAccent: 'border-t-2 border-t-amber-400',
   },
   {
     key: 'pending',
     labelKey: 'orders.col.pending',
     emoji: '⏳',
-    stripe: 'border-l-[6px] border-l-sky-500',
     headTint: 'bg-sky-50/90 dark:bg-sky-950/35',
+    topAccent: 'border-t-2 border-t-sky-400',
   },
   {
     key: 'shipped',
     labelKey: 'orders.col.shipped',
     emoji: '📦',
-    stripe: 'border-l-[6px] border-l-emerald-500',
     headTint: 'bg-emerald-50/90 dark:bg-emerald-950/35',
+    topAccent: 'border-t-2 border-t-emerald-400',
   },
   {
     key: 'cancelled',
     labelKey: 'orders.col.cancelled',
     emoji: '✕',
-    stripe: 'border-l-[6px] border-l-rose-400',
     headTint: 'bg-rose-50/90 dark:bg-rose-950/35',
+    topAccent: 'border-t-2 border-t-rose-400',
   },
 ];
 
@@ -71,7 +70,7 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
               aria-label={col.label}
               className={
                 'flex shrink-0 flex-col overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-md ring-1 ring-slate-900/[0.04] dark:border-slate-700 dark:bg-slate-900 dark:shadow-none dark:ring-white/[0.06] ' +
-                col.stripe
+                col.topAccent
               }
             >
               <div
