@@ -120,6 +120,66 @@ interface FormState {
 const emptyOptionRow = (): OptionGroupFormRow => ({ id: newId('og'), label: '', valuesInput: '' });
 const emptyCustomRow = (): CustomFieldFormRow => ({ id: newId('cf'), key: '', value: '' });
 
+function productToFormState(p: Product): FormState {
+  const ogs =
+    p.optionGroups.length > 0
+      ? p.optionGroups.map((g) => ({
+          id: newId('og'),
+          label: g.label,
+          valuesInput: g.values.join(', '),
+        }))
+      : [emptyOptionRow()];
+  const cfs = p.customFields.map((c) => ({
+    id: newId('cf'),
+    key: c.key,
+    value: c.value,
+  }));
+  return {
+    name: p.name,
+    price: String(p.price),
+    optionGroups: ogs,
+    description: p.description,
+    sellingPoints: p.sellingPoints,
+    stock: p.stock != null ? String(p.stock) : '',
+    customFields: cfs,
+  };
+}
+
+/** ร่างสินค้าจากฟอร์ม (ยังไม่มี id / emoji สำหรับสร้างใหม่) */
+function buildProductBody(form: FormState): Omit<Product, 'id' | 'imageEmoji'> | null {
+  if (!form.name.trim() || !form.price) return null;
+
+  const optionGroups: ProductOptionGroup[] = form.optionGroups
+    .map((g) => ({
+      label: g.label.trim(),
+      values: parseValuesInput(g.valuesInput),
+    }))
+    .filter((g) => g.label && g.values.length > 0);
+
+  const customFields: ProductCustomField[] = form.customFields
+    .map((r) => ({ key: r.key.trim(), value: r.value.trim() }))
+    .filter((r) => r.key);
+
+  const isReady = Boolean(
+    form.name.trim() &&
+    form.price &&
+    optionGroups.length > 0 &&
+    form.description.trim() &&
+    form.sellingPoints.trim(),
+  );
+
+  return {
+    name: form.name.trim(),
+    price: Number(form.price),
+    optionGroups,
+    description: form.description.trim(),
+    sellingPoints: form.sellingPoints.trim(),
+    stock: form.stock.trim() ? Number(form.stock) : undefined,
+    customFields,
+    aiReady: isReady,
+  };
+}
+
 const BLANK: FormState = {
   name: '',
   price: '',
@@ -134,65 +194,80 @@ function formatOptionSummary(groups: ProductOptionGroup[]): string {
   return groups.map((g) => `${g.label}: ${g.values.join(' ')}`).join(' · ');
 }
 
+type ShopMode = 'list' | 'add' | 'edit';
+
 export function ShopBrainView() {
   const [products, setProducts] = useState<Product[]>(SEED);
-  const [mode, setMode] = useState<'list' | 'add'>('list');
+  const [mode, setMode] = useState<ShopMode>('list');
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(BLANK);
 
   const aiReady = products.filter((p) => p.aiReady).length;
-  const pct = Math.round((aiReady / products.length) * 100);
+  const pct = products.length === 0 ? 0 : Math.round((aiReady / products.length) * 100);
   const slotsRemaining = Math.max(0, SHOP_PRODUCT_SLOT_LIMIT - products.length);
   const canAddProduct = slotsRemaining > 0;
 
   const handleSave = () => {
-    if (!form.name.trim() || !form.price || products.length >= SHOP_PRODUCT_SLOT_LIMIT) return;
+    const body = buildProductBody(form);
+    if (!body) return;
 
-    const optionGroups: ProductOptionGroup[] = form.optionGroups
-      .map((g) => ({
-        label: g.label.trim(),
-        values: parseValuesInput(g.valuesInput),
-      }))
-      .filter((g) => g.label && g.values.length > 0);
-
-    const customFields: ProductCustomField[] = form.customFields
-      .map((r) => ({ key: r.key.trim(), value: r.value.trim() }))
-      .filter((r) => r.key);
-
-    const isReady = Boolean(
-      form.name.trim() &&
-      form.price &&
-      optionGroups.length > 0 &&
-      form.description.trim() &&
-      form.sellingPoints.trim(),
-    );
-
-    setProducts((prev) => [
-      ...prev,
-      {
-        id: 'p' + Date.now(),
-        name: form.name.trim(),
-        price: Number(form.price),
-        optionGroups,
-        description: form.description.trim(),
-        sellingPoints: form.sellingPoints.trim(),
-        stock: form.stock.trim() ? Number(form.stock) : undefined,
-        customFields,
-        imageEmoji: '📦',
-        aiReady: isReady,
-      },
-    ]);
+    if (editingId) {
+      setProducts((list) =>
+        list.map((p) =>
+          p.id === editingId
+            ? {
+                ...body,
+                id: editingId,
+                imageEmoji: p.imageEmoji,
+              }
+            : p,
+        ),
+      );
+    } else {
+      if (products.length >= SHOP_PRODUCT_SLOT_LIMIT) return;
+      setProducts((prev) => [
+        ...prev,
+        {
+          ...body,
+          id: 'p' + Date.now(),
+          imageEmoji: '📦',
+        },
+      ]);
+    }
     setForm(BLANK);
+    setEditingId(null);
     setMode('list');
   };
 
-  if (mode === 'add') {
+  const openAdd = () => {
+    if (!canAddProduct) return;
+    setEditingId(null);
+    setForm(BLANK);
+    setMode('add');
+  };
+
+  const openEdit = (p: Product) => {
+    setEditingId(p.id);
+    setForm(productToFormState(p));
+    setMode('edit');
+  };
+
+  const confirmDelete = (id: string, name: string) => {
+    const ok = window.confirm(`ลบสินค้า “${name}” ใช่หรือไม่?\nการลบจะทำทันทีและย้อนกลับไม่ได้`);
+    if (!ok) return;
+    setProducts((prev) => prev.filter((p) => p.id !== id));
+  };
+
+  if (mode === 'add' || mode === 'edit') {
     return (
       <AddForm
         form={form}
         setForm={setForm}
+        isEdit={mode === 'edit'}
         onSave={handleSave}
         onBack={() => {
           setForm(BLANK);
+          setEditingId(null);
           setMode('list');
         }}
         slotsRemaining={slotsRemaining}
@@ -219,7 +294,7 @@ export function ShopBrainView() {
               </span>
             </p>
           </div>
-          <button onClick={() => canAddProduct && setMode('add')} disabled={!canAddProduct} className="btn-primary gap-2 disabled:cursor-not-allowed disabled:opacity-40">
+          <button onClick={openAdd} disabled={!canAddProduct} className="btn-primary gap-2 disabled:cursor-not-allowed disabled:opacity-40">
             <I.Plus className="h-4 w-4" />
             เพิ่มสินค้า
           </button>
@@ -240,10 +315,18 @@ export function ShopBrainView() {
       <div className="flex-1 overflow-y-auto p-5">
         <div className="space-y-2">
           {products.map((p) => (
-            <ProductRow key={p.id} product={p} slotsRemaining={slotsRemaining} slotLimit={SHOP_PRODUCT_SLOT_LIMIT} usedSlots={products.length} />
+            <ProductRow
+              key={p.id}
+              product={p}
+              slotsRemaining={slotsRemaining}
+              slotLimit={SHOP_PRODUCT_SLOT_LIMIT}
+              usedSlots={products.length}
+              onEdit={() => openEdit(p)}
+              onDelete={() => confirmDelete(p.id, p.name)}
+            />
           ))}
           <button
-            onClick={() => canAddProduct && setMode('add')}
+            onClick={openAdd}
             disabled={!canAddProduct}
             className="mt-1 flex w-full items-center gap-3 rounded-xl border-2 border-dashed border-slate-200 px-5 py-4 text-sm text-slate-400 transition hover:border-brand-300 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:hover:border-brand-600 dark:hover:text-brand-400"
           >
@@ -261,40 +344,95 @@ function ProductRow({
   slotsRemaining,
   slotLimit,
   usedSlots,
+  onEdit,
+  onDelete,
 }: {
   product: Product;
   slotsRemaining: number;
   slotLimit: number;
   usedSlots: number;
+  onEdit: () => void;
+  onDelete: () => void;
 }) {
   const optLine = formatOptionSummary(p.optionGroups);
   const customLine = p.customFields.map((c) => `${c.key}: ${c.value}`).join(' · ');
 
   return (
-    <div className="flex items-center gap-4 rounded-xl border border-slate-200 bg-white px-5 py-3.5 dark:border-slate-700 dark:bg-slate-900">
-      <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-slate-50 text-2xl dark:bg-slate-800">{p.imageEmoji}</div>
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{p.name}</div>
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500 dark:text-slate-400">
-          <span className="font-medium text-slate-700 dark:text-slate-300">฿{p.price.toLocaleString()}</span>
-          {optLine && <span className="truncate">{optLine}</span>}
-          {p.stock != null && <span>สต๊อก {p.stock}</span>}
-          {customLine && <span className="truncate text-slate-400 dark:text-slate-500">{customLine}</span>}
-          <span className="text-slate-400 dark:text-slate-500">·</span>
-          <span className={slotsRemaining > 0 ? 'text-slate-500 dark:text-slate-400' : 'font-medium text-amber-600 dark:text-amber-400'}>
+    <div className="flex gap-4 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+      <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-slate-50 text-2xl ring-1 ring-slate-100 dark:bg-slate-800 dark:ring-slate-700">
+        {p.imageEmoji}
+      </div>
+      <div className="min-w-0 flex-1 space-y-2.5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold leading-snug text-slate-900 dark:text-slate-100">{p.name}</h3>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+              <span className="font-semibold tabular-nums text-slate-800 dark:text-slate-200">฿{p.price.toLocaleString()}</span>
+              {optLine && (
+                <>
+                  <span className="text-slate-300 dark:text-slate-600" aria-hidden>
+                    ·
+                  </span>
+                  <span className="min-w-0 truncate">{optLine}</span>
+                </>
+              )}
+              {p.stock != null && (
+                <>
+                  <span className="text-slate-300 dark:text-slate-600" aria-hidden>
+                    ·
+                  </span>
+                  <span>สต๊อก {p.stock}</span>
+                </>
+              )}
+              {customLine && (
+                <>
+                  <span className="text-slate-300 dark:text-slate-600" aria-hidden>
+                    ·
+                  </span>
+                  <span className="min-w-0 truncate text-slate-400 dark:text-slate-500">{customLine}</span>
+                </>
+              )}
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-slate-100/90 p-0.5 ring-1 ring-slate-200/80 dark:bg-slate-800/80 dark:ring-slate-600">
+            <button
+              type="button"
+              onClick={onEdit}
+              aria-label="แก้ไขสินค้า"
+              title="แก้ไข"
+              className="grid h-8 w-8 place-items-center rounded-md text-slate-500 transition hover:bg-white hover:text-brand-600 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-brand-400"
+            >
+              <I.Pencil className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={onDelete}
+              aria-label="ลบสินค้า"
+              title="ลบ"
+              className="grid h-8 w-8 place-items-center rounded-md text-slate-400 transition hover:bg-rose-500/10 hover:text-rose-600 dark:text-slate-500 dark:hover:text-rose-400"
+            >
+              <I.Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-2.5 dark:border-slate-800">
+          <span
+            className={
+              'text-[11px] leading-snug ' +
+              (slotsRemaining > 0 ? 'text-slate-500 dark:text-slate-400' : 'font-medium text-amber-600 dark:text-amber-400')
+            }
+          >
             เพิ่มรายการได้อีก {slotsRemaining} ชิ้น ({usedSlots}/{slotLimit})
           </span>
+          {p.aiReady ? (
+            <span className="chip bg-emerald-50 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+              <I.Check className="h-3 w-3" />
+              AI พร้อมตอบ
+            </span>
+          ) : (
+            <span className="chip bg-amber-50 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200">⚠️ ขาดข้อมูล</span>
+          )}
         </div>
-      </div>
-      <div className="shrink-0">
-        {p.aiReady ? (
-          <span className="chip bg-emerald-50 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
-            <I.Check className="h-3 w-3" />
-            AI พร้อมตอบ
-          </span>
-        ) : (
-          <span className="chip bg-amber-50 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200">⚠️ ขาดข้อมูล</span>
-        )}
       </div>
     </div>
   );
@@ -314,6 +452,7 @@ function SectionTitle({ n, title, sub }: { n: string; title: string; sub?: strin
 function AddForm({
   form,
   setForm,
+  isEdit,
   onSave,
   onBack,
   slotsRemaining,
@@ -322,6 +461,7 @@ function AddForm({
 }: {
   form: FormState;
   setForm: React.Dispatch<React.SetStateAction<FormState>>;
+  isEdit: boolean;
   onSave: () => void;
   onBack: () => void;
   slotsRemaining: number;
@@ -367,9 +507,9 @@ function AddForm({
           <I.X className="h-4 w-4" />
         </button>
         <div className="flex-1">
-          <div className="text-sm font-semibold text-slate-900 dark:text-white">เพิ่มสินค้า</div>
+          <div className="text-sm font-semibold text-slate-900 dark:text-white">{isEdit ? 'แก้ไขสินค้า' : 'เพิ่มสินค้า'}</div>
           <div className="text-xs text-slate-500 dark:text-slate-400">
-            กรอกข้อมูล = สอน AI ขายของให้คุณ
+            {isEdit ? 'แก้แล้วกดบันทึก — ข้อมูลจะอัปเดตให้ AI' : 'กรอกข้อมูล = สอน AI ขายของให้คุณ'}
             <span className="text-slate-400 dark:text-slate-500"> · </span>
             <span className={slotsRemaining > 0 ? 'font-medium text-slate-600 dark:text-slate-300' : 'font-semibold text-amber-600 dark:text-amber-400'}>
               เพิ่มได้อีก {slotsRemaining} ชิ้น ({usedSlots}/{slotLimit})
@@ -379,10 +519,10 @@ function AddForm({
         <button
           type="button"
           onClick={onSave}
-          disabled={!hasValidCore || slotsRemaining <= 0}
+          disabled={!hasValidCore || (!isEdit && slotsRemaining <= 0)}
           className="btn-primary text-sm disabled:cursor-not-allowed disabled:opacity-40"
         >
-          บันทึก
+          {isEdit ? 'บันทึกการแก้ไข' : 'บันทึก'}
         </button>
       </div>
 

@@ -5,11 +5,42 @@ import { ChannelIcon, I } from '../Icons';
 import { useAppPreferences } from '../../context/AppPreferencesContext';
 import { resolveConversationIdForOrder } from '../../lib/orderInbox';
 
-const COLUMN_KEYS: { key: OrderStatus; labelKey: string; emoji: string }[] = [
-  { key: 'pending', labelKey: 'orders.col.pending', emoji: '⏳' },
-  { key: 'paid', labelKey: 'orders.col.paid', emoji: '💰' },
-  { key: 'shipped', labelKey: 'orders.col.shipped', emoji: '📦' },
-  { key: 'cancelled', labelKey: 'orders.col.cancelled', emoji: '✕' },
+const COLUMN_KEYS: {
+  key: OrderStatus;
+  labelKey: string;
+  emoji: string;
+  /** แถบสีซ้าย (border-l) ให้แต่ละหมวดแยกสายตาชัด */
+  stripe: string;
+  headTint: string;
+}[] = [
+  {
+    key: 'paid',
+    labelKey: 'orders.col.paid',
+    emoji: '💰',
+    stripe: 'border-l-[6px] border-l-amber-500',
+    headTint: 'bg-amber-50/95 dark:bg-amber-950/35',
+  },
+  {
+    key: 'pending',
+    labelKey: 'orders.col.pending',
+    emoji: '⏳',
+    stripe: 'border-l-[6px] border-l-sky-500',
+    headTint: 'bg-sky-50/90 dark:bg-sky-950/35',
+  },
+  {
+    key: 'shipped',
+    labelKey: 'orders.col.shipped',
+    emoji: '📦',
+    stripe: 'border-l-[6px] border-l-emerald-500',
+    headTint: 'bg-emerald-50/90 dark:bg-emerald-950/35',
+  },
+  {
+    key: 'cancelled',
+    labelKey: 'orders.col.cancelled',
+    emoji: '✕',
+    stripe: 'border-l-[6px] border-l-rose-400',
+    headTint: 'bg-rose-50/90 dark:bg-rose-950/35',
+  },
 ];
 
 export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest) => void }) {
@@ -29,24 +60,38 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
   return (
     <div className="flex h-screen flex-1 flex-col bg-slate-50 dark:bg-slate-950">
       <Header t={t} />
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overflow-x-hidden p-5">
+      <div className="flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto overflow-x-hidden p-5 pb-10">
         {columns.map((col) => {
           const items = list.filter((o) => o.status === col.key);
           const total = items.reduce((s, o) => s + o.amount, 0);
           return (
-            <div
+            <section
               key={col.key}
-              className="flex shrink-0 flex-col gap-2 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900"
+              role="region"
+              aria-label={col.label}
+              className={
+                'flex shrink-0 flex-col overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-md ring-1 ring-slate-900/[0.04] dark:border-slate-700 dark:bg-slate-900 dark:shadow-none dark:ring-white/[0.06] ' +
+                col.stripe
+              }
             >
-              <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2 dark:border-slate-800">
-                <div className="flex items-center gap-2">
-                  <span className="text-base">{col.emoji}</span>
-                  <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{col.label}</span>
-                  <span className="chip bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">{items.length}</span>
+              <div
+                className={
+                  'flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200/80 px-4 py-3 dark:border-slate-800 ' +
+                  col.headTint
+                }
+              >
+                <div className="flex items-center gap-2.5">
+                  <span className="text-lg leading-none" aria-hidden>
+                    {col.emoji}
+                  </span>
+                  <span className="text-sm font-semibold tracking-tight text-slate-900 dark:text-slate-100">{col.label}</span>
+                  <span className="rounded-full bg-white/90 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-slate-700 shadow-sm ring-1 ring-slate-200/80 dark:bg-slate-800/90 dark:text-slate-200 dark:ring-slate-600">
+                    {items.length}
+                  </span>
                 </div>
-                <div className="text-xs font-semibold tabular-nums text-slate-500 dark:text-slate-400">฿{total.toLocaleString()}</div>
+                <div className="text-xs font-semibold tabular-nums text-slate-600 dark:text-slate-300">฿{total.toLocaleString()}</div>
               </div>
-              <div className="flex flex-row items-stretch gap-2 overflow-x-auto overflow-y-hidden pb-1 [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5">
+              <div className="flex min-h-[7.5rem] min-w-0 flex-row items-stretch gap-2 overflow-x-auto overflow-y-hidden bg-slate-50/60 p-3 pb-2 dark:bg-slate-950/50 [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5">
                 {items.map((o) => (
                   <div
                     key={o.id}
@@ -89,7 +134,7 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
                   </div>
                 )}
               </div>
-            </div>
+            </section>
           );
         })}
       </div>
@@ -108,10 +153,6 @@ function Header({ t }: { t: (k: string) => string }) {
         <button className="btn-secondary text-xs">
           <I.Filter className="h-3.5 w-3.5" />
           {t('orders.filter')}
-        </button>
-        <button className="btn-secondary text-xs">
-          <I.Truck className="h-3.5 w-3.5" />
-          {t('orders.bulkShip')}
         </button>
         <button className="btn-primary text-xs">
           <I.Plus className="h-4 w-4" />

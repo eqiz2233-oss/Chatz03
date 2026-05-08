@@ -34,7 +34,6 @@ const items: Item[] = [
   { key: 'slips', labelKey: 'nav.slips', icon: <I.Receipt className="h-5 w-5" />, badge: 'AI' },
   { key: 'shop', labelKey: 'nav.shop', icon: <I.Store className="h-5 w-5" /> },
   { key: 'analytics', labelKey: 'nav.analytics', icon: <I.Chart className="h-5 w-5" /> },
-  { key: 'settings', labelKey: 'nav.settings', icon: <I.Settings className="h-5 w-5" /> },
 ];
 
 interface Props {
@@ -155,8 +154,22 @@ export function Sidebar({ active, onChange }: Props) {
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> {t('sidebar.online')}
           </div>
         </div>
-        <button type="button" className="btn-ghost p-1.5">
-          <I.Bell className="h-4 w-4" />
+        <button
+          type="button"
+          className={
+            'btn-ghost rounded-xl p-1.5 ' +
+            (active === 'settings'
+              ? 'bg-brand-600 text-white dark:bg-brand-500'
+              : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100')
+          }
+          aria-label={t('nav.settings')}
+          title={t('nav.settings')}
+          onClick={() => {
+            onChange('settings');
+            if (narrow) scheduleClose();
+          }}
+        >
+          <I.Settings className="h-4 w-4" />
         </button>
       </div>
     </aside>

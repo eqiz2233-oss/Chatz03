@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { Conversation, Message } from '../../types';
 import { ChannelIcon, I } from '../Icons';
 import { SlipCard } from './SlipCard';
@@ -10,11 +11,78 @@ interface Props {
   onPinMessage: (messageId: string | null) => void;
 }
 
+type ChatMediaPreview = { type: 'image' | 'video'; src: string; poster?: string };
+
+function ChatMediaLightbox({
+  item,
+  onClose,
+  t,
+}: {
+  item: ChatMediaPreview;
+  onClose: () => void;
+  t: (key: string, vars?: Record<string, string | number>) => string;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [onClose]);
+
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={item.type === 'image' ? t('chat.pinnedMedia') : t('chat.pinnedVideo')}
+      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/88 p-4 backdrop-blur-[1px]"
+      onClick={onClose}
+    >
+      <button
+        type="button"
+        className="absolute right-3 top-3 z-[201] grid h-11 w-11 place-items-center rounded-full bg-white/12 text-white ring-1 ring-white/35 transition hover:bg-white/22"
+        aria-label={t('chat.closeMedia')}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose();
+        }}
+      >
+        <I.X className="h-6 w-6" />
+      </button>
+      <div
+        className="flex max-h-[min(92vh,calc(100dvh-2rem))] max-w-[min(96vw,calc(100dvw-2rem))] items-center justify-center"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {item.type === 'image' ? (
+          <img src={item.src} alt="" className="max-h-[min(92vh,calc(100dvh-2rem))] max-w-full object-contain shadow-2xl" />
+        ) : (
+          <video
+            key={item.src}
+            src={item.src}
+            poster={item.poster}
+            controls
+            playsInline
+            preload="metadata"
+            className="max-h-[min(92vh,calc(100dvh-2rem))] max-w-full rounded-lg bg-black shadow-2xl"
+          />
+        )}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 export function ChatThread({ conversation, onSend, onPinMessage }: Props) {
   const { t } = useAppPreferences();
   const [text, setText] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [mediaLightbox, setMediaLightbox] = useState<ChatMediaPreview | null>(null);
 
   const quickReplies = useMemo(() => [t('chat.q1'), t('chat.q2'), t('chat.q3'), t('chat.q4')], [t]);
 
@@ -58,6 +126,7 @@ export function ChatThread({ conversation, onSend, onPinMessage }: Props) {
   };
 
   return (
+    <>
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-white dark:bg-slate-900">
       <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-200/90 px-4 py-3 dark:border-slate-800 sm:gap-3 sm:px-5 sm:py-3.5">
         <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -124,6 +193,7 @@ export function ChatThread({ conversation, onSend, onPinMessage }: Props) {
               }}
               openMenuId={openMenuId}
               setOpenMenuId={setOpenMenuId}
+              onOpenMedia={setMediaLightbox}
               t={t}
             />
           ))}
@@ -181,6 +251,8 @@ export function ChatThread({ conversation, onSend, onPinMessage }: Props) {
         </div>
       </footer>
     </div>
+    {mediaLightbox && <ChatMediaLightbox item={mediaLightbox} onClose={() => setMediaLightbox(null)} t={t} />}
+    </>
   );
 }
 
@@ -272,6 +344,7 @@ function MessageBubble({
   onUnpin,
   openMenuId,
   setOpenMenuId,
+  onOpenMedia,
   t,
 }: {
   message: Message;
@@ -281,6 +354,7 @@ function MessageBubble({
   onUnpin: () => void;
   openMenuId: string | null;
   setOpenMenuId: (id: string | null) => void;
+  onOpenMedia: (item: ChatMediaPreview) => void;
   t: TFn;
 }) {
   const isCustomer = message.sender === 'customer';
@@ -358,29 +432,52 @@ function MessageBubble({
           {message.video && /^https?:\/\//i.test(message.video) && (
             <div
               className={
-                'mt-1 max-w-full overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm dark:border-slate-600 ' +
+                'relative mt-1 max-w-full rounded-2xl border border-slate-200/90 bg-black shadow-sm dark:border-slate-600 ' +
                 (isCustomer ? 'rounded-bl-md' : 'rounded-br-md')
               }
             >
+              <button
+                type="button"
+                className={
+                  'absolute top-2 z-[2] grid h-8 w-8 place-items-center rounded-full bg-black/55 text-white ring-1 ring-white/25 backdrop-blur-sm transition hover:bg-black/70 ' +
+                  (isCustomer ? 'right-2' : 'left-2')
+                }
+                aria-label={t('chat.expandMedia')}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenMedia({
+                    type: 'video',
+                    src: message.video!,
+                    poster:
+                      message.image && /^https?:\/\//i.test(message.image) ? message.image : undefined,
+                  });
+                }}
+              >
+                <I.Maximize2 className="h-4 w-4" />
+              </button>
               <video
                 src={message.video}
                 poster={message.image && /^https?:\/\//i.test(message.image) ? message.image : undefined}
                 controls
-                className="max-h-64 max-w-full"
+                controlsList="nodownload"
+                className="max-h-64 w-full rounded-xl object-contain"
                 playsInline
                 preload="metadata"
               />
             </div>
           )}
           {message.image && /^https?:\/\//i.test(message.image) && !message.video && (
-            <div
+            <button
+              type="button"
+              aria-label={t('chat.expandMedia')}
+              onClick={() => onOpenMedia({ type: 'image', src: message.image! })}
               className={
-                'mt-1 max-w-full overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm dark:border-slate-600 ' +
+                'mt-1 block w-full max-w-full cursor-zoom-in overflow-hidden rounded-2xl border border-slate-200/90 bg-white p-0 text-left shadow-sm transition hover:opacity-[0.97] focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:border-slate-600 ' +
                 (isCustomer ? 'rounded-bl-md' : 'rounded-br-md')
               }
             >
-              <img src={message.image} alt="" className="max-h-64 max-w-full object-contain" loading="lazy" />
-            </div>
+              <img src={message.image} alt="" className="max-h-64 w-full object-contain" loading="lazy" />
+            </button>
           )}
           {message.meta?.slip && <SlipCard slip={message.meta.slip} />}
           {message.meta?.productSuggestion && (
