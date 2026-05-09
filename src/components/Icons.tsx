@@ -79,6 +79,15 @@ export const I = {
   Copy: (p: SVGProps<SVGSVGElement>) => (
     <svg {...base} {...p}><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
   ),
+  ChevronRight: (p: SVGProps<SVGSVGElement>) => (
+    <svg {...base} {...p}><polyline points="9 18 15 12 9 6"/></svg>
+  ),
+  Plug: (p: SVGProps<SVGSVGElement>) => (
+    <svg {...base} {...p}><path d="M9 2v6"/><path d="M15 2v6"/><path d="M6 8h12v4a6 6 0 0 1-12 0V8z"/><path d="M12 18v4"/></svg>
+  ),
+  Sparkles: (p: SVGProps<SVGSVGElement>) => (
+    <svg {...base} {...p}><path d="M12 3l1.8 4.6L18 9l-4.2 1.4L12 15l-1.8-4.6L6 9l4.2-1.4L12 3z"/><path d="M19 14l.9 2.3L22 17l-2.1.7L19 20l-.9-2.3L16 17l2.1-.7L19 14z"/></svg>
+  ),
   Store: (p: SVGProps<SVGSVGElement>) => (
     <svg {...base} {...p}><path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9Z"/><path d="m3 9 2.45-4.9A2 2 0 0 1 7.24 3h9.52a2 2 0 0 1 1.8 1.1L21 9"/><path d="M12 3v6"/><path d="M9 9v12"/><path d="M15 9v12"/></svg>
   ),
