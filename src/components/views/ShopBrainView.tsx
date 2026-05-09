@@ -207,52 +207,52 @@ interface ShowcaseProduct {
 
 const SHOWCASE_PRODUCTS: ShowcaseProduct[] = [
   {
-    id: 'macbook-neo',
-    family: 'Mac',
-    name: 'MacBook Neo',
-    subtitle: 'เบา พกง่าย แบตอึดสำหรับทำงานทั้งวัน',
-    fromPrice: 19900,
-    badge: 'NEW',
+    id: 'showcase-1',
+    family: 'สินค้าแนะนำ',
+    name: 'รุ่นเริ่มต้น',
+    subtitle: 'ดีไซน์เรียบ ใช้งานง่าย เหมาะสำหรับลูกค้าทั่วไป',
+    fromPrice: 1990,
+    badge: 'แนะนำ',
     tone: 'from-[#f0f7c8] via-[#d6ef7f] to-[#b7df4a]',
   },
   {
-    id: 'macbook-air',
-    family: 'Mac',
-    name: 'MacBook Air',
-    subtitle: 'ชิปแรงขึ้น จอสวย พร้อมใช้งานในทุกวัน',
-    fromPrice: 36900,
+    id: 'showcase-2',
+    family: 'สินค้าแนะนำ',
+    name: 'รุ่นยอดนิยม',
+    subtitle: 'สมดุลทั้งราคาและฟีเจอร์ เหมาะกับการใช้งานทุกวัน',
+    fromPrice: 3690,
     tone: 'from-[#d7e6f8] via-[#a8c9f2] to-[#7aa9ea]',
   },
   {
-    id: 'macbook-pro',
-    family: 'Mac',
-    name: 'MacBook Pro',
-    subtitle: 'ประสิทธิภาพระดับโปรสำหรับงานหนัก',
-    fromPrice: 56900,
+    id: 'showcase-3',
+    family: 'สินค้าแนะนำ',
+    name: 'รุ่นพรีเมียม',
+    subtitle: 'วัสดุพรีเมียม ฟังก์ชันครบ สำหรับลูกค้าที่ต้องการที่สุด',
+    fromPrice: 5690,
     tone: 'from-[#2f2f37] via-[#23232b] to-[#16161d]',
   },
   {
-    id: 'imac-air',
-    family: 'Mac',
-    name: 'iMac Air',
-    subtitle: 'เดสก์ท็อปดีไซน์บางเฉียบ สีสวยทุกมุม',
-    fromPrice: 43900,
+    id: 'showcase-4',
+    family: 'สินค้าแนะนำ',
+    name: 'รุ่นคลาสสิก',
+    subtitle: 'สเปกไว้ใจได้ ดูแลง่าย เหมาะกับการใช้งานระยะยาว',
+    fromPrice: 4390,
     tone: 'from-[#dbe8ff] via-[#c5d9ff] to-[#9fbefd]',
   },
   {
-    id: 'mac-mini',
-    family: 'Mac',
-    name: 'Mac mini',
-    subtitle: 'เล็กแต่แรง คุ้มสุดสำหรับเริ่มต้นใช้งาน',
-    fromPrice: 22900,
+    id: 'showcase-5',
+    family: 'สินค้าแนะนำ',
+    name: 'รุ่นคุ้มค่า',
+    subtitle: 'ขนาดกะทัดรัด ราคาดี เหมาะกับลูกค้าที่เริ่มต้น',
+    fromPrice: 2290,
     tone: 'from-[#f1f3f8] via-[#d9dfea] to-[#bfc9db]',
   },
   {
-    id: 'studio-pro',
-    family: 'Mac',
-    name: 'Mac Studio Pro',
-    subtitle: 'เครื่องตั้งโต๊ะสำหรับครีเอเตอร์และทีมโปร',
-    fromPrice: 74900,
+    id: 'showcase-6',
+    family: 'สินค้าแนะนำ',
+    name: 'รุ่นโปร',
+    subtitle: 'ประสิทธิภาพสูง รองรับงานหนัก และงานเชิงธุรกิจ',
+    fromPrice: 7490,
     tone: 'from-[#505566] via-[#383d4e] to-[#222737]',
   },
 ];
@@ -426,8 +426,8 @@ export function ShopBrainView() {
           <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
             <div className="mb-4 flex flex-wrap items-end justify-between gap-2 px-1">
               <div>
-                <h2 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Mac</h2>
-                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">ไอเดียหน้าโชว์สินค้าแบบสั้น กระชับ และอ่านง่าย</p>
+                <h2 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">สินค้าแนะนำ</h2>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">หน้าร้านสไตล์มินิมอล เน้นชื่อรุ่น รายละเอียดสั้น และราคาเริ่มต้น</p>
               </div>
               <div className="text-xs text-slate-400 dark:text-slate-500">
                 {showcaseFamilies.join(' · ')} showcase
