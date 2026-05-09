@@ -87,6 +87,44 @@ function primaryFbPageForApi() {
   };
 }
 
+/** Graph `/me` for FB_PAGE_ACCESS_TOKEN when no OAuth page — Settings shows real Page name. */
+let envPageProfileCache = { at: 0, page: null };
+const ENV_PAGE_PROFILE_TTL_MS = 5 * 60 * 1000;
+
+async function fetchEnvFallbackPageProfile() {
+  const tok = fbConfig.fallbackPageAccessToken;
+  if (!tok || listPages().length > 0) return null;
+  const now = Date.now();
+  if (envPageProfileCache.page && now - envPageProfileCache.at < ENV_PAGE_PROFILE_TTL_MS) {
+    return envPageProfileCache.page;
+  }
+  try {
+    const url =
+      `https://graph.facebook.com/${fbConfig.apiVersion}/me` +
+      `?fields=id,name,category,picture.height(128).width(128){url}` +
+      `&access_token=${encodeURIComponent(tok)}`;
+    const r = await fetch(url);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d?.error || !d?.id) {
+      envPageProfileCache = { at: now, page: null };
+      return null;
+    }
+    const page = {
+      id: String(d.id),
+      name: String(d.name || 'Facebook Page'),
+      category: d.category || undefined,
+      picture: d?.picture?.data?.url || undefined,
+      instagram: null,
+      connectedAt: null,
+    };
+    envPageProfileCache = { at: now, page };
+    return page;
+  } catch {
+    envPageProfileCache = { at: now, page: null };
+    return null;
+  }
+}
+
 async function disconnectFb() {
   await clearAllPages();
   refreshFbState();
@@ -782,7 +820,7 @@ app.post(
   express.raw({ type: '*/*', limit: '1mb' }),
   async (req, res) => {
     if (!fbConfigured) {
-      return res.status(500).json({ error: 'FB_PAGE_ACCESS_TOKEN or FB_VERIFY_TOKEN missing' });
+      return res.status(500).json({ error: 'FB_VERIFY_TOKEN is missing (Meta webhook cannot be used without it)' });
     }
 
     const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from('');
@@ -1047,11 +1085,25 @@ function publicBaseUrl(req) {
 /** Map<state, { createdAt, returnTo }> for CSRF on the OAuth roundtrip. */
 const fbOauthStates = new Map();
 
-app.get('/api/fb/integration/status', (_req, res) => {
-  const page = primaryFbPageForApi();
+app.get('/api/fb/integration/status', async (_req, res) => {
+  const oauthPage = primaryFbPageForApi();
+  const replyEnabled = fbHasPageToken();
+  const webhookReady = fbHasVerify;
+  let page = oauthPage;
+  let tokenSource = oauthPage ? 'oauth' : null;
+  if (!page && fbConfig.fallbackPageAccessToken) {
+    const envPage = await fetchEnvFallbackPageProfile();
+    if (envPage) {
+      page = envPage;
+      tokenSource = 'env';
+    }
+  }
   res.json({
-    connected: fbHasPageToken() && Boolean(page),
+    connected: webhookReady || replyEnabled,
+    webhookReady,
+    replyEnabled,
     page,
+    tokenSource,
     oauthAvailable: fbOauthAvailable,
     appId: fbConfig.appId || null,
     needsAppSecret: !fbHasAppSecret,

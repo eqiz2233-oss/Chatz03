@@ -17,8 +17,15 @@ export interface FbConnectedPage {
 }
 
 export interface FbIntegrationStatus {
+  /** True when webhook verify token and/or a Page token is present (channel can be live). */
   connected: boolean;
+  /** FB_VERIFY_TOKEN set — Meta can deliver webhook events to this server. */
+  webhookReady: boolean;
+  /** OAuth Page token or FB_PAGE_ACCESS_TOKEN — required to send replies and resolve some attachments. */
+  replyEnabled: boolean;
   page: FbConnectedPage | null;
+  /** How the Page token was obtained, when known. */
+  tokenSource?: 'oauth' | 'env' | null;
   oauthAvailable: boolean;
   appId: string | null;
   needsAppSecret: boolean;
