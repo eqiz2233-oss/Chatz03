@@ -658,34 +658,6 @@ function AddForm({
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
         <div className="mx-auto max-w-xl space-y-4">
-          {/* ── Templates: friendly chip strip ── */}
-          {templates.length > 0 && (
-            <section className="overflow-hidden rounded-2xl border border-brand-200/60 bg-gradient-to-br from-brand-50 to-white p-4 dark:border-brand-800/50 dark:from-brand-950/40 dark:to-slate-900">
-              <div className="mb-2.5 flex items-center justify-between">
-                <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest text-brand-700 dark:text-brand-300">
-                  ⚡ ใช้แม่แบบเร็ว
-                </span>
-                <button type="button" onClick={onManageTemplates} className="text-[11px] font-medium text-brand-600 hover:underline dark:text-brand-300">
-                  จัดการ →
-                </button>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {templates.map((tpl) => (
-                  <button
-                    key={tpl.id}
-                    type="button"
-                    onClick={() => onApplyTemplate(tpl)}
-                    className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm ring-1 ring-brand-200/80 transition hover:bg-brand-50 hover:ring-brand-400 dark:bg-slate-800 dark:text-slate-200 dark:ring-brand-800/60 dark:hover:bg-slate-700"
-                    title={tpl.optionGroups.map((g) => `${g.label}: ${g.values.join(' ')}`).join(' · ')}
-                  >
-                    <span>{tpl.emoji}</span>
-                    <span>{tpl.name}</span>
-                  </button>
-                ))}
-              </div>
-            </section>
-          )}
-
           {/* ── 📸 Image ── */}
           <ProductCard emoji="📸" title="รูปสินค้า" sub="ใช้รูปสวย ๆ ลูกค้าจะเห็นรูปนี้ก่อนเสมอ">
             <button
