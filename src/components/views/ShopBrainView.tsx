@@ -195,6 +195,68 @@ function formatOptionSummary(groups: ProductOptionGroup[]): string {
 
 type ShopMode = 'list' | 'add' | 'edit' | 'templates';
 
+interface ShowcaseProduct {
+  id: string;
+  family: string;
+  name: string;
+  subtitle: string;
+  fromPrice: number;
+  badge?: string;
+  tone: string;
+}
+
+const SHOWCASE_PRODUCTS: ShowcaseProduct[] = [
+  {
+    id: 'macbook-neo',
+    family: 'Mac',
+    name: 'MacBook Neo',
+    subtitle: 'เบา พกง่าย แบตอึดสำหรับทำงานทั้งวัน',
+    fromPrice: 19900,
+    badge: 'NEW',
+    tone: 'from-[#f0f7c8] via-[#d6ef7f] to-[#b7df4a]',
+  },
+  {
+    id: 'macbook-air',
+    family: 'Mac',
+    name: 'MacBook Air',
+    subtitle: 'ชิปแรงขึ้น จอสวย พร้อมใช้งานในทุกวัน',
+    fromPrice: 36900,
+    tone: 'from-[#d7e6f8] via-[#a8c9f2] to-[#7aa9ea]',
+  },
+  {
+    id: 'macbook-pro',
+    family: 'Mac',
+    name: 'MacBook Pro',
+    subtitle: 'ประสิทธิภาพระดับโปรสำหรับงานหนัก',
+    fromPrice: 56900,
+    tone: 'from-[#2f2f37] via-[#23232b] to-[#16161d]',
+  },
+  {
+    id: 'imac-air',
+    family: 'Mac',
+    name: 'iMac Air',
+    subtitle: 'เดสก์ท็อปดีไซน์บางเฉียบ สีสวยทุกมุม',
+    fromPrice: 43900,
+    tone: 'from-[#dbe8ff] via-[#c5d9ff] to-[#9fbefd]',
+  },
+  {
+    id: 'mac-mini',
+    family: 'Mac',
+    name: 'Mac mini',
+    subtitle: 'เล็กแต่แรง คุ้มสุดสำหรับเริ่มต้นใช้งาน',
+    fromPrice: 22900,
+    tone: 'from-[#f1f3f8] via-[#d9dfea] to-[#bfc9db]',
+  },
+  {
+    id: 'studio-pro',
+    family: 'Mac',
+    name: 'Mac Studio Pro',
+    subtitle: 'เครื่องตั้งโต๊ะสำหรับครีเอเตอร์และทีมโปร',
+    fromPrice: 74900,
+    tone: 'from-[#505566] via-[#383d4e] to-[#222737]',
+  },
+];
+
 export function ShopBrainView() {
   const [products, setProducts] = useState<Product[]>(loadProducts);
   const [mode, setMode] = useState<ShopMode>('list');
@@ -230,6 +292,7 @@ export function ShopBrainView() {
 
   const slotsRemaining = Math.max(0, SHOP_PRODUCT_SLOT_LIMIT - products.length);
   const canAddProduct = slotsRemaining > 0;
+  const showcaseFamilies = Array.from(new Set(SHOWCASE_PRODUCTS.map((p) => p.family)));
 
   const handleSave = () => {
     const body = buildProductBody(form);
@@ -359,38 +422,87 @@ export function ShopBrainView() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-5">
-        {products.length === 0 ? (
-          <div className="rounded-xl border-2 border-dashed border-slate-200 bg-white p-8 text-center dark:border-slate-700 dark:bg-slate-900">
-            <div className="text-3xl">🛍️</div>
-            <h3 className="mt-3 text-sm font-semibold text-slate-900 dark:text-slate-100">ยังไม่มีสินค้าในร้าน</h3>
-            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-              กดปุ่ม "เพิ่มสินค้า" มุมขวาบน แล้วกรอกชื่อ, ราคา และตัวเลือกอย่างน้อย 1 ชุดเพื่อบันทึก
-            </p>
-            <button
-              type="button"
-              onClick={openAdd}
-              disabled={!canAddProduct}
-              className="btn-primary mt-4 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <I.Plus className="h-4 w-4" />
-              เพิ่มสินค้า
-            </button>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {products.map((p) => (
-              <ProductRow
-                key={p.id}
-                product={p}
-                slotsRemaining={slotsRemaining}
-                slotLimit={SHOP_PRODUCT_SLOT_LIMIT}
-                usedSlots={products.length}
-                onEdit={() => openEdit(p)}
-                onDelete={() => confirmDelete(p.id, p.name)}
-              />
-            ))}
-          </div>
-        )}
+        <div className="space-y-5">
+          <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+            <div className="mb-4 flex flex-wrap items-end justify-between gap-2 px-1">
+              <div>
+                <h2 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Mac</h2>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">ไอเดียหน้าโชว์สินค้าแบบสั้น กระชับ และอ่านง่าย</p>
+              </div>
+              <div className="text-xs text-slate-400 dark:text-slate-500">
+                {showcaseFamilies.join(' · ')} showcase
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {SHOWCASE_PRODUCTS.map((item) => (
+                <article
+                  key={item.id}
+                  className="group relative overflow-hidden rounded-2xl border border-slate-200/90 bg-[#f5f5f7] p-4 transition hover:-translate-y-0.5 hover:shadow-md dark:border-slate-700 dark:bg-slate-950/60"
+                >
+                  {item.badge && (
+                    <span className="absolute left-3 top-3 rounded-full bg-brand-600 px-2 py-0.5 text-[10px] font-semibold text-white dark:bg-brand-500">
+                      {item.badge}
+                    </span>
+                  )}
+                  <div
+                    className={
+                      'mx-auto mt-5 grid h-28 w-full max-w-[220px] place-items-center rounded-xl bg-gradient-to-br text-[44px] shadow-sm ' +
+                      item.tone
+                    }
+                  >
+                    💻
+                  </div>
+                  <div className="mt-4 text-center">
+                    <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{item.name}</div>
+                    <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-slate-500 dark:text-slate-400">{item.subtitle}</p>
+                    <div className="mt-3 text-xs font-medium text-slate-600 dark:text-slate-300">
+                      From ฿{item.fromPrice.toLocaleString()}
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          {products.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-5 py-6 text-center dark:border-slate-600 dark:bg-slate-900">
+              <div className="text-2xl">🛍️</div>
+              <h3 className="mt-2 text-sm font-semibold text-slate-900 dark:text-slate-100">ยังไม่มีสินค้าในร้านของคุณ</h3>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                กดปุ่มเพิ่มสินค้า เพื่อใส่ชื่อสินค้า ราคา และรายละเอียดสั้น ๆ ให้ AI ช่วยขายได้ทันที
+              </p>
+              <button
+                type="button"
+                onClick={openAdd}
+                disabled={!canAddProduct}
+                className="btn-primary mt-4 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <I.Plus className="h-4 w-4" />
+                เพิ่มสินค้า
+              </button>
+            </div>
+          ) : (
+            <section className="rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+              <div className="mb-2 px-1">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">สินค้าที่คุณเพิ่มเอง</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">รายการนี้ใช้ข้อมูลจริงของร้านคุณสำหรับตอบแชทลูกค้า</p>
+              </div>
+              <div className="space-y-2">
+                {products.map((p) => (
+                  <ProductRow
+                    key={p.id}
+                    product={p}
+                    slotsRemaining={slotsRemaining}
+                    slotLimit={SHOP_PRODUCT_SLOT_LIMIT}
+                    usedSlots={products.length}
+                    onEdit={() => openEdit(p)}
+                    onDelete={() => confirmDelete(p.id, p.name)}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
       </div>
     </div>
   );
