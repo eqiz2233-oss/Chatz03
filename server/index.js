@@ -196,22 +196,75 @@ function getOrCreateFbThread(targetId, channel = 'fb') {
   return fbThreads.get(key);
 }
 
+function messengerDisplayNameFromGraph(d) {
+  if (!d || typeof d !== 'object') return null;
+  const fn = typeof d.first_name === 'string' ? d.first_name.trim() : '';
+  const ln = typeof d.last_name === 'string' ? d.last_name.trim() : '';
+  const combined = [fn, ln].filter(Boolean).join(' ').trim();
+  if (combined) return combined;
+  if (typeof d.name === 'string' && d.name.trim()) return d.name.trim();
+  return null;
+}
+
+function messengerProfilePicFromGraph(d) {
+  if (!d || typeof d !== 'object') return null;
+  if (typeof d.profile_pic === 'string' && d.profile_pic) return d.profile_pic;
+  const u = d?.picture?.data?.url;
+  return typeof u === 'string' && u ? u : null;
+}
+
+/** Messenger Page inbox: PSID profile uses first_name/last_name (not always `name`). */
 async function enrichFbProfile(psid, thread, pageId) {
   const tok = pageId ? tokenForPageId(String(pageId)) : primaryPageAccessToken();
   if (!tok) return;
   try {
-    const url = `https://graph.facebook.com/${fbConfig.apiVersion}/${encodeURIComponent(psid)}?fields=name,profile_pic&access_token=${encodeURIComponent(tok)}`;
+    const url =
+      `https://graph.facebook.com/${fbConfig.apiVersion}/${encodeURIComponent(psid)}` +
+      `?fields=first_name,last_name,name,profile_pic,picture.type(large){url}` +
+      `&access_token=${encodeURIComponent(tok)}`;
     const r = await fetch(url);
     const d = await r.json();
     if (d?.error) {
       console.warn('FB getProfile error:', d.error?.message || d.error);
       return;
     }
-    if (d?.name) thread.displayName = d.name;
-    if (d?.profile_pic) thread.pictureUrl = d.profile_pic;
+    const display = messengerDisplayNameFromGraph(d);
+    if (display) thread.displayName = display;
+    const pic = messengerProfilePicFromGraph(d);
+    if (pic) thread.pictureUrl = pic;
     thread.updatedAt = new Date().toISOString();
   } catch (e) {
     console.warn('FB getProfile failed:', e?.message || e);
+  }
+}
+
+/** Instagram Messaging: sender id is IGSID — different fields than Messenger PSID. */
+async function enrichIgProfile(igsid, thread, igBusinessAccountId) {
+  const tok = igBusinessAccountId
+    ? tokenForIgId(String(igBusinessAccountId)) || primaryPageAccessToken()
+    : primaryPageAccessToken();
+  if (!tok) return;
+  try {
+    const url =
+      `https://graph.facebook.com/${fbConfig.apiVersion}/${encodeURIComponent(igsid)}` +
+      `?fields=name,username,profile_picture_url` +
+      `&access_token=${encodeURIComponent(tok)}`;
+    const r = await fetch(url);
+    const d = await r.json();
+    if (d?.error) {
+      console.warn('IG getProfile error:', d.error?.message || d.error);
+      return;
+    }
+    const un = typeof d.username === 'string' ? d.username.trim() : '';
+    const nm = typeof d.name === 'string' ? d.name.trim() : '';
+    if (nm && un) thread.displayName = `${nm} (@${un})`;
+    else if (un) thread.displayName = `@${un}`;
+    else if (nm) thread.displayName = nm;
+    const pic = typeof d.profile_picture_url === 'string' ? d.profile_picture_url : null;
+    if (pic) thread.pictureUrl = pic;
+    thread.updatedAt = new Date().toISOString();
+  } catch (e) {
+    console.warn('IG getProfile failed:', e?.message || e);
   }
 }
 
@@ -938,10 +991,11 @@ app.post(
             }
           }
 
-          // FB Page DMs use Graph user-profile lookup; IG profile lookup needs a different
-          // endpoint (skip enrichment for IG for now — name will fall back to "IG • <id-tail>").
           if (!thread.displayName && !isInstagram) {
             void enrichFbProfile(psid, thread, entry.id);
+          }
+          if (!thread.displayName && isInstagram) {
+            void enrichIgProfile(psid, thread, entry.id);
           }
         }
       }
