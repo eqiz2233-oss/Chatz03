@@ -6,11 +6,6 @@ export interface ProductOptionGroup {
   values: string[];
 }
 
-export interface ProductCustomField {
-  key: string;
-  value: string;
-}
-
 interface Product {
   id: string;
   name: string;
@@ -19,7 +14,6 @@ interface Product {
   description: string;
   sellingPoints: string;
   stock?: number;
-  customFields: ProductCustomField[];
   imageEmoji: string;
   aiReady: boolean;
 }
@@ -83,63 +77,6 @@ function newId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
-const SEED: Product[] = [
-  {
-    id: 'p1',
-    name: 'เสื้อ Oversize Cotton',
-    price: 350,
-    optionGroups: [
-      { label: 'สี', values: ['ดำ', 'ขาว', 'เทา'] },
-      { label: 'ไซส์', values: ['S', 'M', 'L', 'XL'] },
-    ],
-    description: 'ผ้า Cotton 100% นุ่ม ระบายอากาศดี ทรง Oversize ใส่สบาย',
-    sellingPoints: 'Cotton 100%, ซักง่ายไม่ยับ, มีหลายสี',
-    stock: 48,
-    customFields: [{ key: 'วัสดุ', value: 'Cotton 100%' }],
-    imageEmoji: '👕',
-    aiReady: true,
-  },
-  {
-    id: 'p2',
-    name: 'Glow Serum SPF50+',
-    price: 590,
-    optionGroups: [{ label: 'ความจุ', values: ['30ml', '50ml'] }],
-    description: 'เซรั่มบำรุงผิว ผสม SPF50+ กันแดดในตัว ซึมเร็ว ไม่มัน',
-    sellingPoints: 'SPF50+, ไม่มัน, ซึมเร็ว, ไม่ทิ้งคราบขาว',
-    stock: 23,
-    customFields: [],
-    imageEmoji: '🧴',
-    aiReady: true,
-  },
-  {
-    id: 'p3',
-    name: 'กระเป๋า Canvas Tote',
-    price: 280,
-    optionGroups: [{ label: 'สี', values: ['ครีม', 'เขียว'] }],
-    description: '',
-    sellingPoints: '',
-    stock: undefined,
-    customFields: [],
-    imageEmoji: '👜',
-    aiReady: false,
-  },
-  {
-    id: 'p4',
-    name: 'หมวก Bucket ผ้าฝ้าย',
-    price: 190,
-    optionGroups: [
-      { label: 'สี', values: ['ดำ', 'กรม'] },
-      { label: 'ไซส์', values: ['Free Size'] },
-    ],
-    description: '',
-    sellingPoints: '',
-    stock: undefined,
-    customFields: [],
-    imageEmoji: '🪣',
-    aiReady: false,
-  },
-];
-
 /** จำนวนรายการสินค้าสูงสุดต่อร้าน (โควต้า UI) */
 const SHOP_PRODUCT_SLOT_LIMIT = 50;
 
@@ -149,12 +86,6 @@ interface OptionGroupFormRow {
   valuesInput: string;
 }
 
-interface CustomFieldFormRow {
-  id: string;
-  key: string;
-  value: string;
-}
-
 interface FormState {
   name: string;
   price: string;
@@ -162,11 +93,9 @@ interface FormState {
   description: string;
   sellingPoints: string;
   stock: string;
-  customFields: CustomFieldFormRow[];
 }
 
 const emptyOptionRow = (): OptionGroupFormRow => ({ id: newId('og'), label: '', valuesInput: '' });
-const emptyCustomRow = (): CustomFieldFormRow => ({ id: newId('cf'), key: '', value: '' });
 
 function productToFormState(p: Product): FormState {
   const ogs =
@@ -177,11 +106,6 @@ function productToFormState(p: Product): FormState {
           valuesInput: g.values.join(', '),
         }))
       : [emptyOptionRow()];
-  const cfs = p.customFields.map((c) => ({
-    id: newId('cf'),
-    key: c.key,
-    value: c.value,
-  }));
   return {
     name: p.name,
     price: String(p.price),
@@ -189,7 +113,6 @@ function productToFormState(p: Product): FormState {
     description: p.description,
     sellingPoints: p.sellingPoints,
     stock: p.stock != null ? String(p.stock) : '',
-    customFields: cfs,
   };
 }
 
@@ -203,10 +126,6 @@ function buildProductBody(form: FormState): Omit<Product, 'id' | 'imageEmoji'> |
       values: parseValuesInput(g.valuesInput),
     }))
     .filter((g) => g.label && g.values.length > 0);
-
-  const customFields: ProductCustomField[] = form.customFields
-    .map((r) => ({ key: r.key.trim(), value: r.value.trim() }))
-    .filter((r) => r.key);
 
   const isReady = Boolean(
     form.name.trim() &&
@@ -223,7 +142,6 @@ function buildProductBody(form: FormState): Omit<Product, 'id' | 'imageEmoji'> |
     description: form.description.trim(),
     sellingPoints: form.sellingPoints.trim(),
     stock: form.stock.trim() ? Number(form.stock) : undefined,
-    customFields,
     aiReady: isReady,
   };
 }
@@ -235,7 +153,6 @@ const BLANK: FormState = {
   description: '',
   sellingPoints: '',
   stock: '',
-  customFields: [],
 };
 
 function formatOptionSummary(groups: ProductOptionGroup[]): string {
@@ -245,7 +162,7 @@ function formatOptionSummary(groups: ProductOptionGroup[]): string {
 type ShopMode = 'list' | 'add' | 'edit' | 'templates';
 
 export function ShopBrainView() {
-  const [products, setProducts] = useState<Product[]>(SEED);
+  const [products, setProducts] = useState<Product[]>([]);
   const [mode, setMode] = useState<ShopMode>('list');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(BLANK);
@@ -254,20 +171,6 @@ export function ShopBrainView() {
   useEffect(() => {
     persistTemplates(templates);
   }, [templates]);
-
-  const applyTemplate = (tpl: ProductTemplate) => {
-    setForm((f) => ({
-      ...f,
-      optionGroups:
-        tpl.optionGroups.length > 0
-          ? tpl.optionGroups.map((g) => ({
-              id: newId('og'),
-              label: g.label,
-              valuesInput: g.values.join(', '),
-            }))
-          : [emptyOptionRow()],
-    }));
-  };
 
   const saveCurrentAsTemplate = (name: string, emoji: string) => {
     const cleanName = name.trim();
@@ -287,8 +190,6 @@ export function ShopBrainView() {
 
   const deleteTemplate = (id: string) => setTemplates((prev) => prev.filter((t) => t.id !== id));
 
-  const aiReady = products.filter((p) => p.aiReady).length;
-  const pct = products.length === 0 ? 0 : Math.round((aiReady / products.length) * 100);
   const slotsRemaining = Math.max(0, SHOP_PRODUCT_SLOT_LIMIT - products.length);
   const canAddProduct = slotsRemaining > 0;
 
@@ -373,9 +274,21 @@ export function ShopBrainView() {
         slotLimit={SHOP_PRODUCT_SLOT_LIMIT}
         usedSlots={products.length}
         templates={templates}
-        onApplyTemplate={applyTemplate}
-        onSaveAsTemplate={saveCurrentAsTemplate}
+        onApplyTemplate={(tpl) =>
+          setForm((f) => ({
+            ...f,
+            optionGroups:
+              tpl.optionGroups.length > 0
+                ? tpl.optionGroups.map((g) => ({
+                    id: newId('og'),
+                    label: g.label,
+                    valuesInput: g.values.join(', '),
+                  }))
+                : f.optionGroups,
+          }))
+        }
         onManageTemplates={() => setMode('templates')}
+        onSaveAsTemplate={saveCurrentAsTemplate}
       />
     );
   }
@@ -384,19 +297,7 @@ export function ShopBrainView() {
     <div className="flex h-full min-h-0 flex-1 flex-col bg-slate-50 dark:bg-slate-950">
       <div className="border-b border-slate-200 bg-white px-6 py-4 dark:border-slate-800 dark:bg-slate-900">
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">ร้านของฉัน</h1>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              ใส่สินค้า = สอนบอทขายของ — AI รู้จัก{' '}
-              <span className="font-semibold text-slate-700 dark:text-slate-300">
-                {aiReady}/{products.length} ชิ้น
-              </span>
-              <span className="text-slate-400 dark:text-slate-500"> · </span>
-              <span className={canAddProduct ? 'text-slate-600 dark:text-slate-300' : 'font-semibold text-amber-600 dark:text-amber-400'}>
-                เพิ่มสินค้าได้อีก {slotsRemaining} ชิ้น ({products.length}/{SHOP_PRODUCT_SLOT_LIMIT})
-              </span>
-            </p>
-          </div>
+          <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">ร้านของฉัน</h1>
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -417,17 +318,6 @@ export function ShopBrainView() {
             </button>
           </div>
         </div>
-        <div className="mt-3.5">
-          <div className="mb-1.5 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-            <span className="font-medium text-slate-600 dark:text-slate-300">AI ครอบคลุม {pct}%</span>
-            {products.length - aiReady > 0 && (
-              <span className="text-amber-600 dark:text-amber-400">{products.length - aiReady} ชิ้นยังขาดข้อมูล</span>
-            )}
-          </div>
-          <div className="h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-            <div className="h-full rounded-full bg-brand-500 transition-all duration-700" style={{ width: `${pct}%` }} />
-          </div>
-        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-5">
@@ -443,14 +333,6 @@ export function ShopBrainView() {
               onDelete={() => confirmDelete(p.id, p.name)}
             />
           ))}
-          <button
-            onClick={openAdd}
-            disabled={!canAddProduct}
-            className="mt-1 flex w-full items-center gap-3 rounded-xl border-2 border-dashed border-slate-200 px-5 py-4 text-sm text-slate-400 transition hover:border-brand-300 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:hover:border-brand-600 dark:hover:text-brand-400"
-          >
-            <I.Plus className="h-4 w-4" />
-            เพิ่มสินค้าใหม่ — สอน AI ให้ขายให้คุณ
-          </button>
         </div>
       </div>
     </div>
@@ -473,7 +355,6 @@ function ProductRow({
   onDelete: () => void;
 }) {
   const optLine = formatOptionSummary(p.optionGroups);
-  const customLine = p.customFields.map((c) => `${c.key}: ${c.value}`).join(' · ');
 
   return (
     <div className="flex gap-4 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
@@ -500,14 +381,6 @@ function ProductRow({
                     ·
                   </span>
                   <span>สต๊อก {p.stock}</span>
-                </>
-              )}
-              {customLine && (
-                <>
-                  <span className="text-slate-300 dark:text-slate-600" aria-hidden>
-                    ·
-                  </span>
-                  <span className="min-w-0 truncate text-slate-400 dark:text-slate-500">{customLine}</span>
                 </>
               )}
             </div>
@@ -602,8 +475,8 @@ function AddForm({
   usedSlots,
   templates,
   onApplyTemplate,
-  onSaveAsTemplate,
   onManageTemplates,
+  onSaveAsTemplate,
 }: {
   form: FormState;
   setForm: React.Dispatch<React.SetStateAction<FormState>>;
@@ -615,8 +488,8 @@ function AddForm({
   usedSlots: number;
   templates: ProductTemplate[];
   onApplyTemplate: (tpl: ProductTemplate) => void;
-  onSaveAsTemplate: (name: string, emoji: string) => void;
   onManageTemplates: () => void;
+  onSaveAsTemplate: (name: string, emoji: string) => void;
 }) {
   const [saveTplOpen, setSaveTplOpen] = useState(false);
   const [tplDraftName, setTplDraftName] = useState('');
@@ -654,16 +527,6 @@ function AddForm({
     }));
 
   const addOptionRow = () => setForm((f) => ({ ...f, optionGroups: [...f.optionGroups, emptyOptionRow()] }));
-
-  const updateCustomRow = (id: string, patch: Partial<CustomFieldFormRow>) =>
-    setForm((f) => ({
-      ...f,
-      customFields: f.customFields.map((r) => (r.id === id ? { ...r, ...patch } : r)),
-    }));
-
-  const removeCustomRow = (id: string) => setForm((f) => ({ ...f, customFields: f.customFields.filter((r) => r.id !== id) }));
-
-  const addCustomRow = () => setForm((f) => ({ ...f, customFields: [...f.customFields, emptyCustomRow()] }));
 
   const hasValidCore =
     form.name.trim() &&
@@ -874,7 +737,7 @@ function AddForm({
                 className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-dashed border-slate-300 px-3 py-2 text-xs font-medium text-slate-500 transition hover:border-brand-400 hover:bg-brand-50/50 hover:text-brand-600 dark:border-slate-700 dark:hover:border-brand-500 dark:hover:bg-brand-950/30 dark:hover:text-brand-400"
               >
                 <I.Plus className="h-3.5 w-3.5" />
-                เพิ่มประเภทตัวเลือก
+                เพิ่มตัวเลือก
               </button>
               <button
                 type="button"
@@ -965,70 +828,24 @@ function AddForm({
             </div>
           </ProductCard>
 
-          {/* ── 📦 Stock + extras ── */}
-          <ProductCard emoji="📦" title="สต๊อกและรายละเอียด" sub="ไม่บังคับ — ใส่ถ้ามีก็ได้">
-            <div className="space-y-4">
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold text-slate-500 dark:text-slate-400">จำนวนในสต๊อก</label>
-                <div className="relative max-w-[220px]">
-                  <input
-                    type="number"
-                    value={form.stock}
-                    onChange={(e) => setForm((f) => ({ ...f, stock: e.target.value }))}
-                    placeholder="120"
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 pr-12 text-sm tabular-nums text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-4 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:bg-slate-900 dark:focus:ring-brand-900/40"
-                  />
-                  <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-400">ชิ้น</span>
-                </div>
-              </div>
-
-              <div className="border-t border-slate-100 pt-4 dark:border-slate-800">
-                <div className="mb-2 flex items-center justify-between">
-                  <label className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                    ข้อมูลเพิ่มเติม <span className="font-normal text-slate-400">— เช่น วัสดุ, น้ำหนัก, แบตฯ</span>
-                  </label>
-                </div>
-                {form.customFields.length > 0 && (
-                  <div className="mb-2 space-y-1.5">
-                    {form.customFields.map((r) => (
-                      <div key={r.id} className="flex gap-1.5">
-                        <input
-                          value={r.key}
-                          onChange={(e) => updateCustomRow(r.id, { key: e.target.value })}
-                          placeholder="ชื่อ เช่น วัสดุ"
-                          className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100"
-                        />
-                        <input
-                          value={r.value}
-                          onChange={(e) => updateCustomRow(r.id, { value: e.target.value })}
-                          placeholder="ค่า เช่น Cotton 100%"
-                          className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => removeCustomRow(r.id)}
-                          className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/30 dark:hover:text-rose-400"
-                          aria-label="ลบแถว"
-                        >
-                          <I.X className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <button
-                  type="button"
-                  onClick={addCustomRow}
-                  className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-semibold text-brand-600 transition hover:bg-brand-50 dark:text-brand-400 dark:hover:bg-brand-950/30"
-                >
-                  <I.Plus className="h-3 w-3" />
-                  เพิ่มฟิลด์
-                </button>
+          {/* ── 📦 Stock ── */}
+          <ProductCard emoji="📦" title="สต๊อก" sub="ไม่บังคับ — ใส่ถ้ามีก็ได้">
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold text-slate-500 dark:text-slate-400">จำนวนในสต๊อก</label>
+              <div className="relative max-w-[220px]">
+                <input
+                  type="number"
+                  value={form.stock}
+                  onChange={(e) => setForm((f) => ({ ...f, stock: e.target.value }))}
+                  placeholder="120"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 pr-12 text-sm tabular-nums text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-4 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:bg-slate-900 dark:focus:ring-brand-900/40"
+                />
+                <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-400">ชิ้น</span>
               </div>
             </div>
           </ProductCard>
 
-          {/* Bottom spacing for sticky save button */}
+          {/* Bottom spacing */}
           <div className="h-4" />
         </div>
       </div>
@@ -1149,7 +966,7 @@ function TemplatesView({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-6">
-          <div className="mx-auto max-w-lg space-y-6">
+          <div className="w-full space-y-6">
             <section className="space-y-3">
               <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">ชื่อแม่แบบ</label>
               <input
@@ -1187,7 +1004,7 @@ function TemplatesView({
                   ตั้งชื่อเองได้ เช่น สี / ไซส์ / ความจุ / ทรง — ค่าแต่ละตัวคั่นด้วยจุลภาคหรือเว้นวรรค
                 </p>
               </div>
-              <div className="space-y-3">
+              <div className="grid gap-3 lg:grid-cols-2">
                 {draft.optionGroups.map((g, i) => (
                   <div
                     key={g.id}
@@ -1252,7 +1069,7 @@ function TemplatesView({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-5">
-        <div className="mx-auto max-w-lg">
+        <div className="w-full">
           {templates.length === 0 ? (
             <div className="rounded-xl border-2 border-dashed border-slate-200 bg-white p-8 text-center dark:border-slate-700 dark:bg-slate-900">
               <div className="text-3xl">📋</div>

@@ -60,7 +60,7 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
   const [lineInboxFetched, setLineInboxFetched] = useState(false);
   const [fbInboxFetched, setFbInboxFetched] = useState(false);
   const [list, setList] = useState<Conversation[]>(seed);
-  const [activeId, setActiveId] = useState(seed[0].id);
+  const [activeId, setActiveId] = useState(() => seed[0]?.id ?? '');
   /** ปักหมุดแชทต่อห้อง (ร้านเท่านั้น) — override ค่า pinnedMessageId จาก seed/API */
   const [pinOverrides, setPinOverrides] = useState<Record<string, string | null>>({});
 

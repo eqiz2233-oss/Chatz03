@@ -29,9 +29,9 @@ interface Item {
 }
 
 const items: Item[] = [
-  { key: 'inbox', labelKey: 'nav.inbox', icon: <I.Inbox className="h-5 w-5" />, badge: 4 },
-  { key: 'orders', labelKey: 'nav.orders', icon: <I.Box className="h-5 w-5" />, badge: 3 },
-  { key: 'slips', labelKey: 'nav.slips', icon: <I.Receipt className="h-5 w-5" />, badge: 'AI' },
+  { key: 'inbox', labelKey: 'nav.inbox', icon: <I.Inbox className="h-5 w-5" /> },
+  { key: 'orders', labelKey: 'nav.orders', icon: <I.Box className="h-5 w-5" /> },
+  { key: 'slips', labelKey: 'nav.slips', icon: <I.Receipt className="h-5 w-5" /> },
   { key: 'shop', labelKey: 'nav.shop', icon: <I.Store className="h-5 w-5" /> },
   { key: 'analytics', labelKey: 'nav.analytics', icon: <I.Chart className="h-5 w-5" /> },
 ];
@@ -143,11 +143,12 @@ export function Sidebar({ active, onChange }: Props) {
       </nav>
 
       <div className="flex shrink-0 items-center gap-2 border-t border-slate-200 px-4 py-3 dark:border-slate-800">
-        <img
-          src="https://api.dicebear.com/7.x/notionists/svg?seed=Owner&backgroundColor=ffd5dc"
-          className="h-8 w-8 rounded-full ring-2 ring-white dark:ring-slate-900"
-          alt=""
-        />
+        <div
+          className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-slate-200 text-slate-600 ring-2 ring-white dark:bg-slate-700 dark:text-slate-200 dark:ring-slate-900"
+          aria-hidden
+        >
+          <I.Bot className="h-4 w-4" />
+        </div>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">คุณเอก (Owner)</div>
           <div className="flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
