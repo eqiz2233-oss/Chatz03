@@ -16,6 +16,13 @@ export interface FbConnectedPage {
   connectedAt?: string;
 }
 
+export interface FbIntegrationEnvPresent {
+  FB_APP_ID: boolean;
+  FB_APP_SECRET: boolean;
+  FB_PAGE_ACCESS_TOKEN: boolean;
+  FB_VERIFY_TOKEN: boolean;
+}
+
 export interface FbIntegrationStatus {
   /** True when webhook verify token and/or a Page token is present (channel can be live). */
   connected: boolean;
@@ -31,6 +38,8 @@ export interface FbIntegrationStatus {
   needsAppSecret: boolean;
   needsVerifyToken: boolean;
   apiVersion: string;
+  /** Which env vars the running server sees (never includes secret values). */
+  envPresent?: FbIntegrationEnvPresent | null;
 }
 
 export async function fetchFbStatus(): Promise<FbIntegrationStatus> {

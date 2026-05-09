@@ -1163,6 +1163,13 @@ app.get('/api/fb/integration/status', async (_req, res) => {
     needsAppSecret: !fbHasAppSecret,
     needsVerifyToken: !fbHasVerify,
     apiVersion: fbConfig.apiVersion,
+    /** Booleans only — helps confirm Railway/production actually loaded each key (names must match exactly). */
+    envPresent: {
+      FB_APP_ID: Boolean(fbConfig.appId),
+      FB_APP_SECRET: Boolean(fbHasAppSecret),
+      FB_PAGE_ACCESS_TOKEN: Boolean(fbConfig.fallbackPageAccessToken),
+      FB_VERIFY_TOKEN: Boolean(fbHasVerify),
+    },
   });
 });
 

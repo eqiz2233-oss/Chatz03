@@ -7,6 +7,7 @@ import {
   disconnectFbPage,
   fetchFbStatus,
   openFbConnectPopup,
+  type FbIntegrationEnvPresent,
   type FbIntegrationStatus,
 } from '../../lib/fbIntegration';
 
@@ -337,6 +338,41 @@ function LineStatusCard({ t }: { t: (k: string) => string }) {
   );
 }
 
+function FbEnvChecklist({
+  env,
+  t,
+}: {
+  env: FbIntegrationEnvPresent | null | undefined;
+  t: (k: string) => string;
+}) {
+  if (!env) {
+    return (
+      <p className="rounded-xl border border-dashed border-slate-200 px-3 py-2 text-[11px] text-slate-400 dark:border-slate-700 dark:text-slate-500">
+        {t('settings.fbEnvChecklistNeedDeploy')}
+      </p>
+    );
+  }
+  const rows: Array<[string, boolean]> = [
+    ['FB_VERIFY_TOKEN', env.FB_VERIFY_TOKEN],
+    ['FB_PAGE_ACCESS_TOKEN', env.FB_PAGE_ACCESS_TOKEN],
+    ['FB_APP_ID', env.FB_APP_ID],
+    ['FB_APP_SECRET', env.FB_APP_SECRET],
+  ];
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-800/60">
+      <div className="mb-2 text-[11px] font-semibold text-slate-600 dark:text-slate-300">{t('settings.fbEnvSeenByServer')}</div>
+      <ul className="space-y-1 font-mono text-[11px]">
+        {rows.map(([key, ok]) => (
+          <li key={key} className="flex items-center justify-between gap-2 text-slate-700 dark:text-slate-200">
+            <span className="min-w-0 truncate">{key}</span>
+            <span className={ok ? 'shrink-0 text-emerald-600 dark:text-emerald-400' : 'shrink-0 text-rose-600 dark:text-rose-400'}>{ok ? '✓' : '✗'}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function FacebookIntegrationCard({ t }: { t: (k: string) => string }) {
   const [status, setStatus] = useState<FbIntegrationStatus | null>(null);
   const [busy, setBusy] = useState(false);
@@ -468,9 +504,20 @@ function FacebookIntegrationCard({ t }: { t: (k: string) => string }) {
         </div>
       )}
 
-      {!status?.oauthAvailable && (
-        <div className="mx-5 mb-3 rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-          ต้องใส่ <code className="font-mono">FB_APP_ID</code> และ <code className="font-mono">FB_APP_SECRET</code> ใน .env ก่อน
+      {status && (
+        <div className="mx-5 mb-3 space-y-2">
+          <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">{t('settings.fbEnvServerHint')}</p>
+          <FbEnvChecklist env={status.envPresent} t={t} />
+          {!status.oauthAvailable && (
+            <div className="rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+              ปุ่มเชื่อมต้องมี <code className="font-mono">FB_APP_ID</code> + <code className="font-mono">FB_APP_SECRET</code> บนเซิร์ฟเวอร์ — {t('settings.fbEnvMissingRailway')}
+            </div>
+          )}
+          {status.oauthAvailable && !replyEnabled && (
+            <div className="rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+              เพื่อตอบกลับจาก Chatz ต้องมี <code className="font-mono">FB_PAGE_ACCESS_TOKEN</code> หรือกดเชื่อมเพจ — {t('settings.fbEnvMissingRailway')}
+            </div>
+          )}
         </div>
       )}
 
