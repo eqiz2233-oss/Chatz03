@@ -394,6 +394,14 @@ function FacebookIntegrationCard({ t }: { t: (k: string) => string }) {
     }
   };
 
+  const webhookReady = status ? (status.webhookReady ?? !status.needsVerifyToken) : false;
+  const replyEnabled = status
+    ? (status.replyEnabled ?? (Boolean(status.page) && Boolean(status.connected)))
+    : false;
+  const fullFb = webhookReady && replyEnabled;
+  const receiveOnlyFb = webhookReady && !replyEnabled;
+  const replyNoWebhook = !webhookReady && replyEnabled;
+  const showPageDetails = Boolean(status?.page) && (fullFb || receiveOnlyFb || replyEnabled);
   const isConnected = status?.connected && status.page;
 
   return (
@@ -406,19 +414,35 @@ function FacebookIntegrationCard({ t }: { t: (k: string) => string }) {
         <div className="flex-1">
           <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">Facebook & Instagram</div>
           <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-            {isConnected ? status!.page!.name : 'เชื่อมต่อด้วยการกดปุ่มด้านล่าง'}
+            {status?.page?.name
+              ? status.page.name
+              : fullFb
+                ? t('settings.fbReadyShort')
+                : receiveOnlyFb
+                  ? t('settings.fbReceiveOnlySub')
+                  : 'เชื่อมต่อด้วยการกดปุ่มด้านล่าง'}
           </div>
         </div>
-        {isConnected ? (
+        {fullFb ? (
           <span className="chip bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
             <I.Check className="h-3 w-3" /> {t('settings.connected')}
           </span>
+        ) : receiveOnlyFb ? (
+          <span className="chip bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">{t('settings.fbReceiveOnly')}</span>
+        ) : replyNoWebhook ? (
+          <span className="chip bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">{t('settings.fbTokenNoWebhook')}</span>
         ) : (
           <span className="chip bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">{t('settings.notConnected')}</span>
         )}
       </div>
 
-      {isConnected && status?.page && (
+      {status?.tokenSource === 'env' && replyEnabled && (
+        <div className="mx-5 mt-3 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
+          {t('settings.fbEnvTokenNote')}
+        </div>
+      )}
+
+      {showPageDetails && status?.page && (
         <div className="space-y-2 px-5 py-3">
           <PageRow
             icon={<ChannelIcon channel="facebook" className="h-4 w-4" />}
@@ -478,7 +502,7 @@ function FacebookIntegrationCard({ t }: { t: (k: string) => string }) {
           >
             <ChannelIcon channel="facebook" className="h-4 w-4" />
             <ChannelIcon channel="ig" className="h-4 w-4" />
-            {busy ? 'กำลังเชื่อมต่อ…' : 'เชื่อมต่อ Facebook & Instagram'}
+            {busy ? 'กำลังเชื่อมต่อ…' : status?.tokenSource === 'env' ? t('settings.reconnect') : 'เชื่อมต่อ Facebook & Instagram'}
           </button>
         )}
         <button type="button" onClick={() => void refresh()} disabled={busy || syncing} className="btn-ghost text-xs disabled:opacity-50">{t('settings.refresh')}</button>

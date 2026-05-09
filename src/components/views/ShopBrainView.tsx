@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { I } from '../Icons';
 
 export interface ProductOptionGroup {
@@ -22,6 +22,54 @@ interface Product {
   customFields: ProductCustomField[];
   imageEmoji: string;
   aiReady: boolean;
+}
+
+/** แม่แบบสินค้า — user สร้างเองแทนการ preset แบบตายตัว */
+export interface ProductTemplate {
+  id: string;
+  name: string;
+  emoji: string;
+  optionGroups: ProductOptionGroup[];
+}
+
+const TEMPLATE_EMOJI_OPTIONS = ['👕', '👖', '👗', '🧢', '👜', '👟', '🧴', '💄', '🍱', '🍩', '☕', '🥤', '🔋', '🎧', '📱', '💻', '🪑', '🏠', '🐶', '📦'];
+
+const TEMPLATES_STORAGE_KEY = 'chatz-product-templates-v1';
+
+function loadTemplates(): ProductTemplate[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(TEMPLATES_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (t): t is ProductTemplate =>
+          t &&
+          typeof t.id === 'string' &&
+          typeof t.name === 'string' &&
+          typeof t.emoji === 'string' &&
+          Array.isArray(t.optionGroups),
+      )
+      .map((t) => ({
+        ...t,
+        optionGroups: t.optionGroups
+          .filter((g) => g && typeof g.label === 'string' && Array.isArray(g.values))
+          .map((g) => ({ label: g.label, values: g.values.filter((v) => typeof v === 'string') })),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function persistTemplates(list: ProductTemplate[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(TEMPLATES_STORAGE_KEY, JSON.stringify(list));
+  } catch {
+    /* quota / private mode — silently ignore */
+  }
 }
 
 function parseValuesInput(raw: string): string[] {
@@ -194,13 +242,50 @@ function formatOptionSummary(groups: ProductOptionGroup[]): string {
   return groups.map((g) => `${g.label}: ${g.values.join(' ')}`).join(' · ');
 }
 
-type ShopMode = 'list' | 'add' | 'edit';
+type ShopMode = 'list' | 'add' | 'edit' | 'templates';
 
 export function ShopBrainView() {
   const [products, setProducts] = useState<Product[]>(SEED);
   const [mode, setMode] = useState<ShopMode>('list');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(BLANK);
+  const [templates, setTemplates] = useState<ProductTemplate[]>(loadTemplates);
+
+  useEffect(() => {
+    persistTemplates(templates);
+  }, [templates]);
+
+  const applyTemplate = (tpl: ProductTemplate) => {
+    setForm((f) => ({
+      ...f,
+      optionGroups:
+        tpl.optionGroups.length > 0
+          ? tpl.optionGroups.map((g) => ({
+              id: newId('og'),
+              label: g.label,
+              valuesInput: g.values.join(', '),
+            }))
+          : [emptyOptionRow()],
+    }));
+  };
+
+  const saveCurrentAsTemplate = (name: string, emoji: string) => {
+    const cleanName = name.trim();
+    if (!cleanName) return;
+    const optionGroups: ProductOptionGroup[] = form.optionGroups
+      .map((g) => ({ label: g.label.trim(), values: parseValuesInput(g.valuesInput) }))
+      .filter((g) => g.label && g.values.length > 0);
+    if (optionGroups.length === 0) return;
+    setTemplates((prev) => [
+      ...prev,
+      { id: newId('tpl'), name: cleanName, emoji: emoji || '📦', optionGroups },
+    ]);
+  };
+
+  const updateTemplate = (id: string, patch: Partial<Omit<ProductTemplate, 'id'>>) =>
+    setTemplates((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+
+  const deleteTemplate = (id: string) => setTemplates((prev) => prev.filter((t) => t.id !== id));
 
   const aiReady = products.filter((p) => p.aiReady).length;
   const pct = products.length === 0 ? 0 : Math.round((aiReady / products.length) * 100);
@@ -258,6 +343,20 @@ export function ShopBrainView() {
     setProducts((prev) => prev.filter((p) => p.id !== id));
   };
 
+  if (mode === 'templates') {
+    return (
+      <TemplatesView
+        templates={templates}
+        onCreate={(name, emoji, optionGroups) =>
+          setTemplates((prev) => [...prev, { id: newId('tpl'), name, emoji, optionGroups }])
+        }
+        onUpdate={updateTemplate}
+        onDelete={deleteTemplate}
+        onBack={() => setMode(editingId !== null || form.name || form.price ? 'add' : 'list')}
+      />
+    );
+  }
+
   if (mode === 'add' || mode === 'edit') {
     return (
       <AddForm
@@ -273,6 +372,10 @@ export function ShopBrainView() {
         slotsRemaining={slotsRemaining}
         slotLimit={SHOP_PRODUCT_SLOT_LIMIT}
         usedSlots={products.length}
+        templates={templates}
+        onApplyTemplate={applyTemplate}
+        onSaveAsTemplate={saveCurrentAsTemplate}
+        onManageTemplates={() => setMode('templates')}
       />
     );
   }
@@ -294,10 +397,25 @@ export function ShopBrainView() {
               </span>
             </p>
           </div>
-          <button onClick={openAdd} disabled={!canAddProduct} className="btn-primary gap-2 disabled:cursor-not-allowed disabled:opacity-40">
-            <I.Plus className="h-4 w-4" />
-            เพิ่มสินค้า
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setMode('templates')}
+              className="btn-secondary text-sm"
+              title="จัดการแม่แบบสินค้า"
+            >
+              📋 แม่แบบ
+              {templates.length > 0 && (
+                <span className="ml-1 rounded-full bg-brand-100 px-1.5 text-[10px] font-semibold text-brand-700 dark:bg-brand-900/60 dark:text-brand-200">
+                  {templates.length}
+                </span>
+              )}
+            </button>
+            <button onClick={openAdd} disabled={!canAddProduct} className="btn-primary gap-2 disabled:cursor-not-allowed disabled:opacity-40">
+              <I.Plus className="h-4 w-4" />
+              เพิ่มสินค้า
+            </button>
+          </div>
         </div>
         <div className="mt-3.5">
           <div className="mb-1.5 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
@@ -458,6 +576,10 @@ function AddForm({
   slotsRemaining,
   slotLimit,
   usedSlots,
+  templates,
+  onApplyTemplate,
+  onSaveAsTemplate,
+  onManageTemplates,
 }: {
   form: FormState;
   setForm: React.Dispatch<React.SetStateAction<FormState>>;
@@ -467,7 +589,31 @@ function AddForm({
   slotsRemaining: number;
   slotLimit: number;
   usedSlots: number;
+  templates: ProductTemplate[];
+  onApplyTemplate: (tpl: ProductTemplate) => void;
+  onSaveAsTemplate: (name: string, emoji: string) => void;
+  onManageTemplates: () => void;
 }) {
+  const [saveTplOpen, setSaveTplOpen] = useState(false);
+  const [tplDraftName, setTplDraftName] = useState('');
+  const [tplDraftEmoji, setTplDraftEmoji] = useState('👕');
+
+  const optionsHaveContent = form.optionGroups.some(
+    (g) => g.label.trim() && parseValuesInput(g.valuesInput).length > 0,
+  );
+
+  const closeSaveTpl = () => {
+    setSaveTplOpen(false);
+    setTplDraftName('');
+    setTplDraftEmoji('👕');
+  };
+
+  const submitSaveTpl = () => {
+    if (!tplDraftName.trim() || !optionsHaveContent) return;
+    onSaveAsTemplate(tplDraftName, tplDraftEmoji);
+    closeSaveTpl();
+  };
+
   const inputClass =
     'w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-brand-500 dark:focus:ring-brand-900/40';
 
@@ -528,6 +674,47 @@ function AddForm({
 
       <div className="min-h-0 flex-1 overflow-y-auto p-6">
         <div className="mx-auto max-w-lg space-y-6">
+          {/* แม่แบบ — ใช้ซ้ำได้กับสินค้าหลายชิ้น */}
+          <section className="rounded-xl border border-brand-100 bg-brand-50/50 p-3 dark:border-brand-900/40 dark:bg-brand-950/30">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="flex items-baseline gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wider text-brand-700 dark:text-brand-300">
+                  ใช้แม่แบบ
+                </span>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                  คลิกเพื่อใส่ตัวเลือกอัตโนมัติ
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={onManageTemplates}
+                className="text-[11px] font-medium text-brand-600 hover:underline dark:text-brand-300"
+              >
+                จัดการ
+              </button>
+            </div>
+            {templates.length === 0 ? (
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                ยังไม่มีแม่แบบ — กรอกตัวเลือกข้างล่างแล้วกด <span className="font-medium">บันทึกเป็นแม่แบบ</span> เพื่อใช้ซ้ำกับสินค้าอื่น
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {templates.map((tpl) => (
+                  <button
+                    key={tpl.id}
+                    type="button"
+                    onClick={() => onApplyTemplate(tpl)}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-brand-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 shadow-sm transition hover:border-brand-400 hover:bg-brand-50 dark:border-brand-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                    title={tpl.optionGroups.map((g) => `${g.label}: ${g.values.join(' ')}`).join(' · ')}
+                  >
+                    <span>{tpl.emoji}</span>
+                    <span>{tpl.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+
           {/* 1 พื้นฐาน */}
           <section className="space-y-4">
             <SectionTitle n="1." title="พื้นฐาน (ต้องมี)" sub="รูป · ชื่อ · ราคา" />
@@ -596,10 +783,67 @@ function AddForm({
                 </div>
               ))}
             </div>
-            <button type="button" onClick={addOptionRow} className="btn-secondary w-full text-xs">
-              <I.Plus className="h-3.5 w-3.5" />
-              เพิ่มชุดตัวเลือก
-            </button>
+            <div className="flex gap-2">
+              <button type="button" onClick={addOptionRow} className="btn-secondary flex-1 text-xs">
+                <I.Plus className="h-3.5 w-3.5" />
+                เพิ่มชุดตัวเลือก
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!optionsHaveContent) return;
+                  setSaveTplOpen(true);
+                }}
+                disabled={!optionsHaveContent}
+                title={optionsHaveContent ? 'บันทึกชุดตัวเลือกนี้เป็นแม่แบบเพื่อใช้ซ้ำ' : 'กรอกชื่อตัวเลือกและค่าก่อน'}
+                className="btn-secondary flex-1 text-xs disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                💾 บันทึกเป็นแม่แบบ
+              </button>
+            </div>
+            {saveTplOpen && (
+              <div className="rounded-xl border border-brand-200 bg-brand-50/60 p-3 dark:border-brand-800 dark:bg-brand-950/40">
+                <label className="mb-1 block text-xs font-semibold text-slate-600 dark:text-slate-300">ตั้งชื่อแม่แบบ</label>
+                <input
+                  autoFocus
+                  value={tplDraftName}
+                  onChange={(e) => setTplDraftName(e.target.value)}
+                  placeholder="เช่น เสื้อยืดของฉัน"
+                  className={'mb-2 ' + inputClass}
+                />
+                <label className="mb-1 block text-xs font-semibold text-slate-600 dark:text-slate-300">เลือกไอคอน</label>
+                <div className="mb-3 flex flex-wrap gap-1">
+                  {TEMPLATE_EMOJI_OPTIONS.map((em) => (
+                    <button
+                      key={em}
+                      type="button"
+                      onClick={() => setTplDraftEmoji(em)}
+                      className={
+                        'grid h-8 w-8 place-items-center rounded-lg border text-lg transition ' +
+                        (tplDraftEmoji === em
+                          ? 'border-brand-400 bg-white ring-2 ring-brand-200 dark:border-brand-500 dark:bg-slate-800 dark:ring-brand-900'
+                          : 'border-slate-200 bg-white hover:border-brand-300 dark:border-slate-700 dark:bg-slate-900')
+                      }
+                    >
+                      {em}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button type="button" onClick={closeSaveTpl} className="btn-secondary text-xs">
+                    ยกเลิก
+                  </button>
+                  <button
+                    type="button"
+                    onClick={submitSaveTpl}
+                    disabled={!tplDraftName.trim()}
+                    className="btn-primary text-xs disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    บันทึก
+                  </button>
+                </div>
+              </div>
+            )}
           </section>
 
           {/* 3 คำอธิบาย */}
@@ -671,6 +915,292 @@ function AddForm({
               เพิ่มช่อง
             </button>
           </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface TplDraft {
+  id: string | null;
+  name: string;
+  emoji: string;
+  optionGroups: OptionGroupFormRow[];
+}
+
+const blankTplDraft = (): TplDraft => ({
+  id: null,
+  name: '',
+  emoji: '👕',
+  optionGroups: [emptyOptionRow()],
+});
+
+function templateToDraft(tpl: ProductTemplate): TplDraft {
+  return {
+    id: tpl.id,
+    name: tpl.name,
+    emoji: tpl.emoji,
+    optionGroups:
+      tpl.optionGroups.length > 0
+        ? tpl.optionGroups.map((g) => ({
+            id: newId('og'),
+            label: g.label,
+            valuesInput: g.values.join(', '),
+          }))
+        : [emptyOptionRow()],
+  };
+}
+
+function draftToTemplateBody(d: TplDraft): { name: string; emoji: string; optionGroups: ProductOptionGroup[] } | null {
+  const name = d.name.trim();
+  if (!name) return null;
+  const optionGroups = d.optionGroups
+    .map((g) => ({ label: g.label.trim(), values: parseValuesInput(g.valuesInput) }))
+    .filter((g) => g.label && g.values.length > 0);
+  if (optionGroups.length === 0) return null;
+  return { name, emoji: d.emoji || '📦', optionGroups };
+}
+
+function TemplatesView({
+  templates,
+  onCreate,
+  onUpdate,
+  onDelete,
+  onBack,
+}: {
+  templates: ProductTemplate[];
+  onCreate: (name: string, emoji: string, optionGroups: ProductOptionGroup[]) => void;
+  onUpdate: (id: string, patch: Partial<Omit<ProductTemplate, 'id'>>) => void;
+  onDelete: (id: string) => void;
+  onBack: () => void;
+}) {
+  const [draft, setDraft] = useState<TplDraft | null>(null);
+  const inputClass =
+    'w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-brand-500 dark:focus:ring-brand-900/40';
+
+  const updateGroup = (id: string, patch: Partial<OptionGroupFormRow>) =>
+    setDraft((d) =>
+      d ? { ...d, optionGroups: d.optionGroups.map((g) => (g.id === id ? { ...g, ...patch } : g)) } : d,
+    );
+  const removeGroup = (id: string) =>
+    setDraft((d) =>
+      d
+        ? {
+            ...d,
+            optionGroups: d.optionGroups.length <= 1 ? d.optionGroups : d.optionGroups.filter((g) => g.id !== id),
+          }
+        : d,
+    );
+  const addGroup = () =>
+    setDraft((d) => (d ? { ...d, optionGroups: [...d.optionGroups, emptyOptionRow()] } : d));
+
+  const submitDraft = () => {
+    if (!draft) return;
+    const body = draftToTemplateBody(draft);
+    if (!body) return;
+    if (draft.id) {
+      onUpdate(draft.id, body);
+    } else {
+      onCreate(body.name, body.emoji, body.optionGroups);
+    }
+    setDraft(null);
+  };
+
+  if (draft) {
+    const isEdit = draft.id !== null;
+    const valid = Boolean(draftToTemplateBody(draft));
+    return (
+      <div className="flex h-full min-h-0 flex-1 flex-col bg-slate-50 dark:bg-slate-950">
+        <div className="flex items-center gap-3 border-b border-slate-200 bg-white px-6 py-3.5 dark:border-slate-800 dark:bg-slate-900">
+          <button type="button" onClick={() => setDraft(null)} className="btn-ghost -ml-1 p-1.5">
+            <I.X className="h-4 w-4" />
+          </button>
+          <div className="flex-1">
+            <div className="text-sm font-semibold text-slate-900 dark:text-white">
+              {isEdit ? 'แก้ไขแม่แบบ' : 'สร้างแม่แบบใหม่'}
+            </div>
+            <div className="text-xs text-slate-500 dark:text-slate-400">
+              ตั้งค่าตัวเลือกครั้งเดียว — ใช้ซ้ำกับสินค้าหลายชิ้น
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={submitDraft}
+            disabled={!valid}
+            className="btn-primary text-sm disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            บันทึก
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-6">
+          <div className="mx-auto max-w-lg space-y-6">
+            <section className="space-y-3">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">ชื่อแม่แบบ</label>
+              <input
+                value={draft.name}
+                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                placeholder="เช่น เสื้อยืดของฉัน, พาวเวอร์แบงก์"
+                className={inputClass}
+              />
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">ไอคอน</label>
+              <div className="flex flex-wrap gap-1">
+                {TEMPLATE_EMOJI_OPTIONS.map((em) => (
+                  <button
+                    key={em}
+                    type="button"
+                    onClick={() => setDraft({ ...draft, emoji: em })}
+                    className={
+                      'grid h-9 w-9 place-items-center rounded-lg border text-lg transition ' +
+                      (draft.emoji === em
+                        ? 'border-brand-400 bg-white ring-2 ring-brand-200 dark:border-brand-500 dark:bg-slate-800 dark:ring-brand-900'
+                        : 'border-slate-200 bg-white hover:border-brand-300 dark:border-slate-700 dark:bg-slate-900')
+                    }
+                  >
+                    {em}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section className="space-y-3">
+              <SectionTitle
+                n=""
+                title="ตัวเลือก"
+                sub="ตั้งชื่อเองได้ เช่น สี / ไซส์ / ความจุ / ทรง — ค่าแต่ละตัวคั่นด้วยจุลภาคหรือเว้นวรรค"
+              />
+              <div className="space-y-3">
+                {draft.optionGroups.map((g, i) => (
+                  <div
+                    key={g.id}
+                    className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900"
+                  >
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="text-[11px] font-medium text-slate-400">ชุดที่ {i + 1}</span>
+                      {draft.optionGroups.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeGroup(g.id)}
+                          className="text-xs text-slate-400 hover:text-rose-600 dark:hover:text-rose-400"
+                        >
+                          ลบชุดนี้
+                        </button>
+                      )}
+                    </div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-500 dark:text-slate-400">ชื่อตัวเลือก</label>
+                    <input
+                      value={g.label}
+                      onChange={(e) => updateGroup(g.id, { label: e.target.value })}
+                      placeholder="เช่น ทรง, ไซส์, ความจุ"
+                      className={'mb-2 ' + inputClass}
+                    />
+                    <label className="mb-1 block text-xs font-semibold text-slate-500 dark:text-slate-400">ตัวเลือกย่อย</label>
+                    <input
+                      value={g.valuesInput}
+                      onChange={(e) => updateGroup(g.id, { valuesInput: e.target.value })}
+                      placeholder="เช่น คอปก, คอกลม, คอวี"
+                      className={inputClass}
+                    />
+                  </div>
+                ))}
+              </div>
+              <button type="button" onClick={addGroup} className="btn-secondary w-full text-xs">
+                <I.Plus className="h-3.5 w-3.5" />
+                เพิ่มชุดตัวเลือก
+              </button>
+            </section>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-1 flex-col bg-slate-50 dark:bg-slate-950">
+      <div className="flex items-center gap-3 border-b border-slate-200 bg-white px-6 py-3.5 dark:border-slate-800 dark:bg-slate-900">
+        <button type="button" onClick={onBack} className="btn-ghost -ml-1 p-1.5">
+          <I.X className="h-4 w-4" />
+        </button>
+        <div className="flex-1">
+          <div className="text-sm font-semibold text-slate-900 dark:text-white">แม่แบบสินค้า</div>
+          <div className="text-xs text-slate-500 dark:text-slate-400">
+            สร้างครั้งเดียว — ใช้ซ้ำได้กับสินค้าทุกชิ้นที่มีโครงสร้างเหมือนกัน
+          </div>
+        </div>
+        <button type="button" onClick={() => setDraft(blankTplDraft())} className="btn-primary text-sm">
+          <I.Plus className="h-4 w-4" />
+          สร้างใหม่
+        </button>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-5">
+        <div className="mx-auto max-w-lg">
+          {templates.length === 0 ? (
+            <div className="rounded-xl border-2 border-dashed border-slate-200 bg-white p-8 text-center dark:border-slate-700 dark:bg-slate-900">
+              <div className="text-3xl">📋</div>
+              <h3 className="mt-3 text-sm font-semibold text-slate-900 dark:text-slate-100">ยังไม่มีแม่แบบ</h3>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                สร้างแม่แบบ เช่น “เสื้อยืดของฉัน” ที่มีตัวเลือก ทรง · ไซส์ · สี
+                <br />
+                แล้วใช้กดเดียวเวลาเพิ่มสินค้าใหม่
+              </p>
+              <button
+                type="button"
+                onClick={() => setDraft(blankTplDraft())}
+                className="btn-primary mt-4 text-sm"
+              >
+                <I.Plus className="h-4 w-4" />
+                สร้างแม่แบบแรก
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {templates.map((tpl) => (
+                <div
+                  key={tpl.id}
+                  className="flex gap-4 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+                >
+                  <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-slate-50 text-2xl ring-1 ring-slate-100 dark:bg-slate-800 dark:ring-slate-700">
+                    {tpl.emoji}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-sm font-semibold leading-snug text-slate-900 dark:text-slate-100">
+                      {tpl.name}
+                    </h3>
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                      {tpl.optionGroups
+                        .map((g) => `${g.label}: ${g.values.join(' ')}`)
+                        .join(' · ')}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-slate-100/90 p-0.5 ring-1 ring-slate-200/80 dark:bg-slate-800/80 dark:ring-slate-600">
+                    <button
+                      type="button"
+                      onClick={() => setDraft(templateToDraft(tpl))}
+                      aria-label="แก้ไขแม่แบบ"
+                      title="แก้ไข"
+                      className="grid h-8 w-8 place-items-center rounded-md text-slate-500 transition hover:bg-white hover:text-brand-600 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-brand-400"
+                    >
+                      <I.Pencil className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (window.confirm(`ลบแม่แบบ “${tpl.name}” ใช่หรือไม่?\nสินค้าที่สร้างจากแม่แบบนี้จะไม่ได้รับผลกระทบ`)) {
+                          onDelete(tpl.id);
+                        }
+                      }}
+                      aria-label="ลบแม่แบบ"
+                      title="ลบ"
+                      className="grid h-8 w-8 place-items-center rounded-md text-slate-400 transition hover:bg-rose-500/10 hover:text-rose-600 dark:text-slate-500 dark:hover:text-rose-400"
+                    >
+                      <I.Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
