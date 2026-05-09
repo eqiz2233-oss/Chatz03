@@ -71,6 +71,8 @@ export interface Order {
   shop: string;
   commissionPct: number;
   slipStatus?: SlipResult['status'];
+  /** Customer slip image URL for order card (from chat upload / OCR pipeline). */
+  slipImageUrl?: string;
 }
 
 export type View = 'inbox' | 'orders' | 'slips' | 'shop' | 'commission' | 'analytics' | 'settings';
