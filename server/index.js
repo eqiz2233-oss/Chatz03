@@ -192,6 +192,8 @@ let fbWebhookDebug = {
 
 /** @type {Map<string, { kind: string; targetId: string; key: string; displayName: string | null; pictureUrl: string | null; messages: Array<{ id: string; receivedAt: string; sender: string; text?: string; image?: string }>; updatedAt: string }>} */
 const fbThreads = new Map();
+const fbProfileBackfillAttempts = new Map(); // threadKey -> unix ms
+const FB_PROFILE_BACKFILL_COOLDOWN_MS = 90 * 1000;
 
 function getOrCreateFbThread(targetId, channel = 'fb') {
   const key = `${channel}:${targetId}`;
@@ -405,6 +407,30 @@ function fbThreadToApiConversation(thread) {
       meta: m.meta,
     })),
   };
+}
+
+function looksFallbackDisplayName(name, channel) {
+  if (!name || typeof name !== 'string') return true;
+  const s = name.trim();
+  if (!s) return true;
+  if (channel === 'ig') return /^IG\s+•\s+/i.test(s);
+  return /^FB\s+•\s+/i.test(s);
+}
+
+function scheduleFbProfileBackfill() {
+  const now = Date.now();
+  for (const thread of fbThreads.values()) {
+    const missingName = looksFallbackDisplayName(thread.displayName, thread.channel);
+    if (!missingName) continue;
+    const lastTryAt = fbProfileBackfillAttempts.get(thread.key) || 0;
+    if (now - lastTryAt < FB_PROFILE_BACKFILL_COOLDOWN_MS) continue;
+    fbProfileBackfillAttempts.set(thread.key, now);
+    if (thread.channel === 'ig') {
+      void enrichIgProfile(thread.targetId, thread, null);
+    } else {
+      void enrichFbProfile(thread.targetId, thread, null);
+    }
+  }
 }
 
 function verifyFbSignature(rawBody, signatureHeader) {
@@ -846,6 +872,8 @@ app.post('/api/slips/verify', express.json({ limit: '50kb' }), async (req, res) 
 });
 
 app.get('/api/fb/conversations', (_req, res) => {
+  // Retry profile enrichment in the background for threads still showing fallback ids.
+  scheduleFbProfileBackfill();
   const arr = Array.from(fbThreads.values())
     .filter((t) => t.messages.length > 0)
     .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))

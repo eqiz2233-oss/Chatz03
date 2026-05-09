@@ -29,6 +29,40 @@ export interface ProductTemplate {
 const TEMPLATE_EMOJI_OPTIONS = ['👕', '👖', '👗', '🧢', '👜', '👟', '🧴', '💄', '🍱', '🍩', '☕', '🥤', '🔋', '🎧', '📱', '💻', '🪑', '🏠', '🐶', '📦'];
 
 const TEMPLATES_STORAGE_KEY = 'chatz-product-templates-v1';
+const PRODUCTS_STORAGE_KEY = 'chatz-products-v1';
+
+function loadProducts(): Product[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(PRODUCTS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (p): p is Product =>
+        p &&
+        typeof p.id === 'string' &&
+        typeof p.name === 'string' &&
+        typeof p.price === 'number' &&
+        Array.isArray(p.optionGroups) &&
+        typeof p.description === 'string' &&
+        typeof p.sellingPoints === 'string' &&
+        typeof p.imageEmoji === 'string' &&
+        typeof p.aiReady === 'boolean',
+    );
+  } catch {
+    return [];
+  }
+}
+
+function persistProducts(list: Product[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(list));
+  } catch {
+    /* quota / private mode — silently ignore */
+  }
+}
 
 function loadTemplates(): ProductTemplate[] {
   if (typeof window === 'undefined') return [];
@@ -162,7 +196,7 @@ function formatOptionSummary(groups: ProductOptionGroup[]): string {
 type ShopMode = 'list' | 'add' | 'edit' | 'templates';
 
 export function ShopBrainView() {
-  const [products, setProducts] = useState<Product[]>([]);
+  const [products, setProducts] = useState<Product[]>(loadProducts);
   const [mode, setMode] = useState<ShopMode>('list');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(BLANK);
@@ -171,6 +205,10 @@ export function ShopBrainView() {
   useEffect(() => {
     persistTemplates(templates);
   }, [templates]);
+
+  useEffect(() => {
+    persistProducts(products);
+  }, [products]);
 
   const saveCurrentAsTemplate = (name: string, emoji: string) => {
     const cleanName = name.trim();
@@ -321,19 +359,38 @@ export function ShopBrainView() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-5">
-        <div className="space-y-2">
-          {products.map((p) => (
-            <ProductRow
-              key={p.id}
-              product={p}
-              slotsRemaining={slotsRemaining}
-              slotLimit={SHOP_PRODUCT_SLOT_LIMIT}
-              usedSlots={products.length}
-              onEdit={() => openEdit(p)}
-              onDelete={() => confirmDelete(p.id, p.name)}
-            />
-          ))}
-        </div>
+        {products.length === 0 ? (
+          <div className="rounded-xl border-2 border-dashed border-slate-200 bg-white p-8 text-center dark:border-slate-700 dark:bg-slate-900">
+            <div className="text-3xl">🛍️</div>
+            <h3 className="mt-3 text-sm font-semibold text-slate-900 dark:text-slate-100">ยังไม่มีสินค้าในร้าน</h3>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              กดปุ่ม "เพิ่มสินค้า" มุมขวาบน แล้วกรอกชื่อ, ราคา และตัวเลือกอย่างน้อย 1 ชุดเพื่อบันทึก
+            </p>
+            <button
+              type="button"
+              onClick={openAdd}
+              disabled={!canAddProduct}
+              className="btn-primary mt-4 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <I.Plus className="h-4 w-4" />
+              เพิ่มสินค้า
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {products.map((p) => (
+              <ProductRow
+                key={p.id}
+                product={p}
+                slotsRemaining={slotsRemaining}
+                slotLimit={SHOP_PRODUCT_SLOT_LIMIT}
+                usedSlots={products.length}
+                onEdit={() => openEdit(p)}
+                onDelete={() => confirmDelete(p.id, p.name)}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
