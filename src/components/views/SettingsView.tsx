@@ -101,10 +101,10 @@ function GeneralTab({
 
 function ConnectTab({ t }: { t: (k: string) => string }) {
   return (
-    <div className="mx-auto max-w-lg space-y-4">
-      <FacebookIntegrationCard t={t} />
-      <LineStatusCard t={t} />
-      <SlipCheckerCard t={t} />
+    <div className="mx-auto max-w-2xl space-y-6">
+      <MetaIntegrationSection t={t} />
+      <LineIntegrationCard t={t} />
+      <EasySlipIntegrationCard t={t} />
     </div>
   );
 }
@@ -245,41 +245,155 @@ function Segmented<T extends string>({
   );
 }
 
-function SlipCheckerCard({ t }: { t: (k: string) => string }) {
-  const [enabled, setEnabled] = useState<boolean | null>(null);
-  useEffect(() => {
-    fetch('/api/health')
-      .then((r) => r.json())
-      .then((d) => setEnabled(Boolean(d?.slipChecker?.enabled)))
-      .catch(() => setEnabled(false));
+// ─── Shared Meta (FB+IG) state ──────────────────────────────────────────────
+
+function MetaIntegrationSection({ t }: { t: (k: string) => string }) {
+  const [status, setStatus] = useState<FbIntegrationStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try { setStatus(await fetchFbStatus()); }
+    catch (e) { setErr(String((e as Error).message || e)); }
   }, []);
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const onConnect = async () => {
+    setErr(null); setSyncMsg(null); setBusy(true);
+    try {
+      await openFbConnectPopup();
+      await refresh();
+      setTimeout(() => void refresh(), 3500);
+    } catch (e) { setErr(String((e as Error).message || e)); }
+    finally { setBusy(false); }
+  };
+
+  const onDisconnect = async () => {
+    setErr(null); setSyncMsg(null); setBusy(true);
+    try { await disconnectFbPage(); await refresh(); }
+    catch (e) { setErr(String((e as Error).message || e)); }
+    finally { setBusy(false); }
+  };
+
+  const onSyncHistory = async () => {
+    setErr(null); setSyncMsg(null); setSyncing(true);
+    try {
+      const r = await fetch('/api/fb/sync-history', { method: 'POST' });
+      const d = await r.json() as { ok?: boolean; totalThreads?: number; error?: string };
+      if (!r.ok) throw new Error(d.error || `status ${r.status}`);
+      setSyncMsg({ ok: true, text: `โหลดแชทเก่าสำเร็จ ${d.totalThreads ?? 0} ห้อง` });
+    } catch (e) {
+      setSyncMsg({ ok: false, text: String((e as Error).message || e) });
+    } finally { setSyncing(false); }
+  };
+
+  const isConnected = Boolean(status?.connected && status?.page);
+  const igAccount = status?.page?.instagram ?? null;
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
-      <div className="flex items-center gap-3 border-b border-slate-100 px-5 py-4 dark:border-slate-800">
-        <span className="text-xl">📄</span>
-        <div className="flex-1">
-          <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">EasySlip API</div>
-          <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">ตรวจสลิปกับธนาคารจริง</div>
+    <div className="space-y-3">
+      <p className="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Meta (Facebook &amp; Instagram)</p>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {/* ── Facebook Messenger card ── */}
+        <IntegrationCard
+          icon={<ChannelIcon channel="facebook" className="h-7 w-7" />}
+          iconBg="bg-blue-50 dark:bg-blue-950/30"
+          name="Facebook Messenger"
+          desc={status?.page?.name ?? 'รับ-ส่งข้อความจาก Facebook Page'}
+          connected={isConnected}
+          action={
+            isConnected
+              ? <button type="button" onClick={onConnect} disabled={busy} className="btn-secondary text-xs disabled:opacity-50">{busy ? '…' : t('settings.reconnect')}</button>
+              : <button type="button" onClick={onConnect} disabled={busy || !status?.oauthAvailable} className="btn-primary text-xs disabled:opacity-50">{busy ? 'กำลังเชื่อม…' : 'เชื่อมต่อ'}</button>
+          }
+        />
+        {/* ── Instagram card ── */}
+        <IntegrationCard
+          icon={<ChannelIcon channel="ig" className="h-7 w-7" />}
+          iconBg="bg-pink-50 dark:bg-pink-950/30"
+          name="Instagram"
+          desc={igAccount ? `@${igAccount.username}` : isConnected ? 'ไม่มี IG Business เชื่อมกับเพจนี้' : 'เชื่อมผ่าน Facebook Page'}
+          connected={isConnected && Boolean(igAccount)}
+          partial={isConnected && !igAccount}
+          action={
+            isConnected && igAccount
+              ? <button type="button" onClick={onConnect} disabled={busy} className="btn-secondary text-xs disabled:opacity-50">{busy ? '…' : t('settings.reconnect')}</button>
+              : <button type="button" onClick={onConnect} disabled={busy || !status?.oauthAvailable} className="btn-primary text-xs disabled:opacity-50">{busy ? '…' : 'เชื่อมต่อ'}</button>
+          }
+        />
+      </div>
+
+      {/* ── Shared action row ── */}
+      {isConnected && (
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" onClick={onSyncHistory} disabled={syncing || busy} className="btn-secondary text-xs disabled:opacity-50">
+            {syncing ? 'กำลังโหลด…' : '⬇ โหลดแชทเก่า'}
+          </button>
+          <button type="button" onClick={onDisconnect} disabled={busy} className="text-xs text-rose-500 hover:text-rose-700 disabled:opacity-40 dark:text-rose-400">
+            ตัดการเชื่อมต่อ
+          </button>
+          <button type="button" onClick={() => void refresh()} disabled={busy} className="ml-auto text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+            รีเฟรช
+          </button>
         </div>
-        {enabled === null ? (
-          <span className="chip bg-slate-100 text-slate-400 dark:bg-slate-800">...</span>
-        ) : enabled ? (
-          <span className="chip bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
-            <I.Check className="h-3 w-3" /> เชื่อมแล้ว
-          </span>
-        ) : (
-          <span className="chip bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">ทดลองใช้</span>
-        )}
-      </div>
-      <div className="px-5 py-4 text-xs text-slate-500 dark:text-slate-400">
-        {enabled
-          ? 'ระบบกำลังตรวจสลิปกับข้อมูลธนาคารจริงผ่าน EasySlip API'
-          : 'ตั้งค่า EASYSLIP_TOKEN ใน .env เพื่อเปิดใช้การตรวจกับธนาคารจริง ตอนนี้ใช้โหมดทดลองอยู่'}
-      </div>
+      )}
+
+      {syncMsg && (
+        <div className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs ${syncMsg.ok ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300' : 'bg-rose-50 text-rose-600 dark:bg-rose-950/30 dark:text-rose-300'}`}>
+          {syncMsg.ok ? <I.Check className="h-3 w-3" /> : <I.X className="h-3 w-3" />} {syncMsg.text}
+        </div>
+      )}
+      {err && (
+        <div className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-600 dark:bg-rose-950/30 dark:text-rose-300">{err}</div>
+      )}
+      {!status?.oauthAvailable && status !== null && (
+        <div className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+          ต้องตั้งค่า <code className="font-mono">FB_APP_ID</code> และ <code className="font-mono">FB_APP_SECRET</code> ใน Railway Variables ก่อน
+        </div>
+      )}
     </div>
   );
 }
+
+// ─── Zaapi-style integration card shell ─────────────────────────────────────
+
+function IntegrationCard({
+  icon, iconBg, name, desc, connected, partial, action,
+}: {
+  icon: React.ReactNode;
+  iconBg: string;
+  name: string;
+  desc: string;
+  connected: boolean;
+  partial?: boolean;
+  action: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+      <div className="flex items-start justify-between gap-2">
+        <div className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl ${iconBg}`}>{icon}</div>
+        {connected ? (
+          <span className="chip bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+            <I.Check className="h-3 w-3" /> เชื่อมแล้ว
+          </span>
+        ) : partial ? (
+          <span className="chip bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200">บางส่วน</span>
+        ) : (
+          <span className="chip bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">ยังไม่ได้เชื่อม</span>
+        )}
+      </div>
+      <div>
+        <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{name}</div>
+        <div className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400">{desc}</div>
+      </div>
+      <div className="mt-auto">{action}</div>
+    </div>
+  );
+}
+
+// ─── LINE integration card ───────────────────────────────────────────────────
 
 interface HealthSnapshot {
   ok?: boolean;
@@ -288,252 +402,86 @@ interface HealthSnapshot {
   lineConversationsCount?: number;
 }
 
-function LineStatusCard({ t }: { t: (k: string) => string }) {
+function LineIntegrationCard({ t }: { t: (k: string) => string }) {
   const [health, setHealth] = useState<HealthSnapshot | null>(null);
   useEffect(() => {
     let alive = true;
-    fetch('/api/health')
-      .then((r) => r.json())
-      .then((d: HealthSnapshot) => alive && setHealth(d))
-      .catch(() => alive && setHealth({}));
+    fetch('/api/health').then((r) => r.json()).then((d: HealthSnapshot) => alive && setHealth(d)).catch(() => alive && setHealth({}));
     return () => { alive = false; };
   }, []);
   const configured = !!health?.lineConfigured;
   const reply = !!health?.lineReplyEnabled;
   const count = health?.lineConversationsCount ?? 0;
-  const fullyConnected = configured && reply;
-  const subtitle = !health
-    ? '...'
-    : !configured
-      ? 'ยังไม่ได้ตั้งค่า — ใส่ LINE_CHANNEL_SECRET ใน .env'
-      : !reply
-        ? 'รับข้อความได้แล้ว แต่ยังส่งกลับไม่ได้'
-        : `${count} ห้องแชท`;
+  const connected = configured && reply;
+  const partial = configured && !reply;
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
-      <div className="flex items-center gap-3 border-b border-slate-100 px-5 py-4 dark:border-slate-800">
-        <ChannelIcon channel="line" className="h-8 w-8" />
-        <div className="flex-1">
-          <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">LINE Official Account</div>
-          <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{subtitle}</div>
-        </div>
-        {fullyConnected ? (
-          <span className="chip bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
-            <I.Check className="h-3 w-3" /> {t('settings.connected')}
-          </span>
-        ) : configured ? (
-          <span className="chip bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200">รับอย่างเดียว</span>
-        ) : (
-          <span className="chip bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">{t('settings.notConnected')}</span>
-        )}
-      </div>
-      {!configured && (
-        <div className="px-5 py-3 text-xs text-slate-500 dark:text-slate-400">
-          ใส่ <code className="rounded bg-slate-100 px-1 py-0.5 font-mono dark:bg-slate-800">LINE_CHANNEL_SECRET</code> และ <code className="rounded bg-slate-100 px-1 py-0.5 font-mono dark:bg-slate-800">LINE_CHANNEL_ACCESS_TOKEN</code> ใน .env แล้ว restart
+    <div className="space-y-3">
+      <p className="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">LINE</p>
+      <IntegrationCard
+        icon={<ChannelIcon channel="line" className="h-7 w-7" />}
+        iconBg="bg-green-50 dark:bg-green-950/30"
+        name="LINE Official Account"
+        desc={
+          !health ? '…'
+          : connected ? `${count} ห้องแชท`
+          : partial ? 'รับข้อความได้แล้ว แต่ยังตอบกลับไม่ได้'
+          : 'ตั้งค่า LINE_CHANNEL_SECRET ใน Railway Variables'
+        }
+        connected={connected}
+        partial={partial}
+        action={
+          <a
+            href="https://developers.line.biz/console/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn-secondary text-xs"
+          >
+            เปิด LINE Developers →
+          </a>
+        }
+      />
+      {!connected && (
+        <div className="rounded-xl bg-slate-50 px-4 py-3 text-xs text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+          ใส่ <code className="rounded bg-white px-1 py-0.5 font-mono ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700">LINE_CHANNEL_SECRET</code> และ <code className="rounded bg-white px-1 py-0.5 font-mono ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700">LINE_CHANNEL_ACCESS_TOKEN</code> ใน Railway Variables แล้ว Redeploy
         </div>
       )}
     </div>
   );
 }
 
-function FacebookIntegrationCard({ t }: { t: (k: string) => string }) {
-  const [status, setStatus] = useState<FbIntegrationStatus | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+// ─── EasySlip card ───────────────────────────────────────────────────────────
 
-  const refresh = useCallback(async () => {
-    try {
-      const s = await fetchFbStatus();
-      setStatus(s);
-    } catch (e) {
-      setErr(String((e as Error).message || e));
-    }
+function EasySlipIntegrationCard({ t: _t }: { t: (k: string) => string }) {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  useEffect(() => {
+    fetch('/api/health').then((r) => r.json()).then((d) => setEnabled(Boolean(d?.slipChecker?.enabled))).catch(() => setEnabled(false));
   }, []);
 
-  useEffect(() => { void refresh(); }, [refresh]);
-
-  const onConnect = async () => {
-    setErr(null);
-    setSyncResult(null);
-    setBusy(true);
-    try {
-      await openFbConnectPopup();
-      await refresh();
-      // Give the server a moment to finish the background history sync, then refresh status
-      setTimeout(() => void refresh(), 3000);
-    }
-    catch (e) { setErr(String((e as Error).message || e)); }
-    finally { setBusy(false); }
-  };
-
-  const onDisconnect = async () => {
-    setErr(null);
-    setSyncResult(null);
-    setBusy(true);
-    try { await disconnectFbPage(); await refresh(); }
-    catch (e) { setErr(String((e as Error).message || e)); }
-    finally { setBusy(false); }
-  };
-
-  const onSyncHistory = async () => {
-    setErr(null);
-    setSyncResult(null);
-    setSyncing(true);
-    try {
-      const r = await fetch('/api/fb/sync-history', { method: 'POST' });
-      const d = await r.json() as { ok?: boolean; totalThreads?: number; error?: string };
-      if (!r.ok) throw new Error(d.error || `status ${r.status}`);
-      setSyncResult(`โหลดแชทเก่าสำเร็จ — ${d.totalThreads ?? 0} ห้องแชท`);
-    } catch (e) {
-      setErr(String((e as Error).message || e));
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  const webhookReady = status ? (status.webhookReady ?? !status.needsVerifyToken) : false;
-  const replyEnabled = status
-    ? (status.replyEnabled ?? (Boolean(status.page) && Boolean(status.connected)))
-    : false;
-  const fullFb = webhookReady && replyEnabled;
-  const receiveOnlyFb = webhookReady && !replyEnabled;
-  const replyNoWebhook = !webhookReady && replyEnabled;
-  const showPageDetails = Boolean(status?.page) && (fullFb || receiveOnlyFb || replyEnabled);
-  const isConnected = status?.connected && status.page;
-
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
-      <div className="flex items-center gap-3 border-b border-slate-100 px-5 py-4 dark:border-slate-800">
-        <div className="flex shrink-0 -space-x-2">
-          <ChannelIcon channel="facebook" className="h-8 w-8 ring-2 ring-white dark:ring-slate-900" />
-          <ChannelIcon channel="ig" className="h-8 w-8 ring-2 ring-white dark:ring-slate-900" />
-        </div>
-        <div className="flex-1">
-          <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">Facebook & Instagram</div>
-          <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-            {status?.page?.name
-              ? status.page.name
-              : fullFb
-                ? t('settings.fbReadyShort')
-                : receiveOnlyFb
-                  ? t('settings.fbReceiveOnlySub')
-                  : 'เชื่อมต่อด้วยการกดปุ่มด้านล่าง'}
-          </div>
-        </div>
-        {fullFb ? (
-          <span className="chip bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
-            <I.Check className="h-3 w-3" /> {t('settings.connected')}
-          </span>
-        ) : receiveOnlyFb ? (
-          <span className="chip bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">{t('settings.fbReceiveOnly')}</span>
-        ) : replyNoWebhook ? (
-          <span className="chip bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">{t('settings.fbTokenNoWebhook')}</span>
-        ) : (
-          <span className="chip bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">{t('settings.notConnected')}</span>
-        )}
-      </div>
-
-      {status?.tokenSource === 'env' && replyEnabled && (
-        <div className="mx-5 mt-3 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
-          {t('settings.fbEnvTokenNote')}
-        </div>
-      )}
-
-      {showPageDetails && status?.page && (
-        <div className="space-y-2 px-5 py-3">
-          <PageRow
-            icon={<ChannelIcon channel="facebook" className="h-4 w-4" />}
-            picture={status.page.picture}
-            name={status.page.name}
-            sub={status.page.category || 'Facebook Page'}
-            color="blue"
-          />
-          {status.page.instagram ? (
-            <PageRow
-              icon={<ChannelIcon channel="ig" className="h-4 w-4" />}
-              picture={status.page.instagram.picture}
-              name={`@${status.page.instagram.username}`}
-              sub="Instagram Business"
-              color="pink"
-            />
-          ) : (
-            <p className="text-xs text-slate-400 dark:text-slate-500">
-              ไม่มี Instagram Business เชื่อมกับเพจนี้ — เชื่อมใน Meta Business Suite แล้วกด{' '}
-              <button type="button" onClick={() => void refresh()} className="text-brand-600 underline dark:text-brand-400">{t('settings.refresh')}</button>
-            </p>
-          )}
-        </div>
-      )}
-
-      {!status?.oauthAvailable && (
-        <div className="mx-5 mb-3 rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-          ต้องใส่ <code className="font-mono">FB_APP_ID</code> และ <code className="font-mono">FB_APP_SECRET</code> ใน .env ก่อน
-        </div>
-      )}
-
-      {syncResult && (
-        <div className="mx-5 mb-3 flex items-center gap-1.5 rounded-xl bg-emerald-50 px-3 py-2 text-xs text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
-          <I.Check className="h-3 w-3" /> {syncResult}
-        </div>
-      )}
-
-      {err && (
-        <div className="mx-5 mb-3 rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-950/30 dark:text-rose-200">{err}</div>
-      )}
-
-      <div className="flex flex-wrap gap-2 border-t border-slate-100 px-5 py-3 dark:border-slate-800">
-        {isConnected ? (
-          <>
-            <button type="button" onClick={onSyncHistory} disabled={busy || syncing} className="btn-primary text-xs disabled:opacity-50">
-              {syncing ? 'กำลังโหลด…' : '⬇ โหลดแชทเก่า'}
-            </button>
-            <button type="button" onClick={onConnect} disabled={busy} className="btn-secondary text-xs disabled:opacity-50">{t('settings.reconnect')}</button>
-            <button type="button" onClick={onDisconnect} disabled={busy} className="btn-secondary text-xs text-rose-600 disabled:opacity-50 dark:text-rose-400">{t('settings.disconnect')}</button>
-          </>
-        ) : (
-          <button
-            type="button"
-            onClick={onConnect}
-            disabled={busy || !status?.oauthAvailable}
-            className="btn-primary text-sm disabled:opacity-50"
+    <div className="space-y-3">
+      <p className="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">ตรวจสลิป</p>
+      <IntegrationCard
+        icon={<span className="text-2xl leading-none">📄</span>}
+        iconBg="bg-violet-50 dark:bg-violet-950/30"
+        name="EasySlip API"
+        desc={
+          enabled === null ? '…'
+          : enabled ? 'ตรวจสลิปกับธนาคารจริง — เชื่อมอยู่'
+          : 'โหมดสาธิต — ตั้งค่า EASYSLIP_TOKEN เพื่อใช้งานจริง'
+        }
+        connected={enabled === true}
+        action={
+          <a
+            href="https://developer.easyslip.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn-secondary text-xs"
           >
-            <ChannelIcon channel="facebook" className="h-4 w-4" />
-            <ChannelIcon channel="ig" className="h-4 w-4" />
-            {busy ? 'กำลังเชื่อมต่อ…' : status?.tokenSource === 'env' ? t('settings.reconnect') : 'เชื่อมต่อ Facebook & Instagram'}
-          </button>
-        )}
-        <button type="button" onClick={() => void refresh()} disabled={busy || syncing} className="btn-ghost text-xs disabled:opacity-50">{t('settings.refresh')}</button>
-      </div>
-    </div>
-  );
-}
-
-function PageRow({
-  icon, picture, name, sub, color,
-}: {
-  icon: React.ReactNode;
-  picture: string | null | undefined;
-  name: string;
-  sub: string;
-  color: 'blue' | 'pink';
-}) {
-  const placeholder = color === 'blue' ? 'bg-blue-100 text-blue-600' : 'bg-pink-100 text-pink-600';
-  return (
-    <div className="flex items-center gap-2.5 rounded-xl bg-slate-50 px-3 py-2.5 dark:bg-slate-800/60">
-      {picture ? (
-        <img src={picture} alt="" className="h-9 w-9 shrink-0 rounded-full object-cover" />
-      ) : (
-        <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-bold ${placeholder}`}>
-          {icon}
-        </div>
-      )}
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{name}</div>
-        <div className="truncate text-[11px] text-slate-500 dark:text-slate-400">{sub}</div>
-      </div>
+            สมัคร EasySlip →
+          </a>
+        }
+      />
     </div>
   );
 }

@@ -283,10 +283,13 @@ function metaMessagingMediaFromEvent(ev) {
   if (!textOut) textOut = null;
   let imageUrl = null;
   let videoUrl = null;
+  // Detect stickers: explicit sticker_id field OR any attachment with type='sticker'
+  let isSticker = Boolean(msg?.sticker_id);
   for (const att of msg?.attachments || []) {
     const u = att?.payload?.url;
+    const t = String(att.type || '').toLowerCase();
+    if (t === 'sticker') isSticker = true;
     if (typeof u === 'string' && /^https?:\/\//i.test(u)) {
-      const t = String(att.type || '').toLowerCase();
       if (t === 'image' || t === 'sticker' || t === 'story_mention') {
         if (!imageUrl) imageUrl = u;
       } else if (t === 'video' || t === 'ig_reel' || t === 'reel') {
@@ -308,7 +311,7 @@ function metaMessagingMediaFromEvent(ev) {
   if (!textOut && !imageUrl && !videoUrl && msg?.attachments?.length) {
     textOut = `[${msg.attachments[0].type || 'attachment'}]`;
   }
-  return { textOut, imageUrl, videoUrl };
+  return { textOut, imageUrl, videoUrl, isSticker };
 }
 
 /**
@@ -943,11 +946,13 @@ app.post(
           let textOut = null;
           let imageUrl = null;
           let videoUrl = null;
+          let isSticker = false;
           if (ev?.message) {
             const parsed = metaMessagingMediaFromEvent(ev);
             textOut = parsed.textOut;
             imageUrl = parsed.imageUrl;
             videoUrl = parsed.videoUrl;
+            isSticker = parsed.isSticker;
             const mid = ev.message.mid;
             const attCount = Array.isArray(ev.message.attachments) ? ev.message.attachments.length : 0;
             if (mid && attCount > 0 && !imageUrl && !videoUrl) {
@@ -971,12 +976,12 @@ app.post(
             if (textOut) row.text = textOut;
             if (imageUrl) row.image = imageUrl;
             if (videoUrl) row.video = videoUrl;
+            if (isSticker) row.isSticker = true;
             thread.messages.push(row);
             thread.updatedAt = new Date().toISOString();
 
-            // Slip auto-verify on inbound images. Meta CDN URLs are public so
-            // we can hand the URL straight to the verifier.
-            if (imageUrl && !videoUrl) {
+            // Slip auto-verify on inbound images — but NEVER on stickers/emoji.
+            if (imageUrl && !videoUrl && !isSticker) {
               const channel = isInstagram ? 'ig' : 'fb';
               const conversationId = `${channel}:user:${psid}`;
               void maybeAttachSlip({
@@ -1410,6 +1415,10 @@ async function syncFbConversationHistory(pageId, pageToken, igAccountId) {
         }
         thread.messages.sort((a, b) => new Date(a.receivedAt) - new Date(b.receivedAt));
         if (thread.messages.length) thread.updatedAt = thread.messages.at(-1).receivedAt;
+        // Enrich display name from Graph API if participants didn't include it
+        if (!thread.displayName) {
+          void enrichFbProfile(customer.id, thread, pageId).catch(() => {});
+        }
       }
     }
   } catch (e) {
