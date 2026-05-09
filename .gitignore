@@ -7,6 +7,10 @@ node_modules
 
 # build output
 dist
+*.tsbuildinfo
+
+# local Claude / agent worktrees (not part of app source)
+.claude/
 
 # accidental nested clone (do not commit)
 Chatz/
