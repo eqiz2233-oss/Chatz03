@@ -2,18 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppPreferences } from '../../context/AppPreferencesContext';
 import type { Locale } from '../../i18n/messages';
 
-/** ชั่วโมงบนแกน X (เวลาที่นับแชทเข้า) */
-const HOURS = Array.from({ length: 12 }, (_, i) => 8 + i);
-/** จำนวนแชทจากลูกค้าใหม่ต่อชั่วโมง (mock วันนี้) */
-const CHATS_PER_HOUR = [4, 8, 12, 9, 15, 18, 22, 17, 14, 19, 24, 21];
-/** รายวัน 7 วันล่าสุด (เก่า → วันนี้) */
-const CHATS_PER_DAY_7 = [44, 52, 38, 61, 55, 48, 64];
-/** รายวัน 30 วันล่าสุด (mock) */
-const CHATS_PER_DAY_30 = Array.from({ length: 30 }, (_, i) =>
-  Math.max(8, Math.round(28 + 22 * Math.sin(i / 4.5) + ((i * 17) % 11))),
-);
-
-type ChartRange = 'today' | '7d' | '30d';
+/** Daily counts for the chart — replace with API data when available. */
+const CHATS_PER_DAY_30 = Array.from({ length: 30 }, () => 0);
 
 function rollingDayLabels(count: number, locale: Locale): string[] {
   const locTag = locale === 'th' ? 'th-TH' : 'en-US';
@@ -145,36 +135,8 @@ function FlipKPI({
 
 export function AnalyticsView() {
   const { t, locale } = useAppPreferences();
-  const [chartRange, setChartRange] = useState<ChartRange>('today');
 
   const chart = useMemo(() => {
-    if (chartRange === 'today') {
-      const values = CHATS_PER_HOUR;
-      const max = Math.max(...values, 1);
-      return {
-        values,
-        labels: HOURS.map((h) => `${h}:00`),
-        max,
-        titleKey: 'analytics.hourly' as const,
-        subKey: 'analytics.hourlySub' as const,
-        barTipKey: 'analytics.hourlyBarTip' as const,
-        ariaKey: 'analytics.chartAriaToday' as const,
-      };
-    }
-    if (chartRange === '7d') {
-      const values = CHATS_PER_DAY_7;
-      const max = Math.max(...values, 1);
-      const raw = rollingDayLabels(7, locale);
-      return {
-        values,
-        labels: raw,
-        max,
-        titleKey: 'analytics.chartTitle7d' as const,
-        subKey: 'analytics.chartSub7d' as const,
-        barTipKey: 'analytics.dailyBarTip' as const,
-        ariaKey: 'analytics.chartAria7d' as const,
-      };
-    }
     const values = CHATS_PER_DAY_30;
     const max = Math.max(...values, 1);
     const raw = rollingDayLabels(30, locale);
@@ -188,40 +150,37 @@ export function AnalyticsView() {
       barTipKey: 'analytics.dailyBarTip' as const,
       ariaKey: 'analytics.chartAria30d' as const,
     };
-  }, [chartRange, locale]);
+  }, [locale]);
 
   const channelMixRows = useMemo(
     () => [
-      { key: 'line', label: 'LINE', pct: 48, color: 'from-emerald-500 to-teal-600' },
-      { key: 'ig', label: 'Instagram', pct: 31, color: 'from-pink-500 to-fuchsia-600' },
-      { key: 'fb', label: 'Facebook', pct: 21, color: 'from-blue-500 to-indigo-600' },
+      { key: 'line', label: 'LINE', pct: 0, color: 'from-emerald-500 to-teal-600' },
+      { key: 'ig', label: 'Instagram', pct: 0, color: 'from-pink-500 to-fuchsia-600' },
+      { key: 'fb', label: 'Facebook', pct: 0, color: 'from-blue-500 to-indigo-600' },
     ],
     [],
   );
 
   const revenueSlides = useMemo<KpiSlide[]>(
     () => [
-      { periodLabel: t('analytics.rangeToday'), value: '฿12,840', delta: '+8.2%', up: true },
-      { periodLabel: t('analytics.kpiPeriodWeek'), value: '฿182,490', delta: '+24.1%', up: true },
-      { periodLabel: t('analytics.kpiPeriodMonth'), value: '฿642,100', delta: '+18.3%', up: true },
+      { periodLabel: t('analytics.rangeToday'), value: '฿0', delta: t('analytics.kpiAwaitingData'), up: true },
+      { periodLabel: t('analytics.kpiPeriodMonth'), value: '฿0', delta: t('analytics.kpiAwaitingData'), up: true },
     ],
     [t],
   );
 
   const orderSlides = useMemo<KpiSlide[]>(
     () => [
-      { periodLabel: t('analytics.rangeToday'), value: '18', delta: '+4.1%', up: true },
-      { periodLabel: t('analytics.kpiPeriodWeek'), value: '248', delta: '+12.8%', up: true },
-      { periodLabel: t('analytics.kpiPeriodMonth'), value: '1,032', delta: '+9.2%', up: true },
+      { periodLabel: t('analytics.rangeToday'), value: '0', delta: t('analytics.kpiAwaitingData'), up: true },
+      { periodLabel: t('analytics.kpiPeriodMonth'), value: '0', delta: t('analytics.kpiAwaitingData'), up: true },
     ],
     [t],
   );
 
   const convSlides = useMemo<KpiSlide[]>(
     () => [
-      { periodLabel: t('analytics.rangeToday'), value: '11.2%', delta: '+0.8 pp', up: true },
-      { periodLabel: t('analytics.kpiPeriodWeek'), value: '12.6%', delta: '+1.4 pp', up: true },
-      { periodLabel: t('analytics.kpiPeriodMonth'), value: '11.9%', delta: '+0.2 pp', up: true },
+      { periodLabel: t('analytics.rangeToday'), value: '0%', delta: t('analytics.kpiAwaitingData'), up: true },
+      { periodLabel: t('analytics.kpiPeriodMonth'), value: '0%', delta: t('analytics.kpiAwaitingData'), up: true },
     ],
     [t],
   );
@@ -241,74 +200,32 @@ export function AnalyticsView() {
         </div>
 
         <div className="card p-5">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{t(chart.titleKey)}</div>
-              <div className="text-xs text-slate-500 dark:text-slate-400">{t(chart.subKey)}</div>
-            </div>
-            <div
-              className="flex shrink-0 items-center gap-1 rounded-lg bg-slate-100/80 p-0.5 dark:bg-slate-800/80"
-              role="group"
-              aria-label={t('analytics.periodToggle')}
-            >
-              {(
-                [
-                  { id: 'today' as const, label: 'analytics.rangeToday' },
-                  { id: '7d' as const, label: 'analytics.range7' },
-                  { id: '30d' as const, label: 'analytics.range30' },
-                ] as const
-              ).map(({ id, label }) => {
-                const active = chartRange === id;
-                return (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => setChartRange(id)}
-                    aria-pressed={active}
-                    className={
-                      'chip rounded-md border border-transparent px-2.5 py-1 text-xs font-medium transition ' +
-                      (active
-                        ? 'border-brand-200 bg-brand-50 text-brand-700 shadow-sm dark:border-brand-700/60 dark:bg-brand-900/50 dark:text-brand-200'
-                        : 'bg-transparent text-slate-600 hover:bg-white hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-700/80 dark:hover:text-slate-100')
-                    }
-                  >
-                    {t(label)}
-                  </button>
-                );
-              })}
-            </div>
+          <div>
+            <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{t(chart.titleKey)}</div>
+            <div className="text-xs text-slate-500 dark:text-slate-400">{t(chart.subKey)}</div>
           </div>
-          <div
-            className={
-              'mt-4 flex h-48 items-end gap-1.5 sm:gap-2 ' +
-              (chartRange === '30d' ? 'overflow-x-auto pb-1' : '')
-            }
-            role="img"
-            aria-label={t(chart.ariaKey)}
-          >
+          <div className="mt-4 flex h-48 gap-1.5 overflow-x-auto pb-1 sm:gap-2" role="img" aria-label={t(chart.ariaKey)}>
             {chart.values.map((count, i) => (
-              <div
-                key={i}
-                className={
-                  'flex min-w-0 flex-col items-center gap-1 ' +
-                  (chartRange === '30d' ? 'w-4 shrink-0 sm:w-5' : 'flex-1')
-                }
-              >
-                <div
-                  className="w-full min-w-[4px] rounded-md bg-gradient-to-t from-brand-500 to-fuchsia-500 shadow-sm transition hover:opacity-80"
-                  style={{
-                    height: `${(count / chart.max) * 100}%`,
-                    minHeight: count > 0 ? '4px' : 0,
-                  }}
-                  title={t(chart.barTipKey, { n: count })}
-                />
-                <div
-                  className={
-                    'max-w-full truncate text-center text-[10px] tabular-nums text-slate-400 dark:text-slate-500 ' +
-                    (chartRange === '30d' ? 'min-h-[0.875rem]' : '')
-                  }
-                >
-                  {chart.labels[i] || '\u00a0'}
+              <div key={i} className="flex h-full w-4 min-h-0 shrink-0 flex-col sm:w-5">
+                <div className="flex min-h-0 flex-1 flex-col justify-end">
+                  <div
+                    className="w-full min-w-[4px] rounded-md bg-gradient-to-t from-brand-500 to-fuchsia-500 shadow-sm transition hover:opacity-80"
+                    style={{
+                      height: `${(count / chart.max) * 100}%`,
+                      minHeight: count > 0 ? 4 : 0,
+                      maxHeight: '100%',
+                    }}
+                    title={t(chart.barTipKey, { n: count })}
+                  />
+                </div>
+                <div className="min-h-[0.875rem] max-w-full shrink-0 text-center text-[10px] tabular-nums leading-tight text-slate-400 dark:text-slate-500">
+                  {chart.labels[i] ? (
+                    <span className="inline-block max-w-[2.75rem] truncate align-top" title={chart.labels[i]}>
+                      {chart.labels[i]}
+                    </span>
+                  ) : (
+                    '\u00a0'
+                  )}
                 </div>
               </div>
             ))}

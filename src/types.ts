@@ -68,6 +68,8 @@ export interface Order {
   amount: number;
   status: OrderStatus;
   createdAt: string;
+  /** Calendar date YYYY-MM-DD for filters (optional until API provides full timestamps). */
+  orderDate?: string;
   shop: string;
   commissionPct: number;
   slipStatus?: SlipResult['status'];
