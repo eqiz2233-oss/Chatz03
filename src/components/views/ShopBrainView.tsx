@@ -195,68 +195,6 @@ function formatOptionSummary(groups: ProductOptionGroup[]): string {
 
 type ShopMode = 'list' | 'add' | 'edit' | 'templates';
 
-interface ShowcaseProduct {
-  id: string;
-  family: string;
-  name: string;
-  subtitle: string;
-  fromPrice: number;
-  badge?: string;
-  tone: string;
-}
-
-const SHOWCASE_PRODUCTS: ShowcaseProduct[] = [
-  {
-    id: 'showcase-1',
-    family: 'สินค้าแนะนำ',
-    name: 'รุ่นเริ่มต้น',
-    subtitle: 'ดีไซน์เรียบ ใช้งานง่าย เหมาะสำหรับลูกค้าทั่วไป',
-    fromPrice: 1990,
-    badge: 'แนะนำ',
-    tone: 'from-[#f0f7c8] via-[#d6ef7f] to-[#b7df4a]',
-  },
-  {
-    id: 'showcase-2',
-    family: 'สินค้าแนะนำ',
-    name: 'รุ่นยอดนิยม',
-    subtitle: 'สมดุลทั้งราคาและฟีเจอร์ เหมาะกับการใช้งานทุกวัน',
-    fromPrice: 3690,
-    tone: 'from-[#d7e6f8] via-[#a8c9f2] to-[#7aa9ea]',
-  },
-  {
-    id: 'showcase-3',
-    family: 'สินค้าแนะนำ',
-    name: 'รุ่นพรีเมียม',
-    subtitle: 'วัสดุพรีเมียม ฟังก์ชันครบ สำหรับลูกค้าที่ต้องการที่สุด',
-    fromPrice: 5690,
-    tone: 'from-[#2f2f37] via-[#23232b] to-[#16161d]',
-  },
-  {
-    id: 'showcase-4',
-    family: 'สินค้าแนะนำ',
-    name: 'รุ่นคลาสสิก',
-    subtitle: 'สเปกไว้ใจได้ ดูแลง่าย เหมาะกับการใช้งานระยะยาว',
-    fromPrice: 4390,
-    tone: 'from-[#dbe8ff] via-[#c5d9ff] to-[#9fbefd]',
-  },
-  {
-    id: 'showcase-5',
-    family: 'สินค้าแนะนำ',
-    name: 'รุ่นคุ้มค่า',
-    subtitle: 'ขนาดกะทัดรัด ราคาดี เหมาะกับลูกค้าที่เริ่มต้น',
-    fromPrice: 2290,
-    tone: 'from-[#f1f3f8] via-[#d9dfea] to-[#bfc9db]',
-  },
-  {
-    id: 'showcase-6',
-    family: 'สินค้าแนะนำ',
-    name: 'รุ่นโปร',
-    subtitle: 'ประสิทธิภาพสูง รองรับงานหนัก และงานเชิงธุรกิจ',
-    fromPrice: 7490,
-    tone: 'from-[#505566] via-[#383d4e] to-[#222737]',
-  },
-];
-
 export function ShopBrainView() {
   const [products, setProducts] = useState<Product[]>(loadProducts);
   const [mode, setMode] = useState<ShopMode>('list');
@@ -292,7 +230,6 @@ export function ShopBrainView() {
 
   const slotsRemaining = Math.max(0, SHOP_PRODUCT_SLOT_LIMIT - products.length);
   const canAddProduct = slotsRemaining > 0;
-  const showcaseFamilies = Array.from(new Set(SHOWCASE_PRODUCTS.map((p) => p.family)));
 
   const handleSave = () => {
     const body = buildProductBody(form);
@@ -422,87 +359,44 @@ export function ShopBrainView() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-5">
-        <div className="space-y-5">
-          <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-            <div className="mb-4 flex flex-wrap items-end justify-between gap-2 px-1">
-              <div>
-                <h2 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">สินค้าแนะนำ</h2>
-                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">หน้าร้านสไตล์มินิมอล เน้นชื่อรุ่น รายละเอียดสั้น และราคาเริ่มต้น</p>
-              </div>
-              <div className="text-xs text-slate-400 dark:text-slate-500">
-                {showcaseFamilies.join(' · ')} showcase
-              </div>
+        {products.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-5 py-6 text-center dark:border-slate-600 dark:bg-slate-900">
+            <div className="text-2xl">🛍️</div>
+            <h3 className="mt-2 text-sm font-semibold text-slate-900 dark:text-slate-100">ยังไม่มีสินค้าในร้านของคุณ</h3>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              กดปุ่มเพิ่มสินค้า เพื่อใส่ชื่อสินค้า ราคา และรายละเอียดสั้น ๆ ให้ AI ช่วยขายได้ทันที
+            </p>
+            <button
+              type="button"
+              onClick={openAdd}
+              disabled={!canAddProduct}
+              className="btn-primary mt-4 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <I.Plus className="h-4 w-4" />
+              เพิ่มสินค้า
+            </button>
+          </div>
+        ) : (
+          <section className="rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+            <div className="mb-2 px-1">
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">สินค้าของร้านคุณ</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">แสดงเฉพาะข้อมูลจริงที่คุณเพิ่มเท่านั้น</p>
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {SHOWCASE_PRODUCTS.map((item) => (
-                <article
-                  key={item.id}
-                  className="group relative overflow-hidden rounded-2xl border border-slate-200/90 bg-[#f5f5f7] p-4 transition hover:-translate-y-0.5 hover:shadow-md dark:border-slate-700 dark:bg-slate-950/60"
-                >
-                  {item.badge && (
-                    <span className="absolute left-3 top-3 rounded-full bg-brand-600 px-2 py-0.5 text-[10px] font-semibold text-white dark:bg-brand-500">
-                      {item.badge}
-                    </span>
-                  )}
-                  <div
-                    className={
-                      'mx-auto mt-5 grid h-28 w-full max-w-[220px] place-items-center rounded-xl bg-gradient-to-br text-[44px] shadow-sm ' +
-                      item.tone
-                    }
-                  >
-                    💻
-                  </div>
-                  <div className="mt-4 text-center">
-                    <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{item.name}</div>
-                    <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-slate-500 dark:text-slate-400">{item.subtitle}</p>
-                    <div className="mt-3 text-xs font-medium text-slate-600 dark:text-slate-300">
-                      From ฿{item.fromPrice.toLocaleString()}
-                    </div>
-                  </div>
-                </article>
+            <div className="space-y-2">
+              {products.map((p) => (
+                <ProductRow
+                  key={p.id}
+                  product={p}
+                  slotsRemaining={slotsRemaining}
+                  slotLimit={SHOP_PRODUCT_SLOT_LIMIT}
+                  usedSlots={products.length}
+                  onEdit={() => openEdit(p)}
+                  onDelete={() => confirmDelete(p.id, p.name)}
+                />
               ))}
             </div>
           </section>
-
-          {products.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-5 py-6 text-center dark:border-slate-600 dark:bg-slate-900">
-              <div className="text-2xl">🛍️</div>
-              <h3 className="mt-2 text-sm font-semibold text-slate-900 dark:text-slate-100">ยังไม่มีสินค้าในร้านของคุณ</h3>
-              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                กดปุ่มเพิ่มสินค้า เพื่อใส่ชื่อสินค้า ราคา และรายละเอียดสั้น ๆ ให้ AI ช่วยขายได้ทันที
-              </p>
-              <button
-                type="button"
-                onClick={openAdd}
-                disabled={!canAddProduct}
-                className="btn-primary mt-4 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                <I.Plus className="h-4 w-4" />
-                เพิ่มสินค้า
-              </button>
-            </div>
-          ) : (
-            <section className="rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
-              <div className="mb-2 px-1">
-                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">สินค้าที่คุณเพิ่มเอง</h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400">รายการนี้ใช้ข้อมูลจริงของร้านคุณสำหรับตอบแชทลูกค้า</p>
-              </div>
-              <div className="space-y-2">
-                {products.map((p) => (
-                  <ProductRow
-                    key={p.id}
-                    product={p}
-                    slotsRemaining={slotsRemaining}
-                    slotLimit={SHOP_PRODUCT_SLOT_LIMIT}
-                    usedSlots={products.length}
-                    onEdit={() => openEdit(p)}
-                    onDelete={() => confirmDelete(p.id, p.name)}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
-        </div>
+        )}
       </div>
     </div>
   );
