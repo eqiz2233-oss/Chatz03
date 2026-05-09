@@ -39,25 +39,39 @@ const lineConfig = {
 const hasSecret = Boolean(lineConfig.channelSecret);
 const hasToken = Boolean(lineConfig.channelAccessToken);
 
-// App-level FB config (shared across all connected Pages).
+// App-level FB config (shared across all connected Pages). Re-read from process.env on each sync
+// so Railway / Docker env changes after boot (or any load-order quirk) still match the live process.
 const fbConfig = {
-  appSecret: (process.env.FB_APP_SECRET || '').trim(),
-  verifyToken: (process.env.FB_VERIFY_TOKEN || '').trim(),
-  apiVersion: (process.env.FB_GRAPH_VERSION || 'v21.0').trim(),
-  appId: (process.env.FB_APP_ID || '').trim(),
-  // Optional fallback Page token from .env (used if no Pages were OAuth-connected yet —
-  // mostly for initial dev setup; the OAuth flow is the recommended path).
-  fallbackPageAccessToken: (process.env.FB_PAGE_ACCESS_TOKEN || '').trim(),
+  appSecret: '',
+  verifyToken: '',
+  apiVersion: 'v21.0',
+  appId: '',
+  fallbackPageAccessToken: '',
 };
 
-const fbHasVerify = Boolean(fbConfig.verifyToken);
-const fbHasAppSecret = Boolean(fbConfig.appSecret);
-const fbOauthAvailable = Boolean(fbConfig.appId && fbConfig.appSecret);
+let fbHasVerify = false;
+let fbHasAppSecret = false;
+let fbOauthAvailable = false;
 
 // `fbConfigured` now means "webhook is set up at app level" — i.e. verify token present.
 // `fbHasAnyPage` means at least one Page is connected and ready to send/receive.
-let fbHasAnyPage = listPages().length > 0 || Boolean(fbConfig.fallbackPageAccessToken);
-let fbConfigured = fbHasVerify;
+let fbHasAnyPage = false;
+let fbConfigured = false;
+
+function syncFbConfigFromEnv() {
+  fbConfig.appSecret = (process.env.FB_APP_SECRET || '').trim();
+  fbConfig.verifyToken = (process.env.FB_VERIFY_TOKEN || '').trim();
+  fbConfig.apiVersion = (process.env.FB_GRAPH_VERSION || 'v21.0').trim();
+  fbConfig.appId = (process.env.FB_APP_ID || '').trim();
+  fbConfig.fallbackPageAccessToken = (process.env.FB_PAGE_ACCESS_TOKEN || '').trim();
+  fbHasVerify = Boolean(fbConfig.verifyToken);
+  fbHasAppSecret = Boolean(fbConfig.appSecret);
+  fbOauthAvailable = Boolean(fbConfig.appId && fbConfig.appSecret);
+  fbConfigured = fbHasVerify;
+  refreshFbState();
+}
+
+syncFbConfigFromEnv();
 
 function refreshFbState() {
   fbHasAnyPage = listPages().length > 0 || Boolean(fbConfig.fallbackPageAccessToken);
@@ -597,6 +611,7 @@ function threadToApiConversation(thread) {
 app.use(cors());
 
 app.get('/api/health', (_req, res) => {
+  syncFbConfigFromEnv();
   const lineConversationsCount = Array.from(lineThreads.values()).filter((t) => t.messages.length > 0).length;
   const fbConversationsCount = Array.from(fbThreads.values()).filter((t) => t.messages.length > 0).length;
   res.json({
@@ -611,6 +626,12 @@ app.get('/api/health', (_req, res) => {
     fbReplyEnabled: fbHasPageToken(),
     fbAppSecretSet: fbHasAppSecret,
     fbOauthAvailable,
+    fbEnvPresent: {
+      FB_APP_ID: Boolean(fbConfig.appId),
+      FB_APP_SECRET: Boolean(fbHasAppSecret),
+      FB_PAGE_ACCESS_TOKEN: Boolean(fbConfig.fallbackPageAccessToken),
+      FB_VERIFY_TOKEN: Boolean(fbConfig.verifyToken),
+    },
     fbConnectedPage: (() => {
       const p = primaryFbPageForApi();
       return p ? { id: p.id, name: p.name, category: p.category, picture: p.picture } : null;
@@ -875,6 +896,7 @@ app.post(
   '/api/fb/webhook',
   express.raw({ type: '*/*', limit: '1mb' }),
   async (req, res) => {
+    syncFbConfigFromEnv();
     if (!fbConfigured) {
       return res.status(500).json({ error: 'FB_VERIFY_TOKEN is missing (Meta webhook cannot be used without it)' });
     }
@@ -1052,6 +1074,7 @@ async function sendLineMessage({ conversationId, text, asAi }) {
 }
 
 async function sendMetaMessage({ conversationId, text, asAi }) {
+  syncFbConfigFromEnv();
   if (!fbHasPageToken()) {
     return { status: 503, error: 'No connected Page. Connect Facebook in Settings → Integrations.' };
   }
@@ -1145,6 +1168,7 @@ function publicBaseUrl(req) {
 const fbOauthStates = new Map();
 
 app.get('/api/fb/integration/status', async (_req, res) => {
+  syncFbConfigFromEnv();
   const oauthPage = primaryFbPageForApi();
   const replyEnabled = fbHasPageToken();
   const webhookReady = fbHasVerify;
@@ -1168,10 +1192,18 @@ app.get('/api/fb/integration/status', async (_req, res) => {
     needsAppSecret: !fbHasAppSecret,
     needsVerifyToken: !fbHasVerify,
     apiVersion: fbConfig.apiVersion,
+    /** Booleans only — helps confirm Railway/production actually loaded each key (names must match exactly). */
+    envPresent: {
+      FB_APP_ID: Boolean(fbConfig.appId),
+      FB_APP_SECRET: Boolean(fbHasAppSecret),
+      FB_PAGE_ACCESS_TOKEN: Boolean(fbConfig.fallbackPageAccessToken),
+      FB_VERIFY_TOKEN: Boolean(fbHasVerify),
+    },
   });
 });
 
 app.get('/api/fb/oauth/start', (req, res) => {
+  syncFbConfigFromEnv();
   if (!fbOauthAvailable) {
     return res
       .status(400)
@@ -1604,6 +1636,7 @@ app.use((err, req, res, _next) => {
 });
 
 app.listen(port, '0.0.0.0', () => {
+  syncFbConfigFromEnv();
   const base = (process.env.PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '') || `http://localhost:${port}`;
   console.log(`Backend listening on http://0.0.0.0:${port}`);
   console.log(`Public base URL : ${base}${process.env.PUBLIC_BASE_URL ? '' : '  (set PUBLIC_BASE_URL in .env for production OAuth)'}`);
@@ -1612,6 +1645,10 @@ app.listen(port, '0.0.0.0', () => {
   console.log(`FB OAuth start  : ${base}/api/fb/oauth/start`);
   console.log(`FB OAuth callback (whitelist this in Meta App): ${base}/api/fb/oauth/callback`);
   console.log(`Loaded .env from: ${path.join(__dirname, '..', '.env')}`);
+  console.log(
+    '[FB env]',
+    `verify=${fbHasVerify ? 1 : 0} pageTok=${fbConfig.fallbackPageAccessToken ? 1 : 0} appId=${fbConfig.appId ? 1 : 0} appSecret=${fbHasAppSecret ? 1 : 0}`,
+  );
   if (!hasSecret) console.warn('Missing LINE_CHANNEL_SECRET (LINE webhook + inbox sync disabled)');
   if (!hasToken) console.warn('Missing LINE_CHANNEL_ACCESS_TOKEN (LINE push + profile disabled)');
   if (!fbHasPageToken()) console.warn('No connected Page yet — user must click Connect Facebook in Settings.');
