@@ -1254,6 +1254,105 @@ function renderPagePicker(pages) {
 </body></html>`;
 }
 
+/**
+ * Fetch the last ~25 Messenger conversations (and IG if igAccountId given)
+ * and populate fbThreads with historical messages.  Runs after OAuth connect
+ * so the inbox isn't empty on first load.
+ */
+async function syncFbConversationHistory(pageId, pageToken, igAccountId) {
+  const api = fbConfig.apiVersion;
+
+  // ── Facebook Messenger ──────────────────────────────────────────────────
+  try {
+    const url =
+      `https://graph.facebook.com/${api}/${encodeURIComponent(pageId)}/conversations` +
+      `?platform=messenger` +
+      `&fields=participants,messages{id,message,from,created_time,attachments{mime_type,file_url}}` +
+      `&limit=25` +
+      `&access_token=${encodeURIComponent(pageToken)}`;
+    const r = await fetch(url);
+    const data = await r.json();
+    if (data?.error) {
+      console.warn('[FB History] conversations error:', data.error?.message || data.error);
+    } else {
+      for (const convo of Array.isArray(data?.data) ? data.data : []) {
+        const participants = convo?.participants?.data || [];
+        const customer = participants.find((p) => p.id !== pageId);
+        if (!customer) continue;
+        const thread = getOrCreateFbThread(customer.id, 'fb');
+        if (customer.name && !thread.displayName) thread.displayName = customer.name;
+        const existing = new Set(thread.messages.map((m) => m.id));
+        const msgs = Array.isArray(convo?.messages?.data) ? [...convo.messages.data].reverse() : [];
+        for (const msg of msgs) {
+          if (existing.has(msg.id)) continue;
+          const isPage = msg.from?.id === pageId;
+          const row = {
+            id: msg.id,
+            receivedAt: msg.created_time || new Date().toISOString(),
+            sender: isPage ? 'agent' : 'customer',
+          };
+          if (msg.message) row.text = msg.message;
+          const atts = msg.attachments?.data || [];
+          for (const att of atts) {
+            const fu = att.file_url;
+            if (typeof fu !== 'string') continue;
+            if (att.mime_type?.startsWith('video/')) { if (!row.video) row.video = fu; }
+            else if (att.mime_type?.startsWith('image/')) { if (!row.image) row.image = fu; }
+          }
+          thread.messages.push(row);
+          existing.add(msg.id);
+        }
+        thread.messages.sort((a, b) => new Date(a.receivedAt) - new Date(b.receivedAt));
+        if (thread.messages.length) thread.updatedAt = thread.messages.at(-1).receivedAt;
+      }
+    }
+  } catch (e) {
+    console.warn('[FB History] FB sync failed:', e?.message || e);
+  }
+
+  // ── Instagram ────────────────────────────────────────────────────────────
+  if (!igAccountId) return;
+  try {
+    const url =
+      `https://graph.facebook.com/${api}/${encodeURIComponent(igAccountId)}/conversations` +
+      `?platform=instagram` +
+      `&fields=participants,messages{id,text,from,timestamp,attachments{name}}` +
+      `&limit=25` +
+      `&access_token=${encodeURIComponent(pageToken)}`;
+    const r = await fetch(url);
+    const data = await r.json();
+    if (data?.error) {
+      console.warn('[IG History] conversations error:', data.error?.message || data.error);
+    } else {
+      for (const convo of Array.isArray(data?.data) ? data.data : []) {
+        const participants = convo?.participants?.data || [];
+        const customer = participants.find((p) => p.id !== igAccountId);
+        if (!customer) continue;
+        const thread = getOrCreateFbThread(customer.id, 'ig');
+        if (customer.name && !thread.displayName) thread.displayName = customer.name;
+        const existing = new Set(thread.messages.map((m) => m.id));
+        const msgs = Array.isArray(convo?.messages?.data) ? [...convo.messages.data].reverse() : [];
+        for (const msg of msgs) {
+          if (existing.has(msg.id)) continue;
+          const isIgAccount = msg.from?.id === igAccountId;
+          const row = {
+            id: msg.id,
+            receivedAt: msg.timestamp || new Date().toISOString(),
+            sender: isIgAccount ? 'agent' : 'customer',
+          };
+          if (msg.text) row.text = msg.text;
+          thread.messages.push(row);
+          existing.add(msg.id);
+        }
+        thread.messages.sort((a, b) => new Date(a.receivedAt) - new Date(b.receivedAt));
+        if (thread.messages.length) thread.updatedAt = thread.messages.at(-1).receivedAt;
+      }
+    }
+  } catch (e) {
+    console.warn('[IG History] IG sync failed:', e?.message || e);
+  }
+}
+
 app.post('/api/fb/integration/connect', express.json({ limit: '20kb' }), async (req, res) => {
   const { id, name, category, picture, access_token, instagram } = req.body || {};
   if (!id || !access_token) {
@@ -1286,10 +1385,31 @@ app.post('/api/fb/integration/connect', express.json({ limit: '20kb' }), async (
       connectedAt: new Date().toISOString(),
     });
     refreshFbState();
+
+    // Fire-and-forget: load conversation history so inbox is populated immediately.
+    void syncFbConversationHistory(id, access_token, instagram?.id || null).catch((e) =>
+      console.warn('[FB History] initial sync failed:', e?.message || e),
+    );
+
     return res.json({ ok: true, page: primaryFbPageForApi() });
   } catch (e) {
     return res.status(500).json({ error: String(e?.message || e) });
   }
+});
+
+/** Manual trigger: re-sync conversation history for all connected pages. */
+app.post('/api/fb/sync-history', async (_req, res) => {
+  const pages = listPages().filter((p) => p.pageAccessToken);
+  if (!pages.length) return res.status(400).json({ error: 'No pages connected' });
+  const results = [];
+  for (const p of pages) {
+    const before = fbThreads.size;
+    await syncFbConversationHistory(p.id, p.pageAccessToken, p.instagram?.id || null).catch((e) =>
+      console.warn('[FB History] manual sync failed:', e?.message || e),
+    );
+    results.push({ page: p.name, threadsAdded: fbThreads.size - before });
+  }
+  res.json({ ok: true, results, totalThreads: fbThreads.size });
 });
 
 app.get('/api/privacy', (_req, res) => {

@@ -340,6 +340,8 @@ function LineStatusCard({ t }: { t: (k: string) => string }) {
 function FacebookIntegrationCard({ t }: { t: (k: string) => string }) {
   const [status, setStatus] = useState<FbIntegrationStatus | null>(null);
   const [busy, setBusy] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -355,18 +357,41 @@ function FacebookIntegrationCard({ t }: { t: (k: string) => string }) {
 
   const onConnect = async () => {
     setErr(null);
+    setSyncResult(null);
     setBusy(true);
-    try { await openFbConnectPopup(); await refresh(); }
+    try {
+      await openFbConnectPopup();
+      await refresh();
+      // Give the server a moment to finish the background history sync, then refresh status
+      setTimeout(() => void refresh(), 3000);
+    }
     catch (e) { setErr(String((e as Error).message || e)); }
     finally { setBusy(false); }
   };
 
   const onDisconnect = async () => {
     setErr(null);
+    setSyncResult(null);
     setBusy(true);
     try { await disconnectFbPage(); await refresh(); }
     catch (e) { setErr(String((e as Error).message || e)); }
     finally { setBusy(false); }
+  };
+
+  const onSyncHistory = async () => {
+    setErr(null);
+    setSyncResult(null);
+    setSyncing(true);
+    try {
+      const r = await fetch('/api/fb/sync-history', { method: 'POST' });
+      const d = await r.json() as { ok?: boolean; totalThreads?: number; error?: string };
+      if (!r.ok) throw new Error(d.error || `status ${r.status}`);
+      setSyncResult(`โหลดแชทเก่าสำเร็จ — ${d.totalThreads ?? 0} ห้องแชท`);
+    } catch (e) {
+      setErr(String((e as Error).message || e));
+    } finally {
+      setSyncing(false);
+    }
   };
 
   const isConnected = status?.connected && status.page;
@@ -425,13 +450,22 @@ function FacebookIntegrationCard({ t }: { t: (k: string) => string }) {
         </div>
       )}
 
+      {syncResult && (
+        <div className="mx-5 mb-3 flex items-center gap-1.5 rounded-xl bg-emerald-50 px-3 py-2 text-xs text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
+          <I.Check className="h-3 w-3" /> {syncResult}
+        </div>
+      )}
+
       {err && (
         <div className="mx-5 mb-3 rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-950/30 dark:text-rose-200">{err}</div>
       )}
 
-      <div className="flex gap-2 border-t border-slate-100 px-5 py-3 dark:border-slate-800">
+      <div className="flex flex-wrap gap-2 border-t border-slate-100 px-5 py-3 dark:border-slate-800">
         {isConnected ? (
           <>
+            <button type="button" onClick={onSyncHistory} disabled={busy || syncing} className="btn-primary text-xs disabled:opacity-50">
+              {syncing ? 'กำลังโหลด…' : '⬇ โหลดแชทเก่า'}
+            </button>
             <button type="button" onClick={onConnect} disabled={busy} className="btn-secondary text-xs disabled:opacity-50">{t('settings.reconnect')}</button>
             <button type="button" onClick={onDisconnect} disabled={busy} className="btn-secondary text-xs text-rose-600 disabled:opacity-50 dark:text-rose-400">{t('settings.disconnect')}</button>
           </>
@@ -447,7 +481,7 @@ function FacebookIntegrationCard({ t }: { t: (k: string) => string }) {
             {busy ? 'กำลังเชื่อมต่อ…' : 'เชื่อมต่อ Facebook & Instagram'}
           </button>
         )}
-        <button type="button" onClick={() => void refresh()} disabled={busy} className="btn-ghost text-xs disabled:opacity-50">{t('settings.refresh')}</button>
+        <button type="button" onClick={() => void refresh()} disabled={busy || syncing} className="btn-ghost text-xs disabled:opacity-50">{t('settings.refresh')}</button>
       </div>
     </div>
   );
