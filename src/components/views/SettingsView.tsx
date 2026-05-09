@@ -255,10 +255,17 @@ function MetaIntegrationSection({ t }: { t: (k: string) => string }) {
   const [err, setErr] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    try { setStatus(await fetchFbStatus()); }
+    try {
+      setStatus(await fetchFbStatus());
+      setErr(null);
+    }
     catch (e) { setErr(String((e as Error).message || e)); }
   }, []);
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    void refresh();
+    const id = window.setInterval(() => void refresh(), 6000);
+    return () => window.clearInterval(id);
+  }, [refresh]);
 
   const onConnect = async () => {
     setErr(null); setSyncMsg(null); setBusy(true);
@@ -289,7 +296,9 @@ function MetaIntegrationSection({ t }: { t: (k: string) => string }) {
     } finally { setSyncing(false); }
   };
 
-  const isConnected = Boolean(status?.connected && status?.page);
+  // Treat as connected when reply token exists OR page profile is present.
+  // Some env-token setups can reply successfully even when page profile fetch is delayed.
+  const isConnected = Boolean(status && (status.replyEnabled || status.page));
   const igAccount = status?.page?.instagram ?? null;
 
   return (
@@ -400,15 +409,31 @@ interface HealthSnapshot {
   lineConfigured?: boolean;
   lineReplyEnabled?: boolean;
   lineConversationsCount?: number;
+  slipChecker?: { enabled?: boolean };
 }
 
-function LineIntegrationCard({ t }: { t: (k: string) => string }) {
+function useHealthSnapshot() {
   const [health, setHealth] = useState<HealthSnapshot | null>(null);
   useEffect(() => {
     let alive = true;
-    fetch('/api/health').then((r) => r.json()).then((d: HealthSnapshot) => alive && setHealth(d)).catch(() => alive && setHealth({}));
-    return () => { alive = false; };
+    const load = () => {
+      fetch('/api/health')
+        .then((r) => r.json())
+        .then((d: HealthSnapshot) => alive && setHealth(d))
+        .catch(() => alive && setHealth({}));
+    };
+    load();
+    const id = window.setInterval(load, 6000);
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+    };
   }, []);
+  return health;
+}
+
+function LineIntegrationCard({ t }: { t: (k: string) => string }) {
+  const health = useHealthSnapshot();
   const configured = !!health?.lineConfigured;
   const reply = !!health?.lineReplyEnabled;
   const count = health?.lineConversationsCount ?? 0;
@@ -453,10 +478,8 @@ function LineIntegrationCard({ t }: { t: (k: string) => string }) {
 // ─── EasySlip card ───────────────────────────────────────────────────────────
 
 function EasySlipIntegrationCard({ t: _t }: { t: (k: string) => string }) {
-  const [enabled, setEnabled] = useState<boolean | null>(null);
-  useEffect(() => {
-    fetch('/api/health').then((r) => r.json()).then((d) => setEnabled(Boolean(d?.slipChecker?.enabled))).catch(() => setEnabled(false));
-  }, []);
+  const health = useHealthSnapshot();
+  const enabled = health ? Boolean(health?.slipChecker?.enabled) : null;
 
   return (
     <div className="space-y-3">
