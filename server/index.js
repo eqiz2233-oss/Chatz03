@@ -331,6 +331,29 @@ function metaMessagingMediaFromEvent(ev) {
 }
 
 /**
+ * Some Meta stickers arrive as regular "image" attachments (without explicit
+ * `type=sticker`), so we need URL/payload heuristics to avoid slip checks.
+ */
+function looksLikeMetaStickerAttachment(ev, imageUrl) {
+  const msg = ev?.message;
+  if (!msg) return false;
+  if (msg?.sticker_id) return true;
+  for (const att of msg?.attachments || []) {
+    const t = String(att?.type || '').toLowerCase();
+    if (t === 'sticker') return true;
+    const payloadSticker = att?.payload?.sticker_id;
+    if (payloadSticker) return true;
+    const payloadType = String(att?.payload?.type || '').toLowerCase();
+    if (payloadType === 'sticker') return true;
+  }
+  const u = String(imageUrl || '').toLowerCase();
+  if (!u) return false;
+  // Common CDN/path hints for sticker assets.
+  if (u.includes('sticker') || u.includes('/stickers/') || u.includes('emoji')) return true;
+  return false;
+}
+
+/**
  * When webhook attachments omit payload.url (common for Instagram), Meta still provides message `mid`.
  * Pages API: GET /{mid}/attachments → data[].file_url + mime_type.
  */
@@ -1031,7 +1054,8 @@ app.post(
             thread.updatedAt = new Date().toISOString();
 
             // Slip auto-verify on inbound images — but NEVER on stickers/emoji.
-            if (imageUrl && !videoUrl && !isSticker) {
+            const stickerLike = isSticker || looksLikeMetaStickerAttachment(ev, imageUrl);
+            if (imageUrl && !videoUrl && !stickerLike) {
               const channel = isInstagram ? 'ig' : 'fb';
               const conversationId = `${channel}:user:${psid}`;
               void maybeAttachSlip({
