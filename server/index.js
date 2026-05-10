@@ -50,6 +50,7 @@ import {
   requireAuth,
   changePassword,
 } from './auth.js';
+import { isAiEnabled, aiModel, generateReply, generateSlipThankYou } from './ai.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
@@ -766,6 +767,38 @@ async function maybeAttachSlip({
     message.meta = { ...(message.meta || {}), slip: result };
     thread.updatedAt = new Date().toISOString();
     markChatStateDirty();
+
+    // AI thank-you + ask for shipping info — only when:
+    //   * slip verified by EasySlip (not mock, not failed/duplicate)
+    //   * autoSlipConfirm is on in Settings → Bot
+    //   * bot is enabled for this conversation
+    if (
+      result?.status === 'verified' &&
+      !result?.mock &&
+      isAiEnabled() &&
+      isBotEnabled(conversationId)
+    ) {
+      void (async () => {
+        try {
+          const settings = await kvGet('bot.settings.v1', {});
+          if (settings && settings.autoSlipConfirm === false) return;
+          const text = await generateSlipThankYou({
+            customerName: thread.displayName || '',
+            amount: result.amount,
+            bank: result.bank,
+            botSettings: settings || {},
+          });
+          if (!text) return;
+          if (channel === 'line') {
+            await sendLineMessage({ conversationId, text, asAi: true });
+          } else {
+            await sendMetaMessage({ conversationId, text, asAi: true });
+          }
+        } catch (e) {
+          console.warn('[ai] slip thank-you failed:', e?.message || e);
+        }
+      })();
+    }
   } catch (e) {
     console.warn('[slip] verify failed:', e?.message || e);
   }
@@ -856,6 +889,10 @@ app.get('/api/health', (_req, res) => {
     fbConversationsCount,
     fbWebhook: fbWebhookDebug,
     slipChecker: { enabled: isEasySlipEnabled(), ...slipStats() },
+    ai: {
+      enabled: isAiEnabled(),
+      model: isAiEnabled() ? aiModel() : null,
+    },
     envPath: path.join(__dirname, '..', '.env'),
   });
 });
@@ -963,6 +1000,18 @@ app.post(
             thread.updatedAt = new Date().toISOString();
             markChatStateDirty();
             void logChatEvent({ channel: 'line', convId: `line:${kind}:${targetId}`, direction: 'in' });
+
+            // AI auto-reply for text-only customer messages. Image-bearing
+            // messages flow through the slip path below — that path posts its
+            // own AI thank-you when the slip verifies.
+            if (textOut && !media.image && !media.video && event.message.type === 'text') {
+              void tryAutoReply({
+                channel: 'line',
+                conversationId: `line:${src.kind}:${src.targetId}`,
+                thread,
+                customerText: textOut,
+              });
+            }
 
             // Slip auto-verify: any image arriving from a customer is treated
             // as a candidate slip. LINE-hosted images need a channel-token
@@ -1224,11 +1273,25 @@ app.post(
             thread.messages.push(row);
             thread.updatedAt = new Date().toISOString();
             markChatStateDirty();
+            const convIdForChannel = thread.channel === 'ig'
+              ? `ig:user:${thread.targetId}`
+              : `fb:user:${thread.targetId}`;
             void logChatEvent({
               channel: thread.channel === 'ig' ? 'ig' : 'fb',
-              convId: thread.channel === 'ig' ? `ig:user:${thread.targetId}` : `fb:user:${thread.targetId}`,
+              convId: convIdForChannel,
               direction: 'in',
             });
+
+            // AI auto-reply for plain text messages (no image, no sticker).
+            // Image-bearing messages go through the slip path below.
+            if (textOut && !imageUrl && !videoUrl && !isSticker) {
+              void tryAutoReply({
+                channel: thread.channel === 'ig' ? 'ig' : 'fb',
+                conversationId: convIdForChannel,
+                thread,
+                customerText: textOut,
+              });
+            }
 
             // Slip auto-verify on inbound images — but NEVER on stickers/emoji.
             const stickerLike = isSticker || looksLikeMetaStickerAttachment(ev, imageUrl);
@@ -1347,6 +1410,60 @@ async function sendMetaMessage({ conversationId, text, asAi }) {
   } catch (e) {
     console.error('FB/IG send exception:', e?.message || e);
     return { status: 502, error: String(e?.message || e) };
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// AI auto-reply.
+//
+// Called from the inbound webhook handlers right after a customer message is
+// stored. We bail silently in any of these cases:
+//   * Bot is turned off for this conversation (per-thread switch in the UI)
+//   * autoFaq toggle is off in Settings → Bot
+//   * No ANTHROPIC_API_KEY set (mock-only deploy)
+//   * The customer message is empty / sticker-only / image-only
+//   * Claude returns null (rate limit, error, refusal)
+// On success, we push the reply through the same send path the human agent
+// uses, tagged sender='ai' so it shows up with the AI badge in the inbox.
+// ──────────────────────────────────────────────────────────────────────────
+async function tryAutoReply({ channel, conversationId, thread, customerText }) {
+  if (!isAiEnabled()) return;
+  if (!customerText || !String(customerText).trim()) return;
+  if (!isBotEnabled(conversationId)) return;
+  let settings;
+  try {
+    settings = await kvGet('bot.settings.v1', {});
+  } catch {
+    settings = {};
+  }
+  if (settings && settings.autoFaq === false) return;
+
+  let products = [];
+  try {
+    products = await dbListProducts();
+  } catch {
+    /* swallow — empty catalog is fine */
+  }
+
+  const reply = await generateReply({
+    customerText,
+    customerName: thread?.displayName || '',
+    channel,
+    threadMessages: thread?.messages || [],
+    products,
+    botSettings: settings || {},
+    locale: 'th',
+  });
+  if (!reply) return;
+
+  try {
+    if (channel === 'line') {
+      await sendLineMessage({ conversationId, text: reply, asAi: true });
+    } else {
+      await sendMetaMessage({ conversationId, text: reply, asAi: true });
+    }
+  } catch (e) {
+    console.warn('[ai] send-back failed:', e?.message || e);
   }
 }
 

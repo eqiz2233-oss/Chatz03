@@ -250,10 +250,33 @@ const DEFAULT_BOT_SETTINGS: BotSettings = {
   ai6: true,
 };
 
+interface AiStatus {
+  enabled: boolean;
+  model: string | null;
+}
+
 function BotTab({ t }: { t: (k: string) => string }) {
   const [settings, setSettings] = useState<BotSettings>(DEFAULT_BOT_SETTINGS);
   const [loaded, setLoaded] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [ai, setAi] = useState<AiStatus | null>(null);
+
+  // Probe whether the backend has ANTHROPIC_API_KEY wired so we can show the
+  // shop owner whether AI replies are actually live or just toggled in the UI.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const r = await fetch('/api/health', { credentials: 'include' });
+        if (!r.ok) return;
+        const j = await r.json();
+        if (!cancelled) setAi({ enabled: Boolean(j?.ai?.enabled), model: j?.ai?.model || null });
+      } catch {
+        /* offline ok */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // Load once
   useEffect(() => {
@@ -315,6 +338,38 @@ function BotTab({ t }: { t: (k: string) => string }) {
         {saveStatus === 'saved' && <span className="text-emerald-600 dark:text-emerald-400">บันทึกแล้ว ✓</span>}
         {saveStatus === 'error' && <span className="text-rose-500">บันทึกไม่สำเร็จ</span>}
       </div>
+
+      {ai && (
+        ai.enabled ? (
+          <div className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 dark:border-emerald-900/50 dark:bg-emerald-950/40">
+            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-emerald-500 text-white">
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </div>
+            <div className="min-w-0 flex-1 text-sm">
+              <div className="font-semibold text-emerald-900 dark:text-emerald-100">AI ปิดการขาย พร้อมใช้งาน</div>
+              <div className="mt-0.5 text-xs text-emerald-700 dark:text-emerald-300">
+                ใช้โมเดล <span className="font-mono">{ai.model}</span> — บอทจะตอบลูกค้าตามแบรนด์และ catalog สินค้าโดยอัตโนมัติ
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/50 dark:bg-amber-950/40">
+            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-500 text-white">
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </div>
+            <div className="min-w-0 flex-1 text-sm">
+              <div className="font-semibold text-amber-900 dark:text-amber-100">AI ปิดการขาย ยังไม่ทำงาน</div>
+              <div className="mt-0.5 text-xs text-amber-800 dark:text-amber-200">
+                ตั้งค่า <span className="font-mono">ANTHROPIC_API_KEY</span> ใน Railway → Variables เพื่อเปิดใช้งาน บอทจะตอบลูกค้าอัตโนมัติด้วยข้อมูลแบรนด์ + สินค้าของคุณ
+              </div>
+            </div>
+          </div>
+        )
+      )}
 
       <SectionCard emoji="⚡" title={t('settings.aiEngine')} desc={locale === 'th' ? 'เปิด-ปิดฟีเจอร์บอทได้ตามต้องการ' : 'Turn each bot feature on or off'}>
         <div className="space-y-2">
