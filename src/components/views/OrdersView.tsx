@@ -183,11 +183,51 @@ function SlipImageLightbox({
 
 export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest) => void }) {
   const { t } = useAppPreferences();
-  const list = seed;
+  const [serverOrders, setServerOrders] = useState<Order[] | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const list = serverOrders ?? seed;
   const [slipPreview, setSlipPreview] = useState<string | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
   const [filters, setFilters] = useState<OrderFiltersState>(DEFAULT_ORDER_FILTERS);
   const filterWrapRef = useRef<HTMLDivElement>(null);
+
+  // Pull persisted orders from the backend on mount and after every create.
+  const loadOrders = useCallback(async () => {
+    try {
+      const r = await fetch('/api/orders', { credentials: 'include' });
+      if (!r.ok) return;
+      const j = (await r.json()) as { items: Order[] };
+      setServerOrders(Array.isArray(j.items) ? j.items : []);
+    } catch {
+      /* offline or auth gate — fall back to seed */
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadOrders();
+  }, [loadOrders]);
+
+  const onCreateOrder = useCallback(
+    async (draft: Omit<Order, 'id' | 'createdAt'>) => {
+      const order: Order = {
+        ...draft,
+        id: '',
+        createdAt: new Date().toISOString(),
+      } as Order;
+      const r = await fetch('/api/orders', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j?.error || `HTTP ${r.status}`);
+      }
+      await loadOrders();
+    },
+    [loadOrders],
+  );
 
   const filteredList = useMemo(() => list.filter((o) => orderMatchesFilters(o, filters)), [list, filters]);
   const activeFilterCount = useMemo(() => countActiveFilters(filters), [filters]);
@@ -234,7 +274,19 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
         onClearFilters={clearFilters}
         activeFilterCount={activeFilterCount}
         shops={shops}
+        onCreate={() => setCreateOpen(true)}
       />
+      {createOpen && (
+        <CreateOrderModal
+          t={t}
+          shops={shops}
+          onClose={() => setCreateOpen(false)}
+          onSubmit={async (draft) => {
+            await onCreateOrder(draft);
+            setCreateOpen(false);
+          }}
+        />
+      )}
       <div className="flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto overflow-x-hidden p-5 pb-10">
         {columns.map((col) => {
           const items = filteredList.filter((o) => o.status === col.key);
@@ -441,6 +493,7 @@ function Header({
   onClearFilters,
   activeFilterCount,
   shops,
+  onCreate,
 }: {
   t: (k: string, vars?: Record<string, string | number>) => string;
   filterOpen: boolean;
@@ -451,6 +504,7 @@ function Header({
   onClearFilters: () => void;
   activeFilterCount: number;
   shops: string[];
+  onCreate: () => void;
 }) {
   return (
     <div className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4 dark:border-slate-800 dark:bg-slate-900">
@@ -595,11 +649,168 @@ function Header({
             </div>
           )}
         </div>
-        <button className="btn-primary text-xs">
+        <button type="button" onClick={onCreate} className="btn-primary text-xs">
           <I.Plus className="h-4 w-4" />
           {t('orders.create')}
         </button>
       </div>
     </div>
+  );
+}
+
+function CreateOrderModal({
+  t,
+  shops,
+  onClose,
+  onSubmit,
+}: {
+  t: (k: string, vars?: Record<string, string | number>) => string;
+  shops: string[];
+  onClose: () => void;
+  onSubmit: (draft: Omit<Order, 'id' | 'createdAt'>) => Promise<void>;
+}) {
+  const [customer, setCustomer] = useState('');
+  const [product, setProduct] = useState('');
+  const [qty, setQty] = useState('1');
+  const [amount, setAmount] = useState('');
+  const [channel, setChannel] = useState<Channel>('line');
+  const [shop, setShop] = useState(shops[0] || '');
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!customer.trim() || !product.trim() || !amount.trim()) {
+      setErr(t('orders.create.required'));
+      return;
+    }
+    const amt = Number(amount.replace(/,/g, ''));
+    if (!Number.isFinite(amt) || amt < 0) {
+      setErr(t('orders.create.required'));
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await onSubmit({
+        customer: customer.trim(),
+        product: product.trim(),
+        qty: Math.max(1, Number(qty) || 1),
+        amount: amt,
+        channel,
+        status: 'pending',
+        shop: shop.trim() || 'My Shop',
+        commissionPct: 0,
+        orderDate: new Date().toISOString().slice(0, 10),
+        slipImageUrl: notes.trim() ? undefined : undefined,
+      });
+    } catch (e) {
+      setErr(String((e as Error)?.message || e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[200] grid place-items-center bg-slate-900/40 px-4 backdrop-blur-sm dark:bg-black/60">
+      <form
+        onSubmit={submit}
+        className="w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+      >
+        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3 dark:border-slate-800">
+          <h2 className="text-base font-semibold text-slate-900 dark:text-white">{t('orders.create.title')}</h2>
+          <button type="button" onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
+            <I.X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="space-y-3 p-5 text-sm">
+          <Field label={t('orders.create.customer')}>
+            <input
+              autoFocus
+              value={customer}
+              onChange={(e) => setCustomer(e.target.value)}
+              className="input"
+              required
+            />
+          </Field>
+          <Field label={t('orders.create.product')}>
+            <input value={product} onChange={(e) => setProduct(e.target.value)} className="input" required />
+          </Field>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="Qty">
+              <input
+                type="number"
+                min={1}
+                value={qty}
+                onChange={(e) => setQty(e.target.value)}
+                className="input"
+              />
+            </Field>
+            <Field label={t('orders.create.amount')}>
+              <input
+                inputMode="decimal"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className="input"
+                required
+              />
+            </Field>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label={t('orders.create.channel')}>
+              <select
+                value={channel}
+                onChange={(e) => setChannel(e.target.value as Channel)}
+                className="input"
+              >
+                <option value="line">LINE</option>
+                <option value="facebook">Facebook</option>
+                <option value="ig">Instagram</option>
+              </select>
+            </Field>
+            <Field label={t('orders.create.shop')}>
+              <input
+                value={shop}
+                onChange={(e) => setShop(e.target.value)}
+                className="input"
+                placeholder="My Shop"
+              />
+            </Field>
+          </div>
+          <Field label={t('orders.create.notes')}>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              className="input"
+            />
+          </Field>
+          {err && (
+            <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-950/40 dark:text-rose-200">
+              {err}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-3 dark:border-slate-800 dark:bg-slate-900/60">
+          <button type="button" onClick={onClose} className="btn-secondary text-xs">
+            {t('orders.create.cancel')}
+          </button>
+          <button type="submit" disabled={busy} className="btn-primary text-xs disabled:opacity-60">
+            {busy ? '…' : t('orders.create.save')}
+          </button>
+        </div>
+      </form>
+    </div>,
+    document.body,
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</div>
+      {children}
+    </label>
   );
 }

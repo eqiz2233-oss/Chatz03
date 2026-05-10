@@ -19,3 +19,8 @@ Chatz/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# JSON-mode persistence (used when DATABASE_URL is unset; created at runtime)
+server/app-store.json
+server/chat-store.json
+server/integrations.json

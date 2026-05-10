@@ -306,6 +306,34 @@ const enFlat: Record<string, string> = {
   'chat.botOffBanner': 'AI auto-reply is off — only human agents can reply in this chat.',
   'chat.botToggleFailed': 'Could not change bot state. Try again.',
   'product.left': '{n} left',
+  // Login
+  'app.tagline': 'Smart inbox for Thai shops',
+  'login.title': 'Sign in',
+  'login.subtitle': 'Enter your credentials to manage your shop.',
+  'login.username': 'Username',
+  'login.password': 'Password',
+  'login.signIn': 'Sign in',
+  'login.signingIn': 'Signing in…',
+  'login.errInvalid': 'Username or password is incorrect.',
+  'login.defaultHint': 'First time? Default is admin / admin — change it in Settings after signing in.',
+  'login.logout': 'Sign out',
+  // Slip actions
+  'slips.confirmed': 'Confirmed',
+  'slips.rejected': 'Rejected',
+  'slips.actionFailed': 'Action failed: {msg}',
+  'slips.reverifying': 'Re-verifying…',
+  'slips.reverifyDone': 'Re-verified {n} slip(s).',
+  // Order create
+  'orders.create.title': 'Create order',
+  'orders.create.customer': 'Customer name',
+  'orders.create.product': 'Product',
+  'orders.create.amount': 'Amount (฿)',
+  'orders.create.channel': 'Channel',
+  'orders.create.shop': 'Shop',
+  'orders.create.notes': 'Notes',
+  'orders.create.save': 'Save order',
+  'orders.create.cancel': 'Cancel',
+  'orders.create.required': 'Customer + product + amount are required.',
 };
 
 const thFlat: Record<string, string> = {
@@ -614,6 +642,34 @@ const thFlat: Record<string, string> = {
   'chat.botOffBanner': 'บอท AI ถูกปิดอยู่ — มีเฉพาะแอดมินเท่านั้นที่ตอบในห้องนี้ได้',
   'chat.botToggleFailed': 'เปลี่ยนสถานะบอทไม่สำเร็จ ลองใหม่อีกครั้ง',
   'product.left': 'เหลือ {n} ชิ้น',
+  // Login
+  'app.tagline': 'ระบบแชทร้านค้าออนไลน์ไทย',
+  'login.title': 'เข้าสู่ระบบ',
+  'login.subtitle': 'ใส่ชื่อผู้ใช้กับรหัสผ่านเพื่อจัดการร้านของคุณ',
+  'login.username': 'ชื่อผู้ใช้',
+  'login.password': 'รหัสผ่าน',
+  'login.signIn': 'เข้าสู่ระบบ',
+  'login.signingIn': 'กำลังเข้าสู่ระบบ…',
+  'login.errInvalid': 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง',
+  'login.defaultHint': 'ครั้งแรก? ค่าเริ่มต้น admin / admin — เข้าไปเปลี่ยนในตั้งค่าทันทีหลังล็อกอิน',
+  'login.logout': 'ออกจากระบบ',
+  // Slip actions
+  'slips.confirmed': 'ยืนยันแล้ว',
+  'slips.rejected': 'ปฏิเสธแล้ว',
+  'slips.actionFailed': 'ดำเนินการไม่สำเร็จ: {msg}',
+  'slips.reverifying': 'กำลังตรวจซ้ำ…',
+  'slips.reverifyDone': 'ตรวจซ้ำแล้ว {n} รายการ',
+  // Order create
+  'orders.create.title': 'สร้างออเดอร์',
+  'orders.create.customer': 'ชื่อลูกค้า',
+  'orders.create.product': 'สินค้า',
+  'orders.create.amount': 'ยอด (฿)',
+  'orders.create.channel': 'ช่องทาง',
+  'orders.create.shop': 'ร้าน',
+  'orders.create.notes': 'หมายเหตุ',
+  'orders.create.save': 'บันทึก',
+  'orders.create.cancel': 'ยกเลิก',
+  'orders.create.required': 'กรุณากรอกชื่อลูกค้า สินค้า และยอด',
 };
 
 export const messages: Record<Locale, Record<string, string>> = {

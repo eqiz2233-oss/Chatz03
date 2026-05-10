@@ -47,18 +47,40 @@ function channelLabel(ch: SlipApiRow['channel']): string {
   return 'Facebook';
 }
 
+type SlipAction = { slipId: string; action: 'confirm' | 'reject'; byUser: string | null; at: string };
+
 export function SlipsView() {
   const { t } = useAppPreferences();
   const [data, setData] = useState<SlipsApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [actions, setActions] = useState<Record<string, SlipAction>>({});
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [reverifying, setReverifying] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    window.setTimeout(() => setToast(null), 2500);
+  };
+
+  const loadActions = async () => {
+    try {
+      const r = await fetch('/api/slips/actions', { credentials: 'include' });
+      if (!r.ok) return;
+      const j = (await r.json()) as { actions: Record<string, SlipAction> };
+      setActions(j.actions || {});
+    } catch {
+      /* ignore */
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
       try {
-        const r = await fetch('/api/slips');
+        const r = await fetch('/api/slips', { credentials: 'include' });
         if (!r.ok) throw new Error(String(r.status));
         const json = (await r.json()) as SlipsApiResponse;
         if (cancelled) return;
@@ -74,12 +96,76 @@ export function SlipsView() {
       }
     };
     void load();
-    const id = window.setInterval(load, 4000);
+    void loadActions();
+    const id = window.setInterval(() => {
+      void load();
+      void loadActions();
+    }, 4000);
     return () => {
       cancelled = true;
       window.clearInterval(id);
     };
   }, []);
+
+  const onConfirm = async (id: string) => {
+    setBusyId(id);
+    try {
+      const r = await fetch(`/api/slips/${encodeURIComponent(id)}/confirm`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        showToast(t('slips.actionFailed', { msg: j?.error || `HTTP ${r.status}` }));
+      } else {
+        showToast(t('slips.confirmed'));
+        await loadActions();
+      }
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const onReject = async (id: string) => {
+    setBusyId(id);
+    try {
+      const r = await fetch(`/api/slips/${encodeURIComponent(id)}/reject`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        showToast(t('slips.actionFailed', { msg: j?.error || `HTTP ${r.status}` }));
+      } else {
+        showToast(t('slips.rejected'));
+        await loadActions();
+      }
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const onReverifyAll = async () => {
+    if (reverifying) return;
+    setReverifying(true);
+    try {
+      const r = await fetch('/api/slips/reverify-all', {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        showToast(t('slips.actionFailed', { msg: j?.error || `HTTP ${r.status}` }));
+      } else {
+        const j = (await r.json()) as { attempted: number };
+        showToast(t('slips.reverifyDone', { n: j.attempted }));
+      }
+    } finally {
+      setReverifying(false);
+    }
+  };
 
   const slips = data?.slips ?? [];
   const stats = data?.stats;
@@ -89,7 +175,12 @@ export function SlipsView() {
   );
 
   return (
-    <div className="flex h-screen flex-1 flex-col bg-slate-50 dark:bg-slate-950">
+    <div className="relative flex h-screen flex-1 flex-col bg-slate-50 dark:bg-slate-950">
+      {toast && (
+        <div className="pointer-events-none absolute left-1/2 top-4 z-50 -translate-x-1/2 rounded-full bg-slate-900/90 px-4 py-2 text-xs font-medium text-white shadow-lg shadow-slate-900/30 backdrop-blur dark:bg-white/95 dark:text-slate-900">
+          {toast}
+        </div>
+      )}
       <div className="border-b border-slate-200 bg-white px-6 py-4 dark:border-slate-800 dark:bg-slate-900">
         <div className="flex items-center justify-between gap-4">
           <div className="min-w-0">
@@ -98,9 +189,14 @@ export function SlipsView() {
           </div>
           <div className="flex items-center gap-2">
             <ModeBadge enabled={stats?.enabled ?? false} t={t} />
-            <button className="btn-primary text-xs">
+            <button
+              type="button"
+              onClick={onReverifyAll}
+              disabled={reverifying}
+              className="btn-primary text-xs disabled:cursor-not-allowed disabled:opacity-60"
+            >
               <I.Shield className="h-4 w-4" />
-              {t('slips.reverifyAll')}
+              {reverifying ? t('slips.reverifying') : t('slips.reverifyAll')}
             </button>
           </div>
         </div>
@@ -199,12 +295,35 @@ export function SlipsView() {
                     {selected.result.reason}
                   </div>
                 )}
+                {actions[selected.id] && (
+                  <div
+                    className={
+                      'mt-4 rounded-lg px-3 py-2 text-xs ' +
+                      (actions[selected.id].action === 'confirm'
+                        ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200'
+                        : 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-200')
+                    }
+                  >
+                    {actions[selected.id].action === 'confirm' ? t('slips.confirmed') : t('slips.rejected')}
+                    {actions[selected.id].byUser ? ` • ${actions[selected.id].byUser}` : ''}
+                  </div>
+                )}
                 <div className="mt-5 grid grid-cols-2 gap-2">
-                  <button className="btn-secondary text-xs">
+                  <button
+                    type="button"
+                    onClick={() => onReject(selected.id)}
+                    disabled={busyId === selected.id}
+                    className="btn-secondary text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                  >
                     <I.X className="h-4 w-4" />
                     {t('slips.reject')}
                   </button>
-                  <button className="btn-primary text-xs">
+                  <button
+                    type="button"
+                    onClick={() => onConfirm(selected.id)}
+                    disabled={busyId === selected.id}
+                    className="btn-primary text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                  >
                     <I.Check className="h-4 w-4" />
                     {t('slips.confirm')}
                   </button>
