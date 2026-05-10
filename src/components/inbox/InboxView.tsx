@@ -138,7 +138,9 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
   useEffect(() => {
     if (!lineBackend) return;
     void refetchLine();
-    const id = window.setInterval(() => void refetchLine(), 2500);
+    // SSE pushes drive realtime refreshes; this interval is the safety net
+    // for dropped streams (proxy timeouts, sleeping laptops, flaky wifi).
+    const id = window.setInterval(() => void refetchLine(), 15000);
     return () => clearInterval(id);
   }, [lineBackend, refetchLine]);
 
@@ -160,9 +162,34 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
   useEffect(() => {
     if (!fbBackend) return;
     void refetchFb();
-    const id = window.setInterval(() => void refetchFb(), 2500);
+    const id = window.setInterval(() => void refetchFb(), 15000);
     return () => clearInterval(id);
   }, [fbBackend, refetchFb]);
+
+  /**
+   * Realtime push from /api/inbox/stream — any thread mutation (incoming
+   * message, send, profile backfill, bot toggle) triggers a tiny SSE event;
+   * we react by re-fetching whichever channels are configured. EventSource
+   * reconnects automatically on drop, so we just open it once per session.
+   */
+  useEffect(() => {
+    if (!lineBackend && !fbBackend) return;
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource('/api/inbox/stream');
+    } catch {
+      return;
+    }
+    const onMessage = () => {
+      if (lineBackend) void refetchLine();
+      if (fbBackend) void refetchFb();
+    };
+    es.addEventListener('message', onMessage);
+    return () => {
+      es?.removeEventListener('message', onMessage);
+      es?.close();
+    };
+  }, [lineBackend, fbBackend, refetchLine, refetchFb]);
 
   useEffect(() => {
     setList((prev) => {

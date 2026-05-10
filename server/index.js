@@ -585,6 +585,34 @@ function markChatStateDirty() {
     chatStateSaveTimer = null;
     void persistChatStateNow();
   }, 450);
+  scheduleInboxBroadcast();
+}
+
+/**
+ * Server-Sent Events fan-out for the inbox. Any thread mutation calls
+ * markChatStateDirty(), which schedules a coalesced broadcast (≤120ms) to all
+ * connected `/api/inbox/stream` clients. Clients react by re-fetching the
+ * conversation lists — that keeps the wire format trivial (no diff payload)
+ * while still giving sub-second feel vs the 2.5s polling we used before.
+ */
+const inboxSubscribers = new Set();
+let inboxBroadcastTimer = null;
+let inboxVersion = 0;
+
+function scheduleInboxBroadcast() {
+  if (inboxBroadcastTimer) return;
+  inboxBroadcastTimer = setTimeout(() => {
+    inboxBroadcastTimer = null;
+    inboxVersion += 1;
+    const payload = `data: ${JSON.stringify({ v: inboxVersion, at: Date.now() })}\n\n`;
+    for (const res of inboxSubscribers) {
+      try {
+        res.write(payload);
+      } catch {
+        inboxSubscribers.delete(res);
+      }
+    }
+  }, 120);
 }
 
 function pushEvent(item) {
@@ -688,6 +716,53 @@ async function enrichUserProfile(userId, thread) {
     markChatStateDirty();
   } catch (e) {
     console.warn('LINE getProfile failed:', e?.message || e);
+  }
+}
+
+async function enrichGroupSummary(groupId, thread) {
+  if (!lineClient) return;
+  try {
+    const p = await lineClient.getGroupSummary(groupId);
+    if (p?.groupName) thread.displayName = p.groupName;
+    if (p?.pictureUrl) thread.pictureUrl = p.pictureUrl;
+    thread.updatedAt = new Date().toISOString();
+    markChatStateDirty();
+  } catch (e) {
+    console.warn('LINE getGroupSummary failed:', e?.message || e);
+  }
+}
+
+const lineProfileBackfillAttempts = new Map(); // threadKey -> unix ms
+const LINE_PROFILE_BACKFILL_COOLDOWN_MS = 90 * 1000;
+
+function looksFallbackLineDisplayName(name) {
+  if (!name || typeof name !== 'string') return true;
+  const s = name.trim();
+  if (!s) return true;
+  // Exact shapes produced by threadToApiConversation when displayName is null.
+  return /^LINE [A-Za-z0-9]{8}$/.test(s) || /^LINE group [A-Za-z0-9]{6}$/.test(s);
+}
+
+/**
+ * Periodic name/avatar backfill for LINE threads that still show fallback
+ * ids — mirrors scheduleFbProfileBackfill. Runs whenever the UI hits
+ * /api/line/conversations, with a per-thread cooldown so we don't hammer the
+ * Messaging API on every poll. Rooms have no name endpoint in the LINE SDK,
+ * so we skip them and accept the "LINE room XXXXXX" fallback.
+ */
+function scheduleLineProfileBackfill() {
+  if (!lineClient) return;
+  const now = Date.now();
+  for (const thread of lineThreads.values()) {
+    if (!looksFallbackLineDisplayName(thread.displayName)) continue;
+    const lastTryAt = lineProfileBackfillAttempts.get(thread.key) || 0;
+    if (now - lastTryAt < LINE_PROFILE_BACKFILL_COOLDOWN_MS) continue;
+    lineProfileBackfillAttempts.set(thread.key, now);
+    if (thread.kind === 'user') {
+      void enrichUserProfile(thread.targetId, thread);
+    } else if (thread.kind === 'group') {
+      void enrichGroupSummary(thread.targetId, thread);
+    }
   }
 }
 
@@ -818,11 +893,46 @@ app.get('/api/line/events', (_req, res) => {
 });
 
 app.get('/api/line/conversations', (_req, res) => {
+  scheduleLineProfileBackfill();
   const arr = Array.from(lineThreads.values())
     .filter((t) => t.messages.length > 0)
     .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
     .map(threadToApiConversation);
   res.json({ conversations: arr, count: arr.length });
+});
+
+/**
+ * Realtime inbox stream. The browser opens one EventSource per tab; we keep
+ * the connection open and write a heartbeat every 25s so reverse proxies
+ * (Railway / Cloudflare / nginx default 30–60s idle) don't drop it. Each
+ * conversation mutation triggers a tiny `{v, at}` payload — the client treats
+ * any payload as "go re-fetch /api/{line,fb}/conversations" so we don't have
+ * to ship full thread state through the stream.
+ */
+app.get('/api/inbox/stream', (req, res) => {
+  res.set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.flushHeaders?.();
+  res.write(`retry: 3000\n\n`);
+  res.write(`data: ${JSON.stringify({ v: inboxVersion, at: Date.now(), hello: true })}\n\n`);
+  inboxSubscribers.add(res);
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(`: ping ${Date.now()}\n\n`);
+    } catch {
+      /* will be cleaned up on close */
+    }
+  }, 25000);
+  const cleanup = () => {
+    clearInterval(heartbeat);
+    inboxSubscribers.delete(res);
+  };
+  req.on('close', cleanup);
+  req.on('error', cleanup);
 });
 
 app.post('/api/line/send', express.json({ limit: '50kb' }), async (req, res) => {
@@ -937,8 +1047,9 @@ app.post(
               })();
             }
           }
-          if (src.kind === 'user' && lineClient) {
-            void enrichUserProfile(src.targetId, thread);
+          if (lineClient && looksFallbackLineDisplayName(thread.displayName)) {
+            if (src.kind === 'user') void enrichUserProfile(src.targetId, thread);
+            else if (src.kind === 'group') void enrichGroupSummary(src.targetId, thread);
           }
         }
       }
@@ -1837,6 +1948,9 @@ app.listen(port, '0.0.0.0', () => {
   );
   if (!hasSecret) console.warn('Missing LINE_CHANNEL_SECRET (LINE webhook + inbox sync disabled)');
   if (!hasToken) console.warn('Missing LINE_CHANNEL_ACCESS_TOKEN (LINE push + profile disabled)');
+  // Restored threads from chat-store may have null displayName — kick a
+  // backfill pass so names show up before the first UI poll arrives.
+  scheduleLineProfileBackfill();
   if (!fbHasPageToken()) console.warn('No connected Page yet — user must click Connect Facebook in Settings.');
   if (!fbHasVerify) console.warn('Missing FB_VERIFY_TOKEN (FB webhook subscription will fail)');
   if (!fbHasAppSecret) console.warn('Missing FB_APP_SECRET (FB webhook signature check disabled — NOT recommended for production)');
