@@ -178,20 +178,17 @@ export async function verifySlipBytes(opts) {
     return mockResult(hash);
   }
 
-  // v2 uses multipart 'file' field; v1 used base64 in JSON body.
-  // We default to v2 because it has better error handling and richer responses.
+  // v2 accepts: payload (QR string) | image (multipart file) | base64 | url.
+  // We send base64 as JSON — simplest and most reliable from a Node server.
   try {
     if (easyslipVersion === 'v2') {
-      const form = new FormData();
-      form.append(
-        'file',
-        new Blob([buf], { type: mime || 'image/jpeg' }),
-        'slip.jpg',
-      );
       const r = await fetch(EASYSLIP_V2_ENDPOINT, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${easyslipToken}` },
-        body: form,
+        headers: {
+          Authorization: `Bearer ${easyslipToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ base64: buf.toString('base64') }),
       });
       const data = await r.json().catch(() => ({}));
       if (r.ok && data?.success && data?.data) {
