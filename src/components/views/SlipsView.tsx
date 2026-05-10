@@ -97,17 +97,15 @@ export function SlipsView() {
             <p className="text-xs text-slate-500 dark:text-slate-400">{t('slips.subtitle')}</p>
           </div>
           <div className="flex items-center gap-2">
-            <ModeBadge enabled={stats?.enabled ?? false} t={t} />
             <button className="btn-primary text-xs">
               <I.Shield className="h-4 w-4" />
               {t('slips.reverifyAll')}
             </button>
           </div>
         </div>
-        <div className="mt-4 grid grid-cols-4 gap-3">
+        <div className="mt-4 grid grid-cols-3 gap-3">
           <Stat label={t('slips.statToday')} value={String(stats?.today ?? 0)} icon={<I.Receipt className="h-4 w-4" />} tone="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200" />
           <Stat label={t('slips.statVerified')} value={String(stats?.verified ?? 0)} icon={<I.Check className="h-4 w-4" />} tone="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300" />
-          <Stat label={t('slips.statPending')} value={String(stats?.pending ?? 0)} icon={<I.Sparkle className="h-4 w-4" />} tone="bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200" />
           <Stat label={t('slips.statFlagged')} value={String(stats?.flagged ?? 0)} icon={<I.Shield className="h-4 w-4" />} tone="bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300" />
         </div>
       </div>
@@ -215,20 +213,6 @@ export function SlipsView() {
         </div>
       )}
     </div>
-  );
-}
-
-function ModeBadge({ enabled, t }: { enabled: boolean; t: (k: string) => string }) {
-  const cls = enabled
-    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200'
-    : 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200';
-  return (
-    <span
-      title={enabled ? t('slips.modeReal') : t('slips.modeMock')}
-      className={'hidden whitespace-nowrap rounded-full px-2.5 py-1 text-[10px] font-medium sm:inline-flex ' + cls}
-    >
-      {enabled ? 'EasySlip' : 'Demo'}
-    </span>
   );
 }
 

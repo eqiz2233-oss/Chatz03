@@ -29,40 +29,6 @@ export interface ProductTemplate {
 const TEMPLATE_EMOJI_OPTIONS = ['👕', '👖', '👗', '🧢', '👜', '👟', '🧴', '💄', '🍱', '🍩', '☕', '🥤', '🔋', '🎧', '📱', '💻', '🪑', '🏠', '🐶', '📦'];
 
 const TEMPLATES_STORAGE_KEY = 'chatz-product-templates-v1';
-const PRODUCTS_STORAGE_KEY = 'chatz-products-v1';
-
-function loadProducts(): Product[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = window.localStorage.getItem(PRODUCTS_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (p): p is Product =>
-        p &&
-        typeof p.id === 'string' &&
-        typeof p.name === 'string' &&
-        typeof p.price === 'number' &&
-        Array.isArray(p.optionGroups) &&
-        typeof p.description === 'string' &&
-        typeof p.sellingPoints === 'string' &&
-        typeof p.imageEmoji === 'string' &&
-        typeof p.aiReady === 'boolean',
-    );
-  } catch {
-    return [];
-  }
-}
-
-function persistProducts(list: Product[]) {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(list));
-  } catch {
-    /* quota / private mode — silently ignore */
-  }
-}
 
 function loadTemplates(): ProductTemplate[] {
   if (typeof window === 'undefined') return [];
@@ -196,7 +162,7 @@ function formatOptionSummary(groups: ProductOptionGroup[]): string {
 type ShopMode = 'list' | 'add' | 'edit' | 'templates';
 
 export function ShopBrainView() {
-  const [products, setProducts] = useState<Product[]>(loadProducts);
+  const [products, setProducts] = useState<Product[]>([]);
   const [mode, setMode] = useState<ShopMode>('list');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(BLANK);
@@ -205,10 +171,6 @@ export function ShopBrainView() {
   useEffect(() => {
     persistTemplates(templates);
   }, [templates]);
-
-  useEffect(() => {
-    persistProducts(products);
-  }, [products]);
 
   const saveCurrentAsTemplate = (name: string, emoji: string) => {
     const cleanName = name.trim();
@@ -311,21 +273,6 @@ export function ShopBrainView() {
         slotsRemaining={slotsRemaining}
         slotLimit={SHOP_PRODUCT_SLOT_LIMIT}
         usedSlots={products.length}
-        templates={templates}
-        onApplyTemplate={(tpl) =>
-          setForm((f) => ({
-            ...f,
-            optionGroups:
-              tpl.optionGroups.length > 0
-                ? tpl.optionGroups.map((g) => ({
-                    id: newId('og'),
-                    label: g.label,
-                    valuesInput: g.values.join(', '),
-                  }))
-                : f.optionGroups,
-          }))
-        }
-        onManageTemplates={() => setMode('templates')}
         onSaveAsTemplate={saveCurrentAsTemplate}
       />
     );
@@ -359,44 +306,19 @@ export function ShopBrainView() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-5">
-        {products.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-5 py-6 text-center dark:border-slate-600 dark:bg-slate-900">
-            <div className="text-2xl">🛍️</div>
-            <h3 className="mt-2 text-sm font-semibold text-slate-900 dark:text-slate-100">ยังไม่มีสินค้าในร้านของคุณ</h3>
-            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-              กดปุ่มเพิ่มสินค้า เพื่อใส่ชื่อสินค้า ราคา และรายละเอียดสั้น ๆ ให้ AI ช่วยขายได้ทันที
-            </p>
-            <button
-              type="button"
-              onClick={openAdd}
-              disabled={!canAddProduct}
-              className="btn-primary mt-4 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <I.Plus className="h-4 w-4" />
-              เพิ่มสินค้า
-            </button>
-          </div>
-        ) : (
-          <section className="rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
-            <div className="mb-2 px-1">
-              <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">สินค้าของร้านคุณ</h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">แสดงเฉพาะข้อมูลจริงที่คุณเพิ่มเท่านั้น</p>
-            </div>
-            <div className="space-y-2">
-              {products.map((p) => (
-                <ProductRow
-                  key={p.id}
-                  product={p}
-                  slotsRemaining={slotsRemaining}
-                  slotLimit={SHOP_PRODUCT_SLOT_LIMIT}
-                  usedSlots={products.length}
-                  onEdit={() => openEdit(p)}
-                  onDelete={() => confirmDelete(p.id, p.name)}
-                />
-              ))}
-            </div>
-          </section>
-        )}
+        <div className="space-y-2">
+          {products.map((p) => (
+            <ProductRow
+              key={p.id}
+              product={p}
+              slotsRemaining={slotsRemaining}
+              slotLimit={SHOP_PRODUCT_SLOT_LIMIT}
+              usedSlots={products.length}
+              onEdit={() => openEdit(p)}
+              onDelete={() => confirmDelete(p.id, p.name)}
+            />
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -492,40 +414,19 @@ function ProductRow({
   );
 }
 
-/** Friendly card section — emoji + title + optional sub. Replaces the old numbered list look. */
-function ProductCard({
-  emoji,
-  title,
-  sub,
-  children,
-}: {
-  emoji: string;
-  title: string;
-  sub?: string;
-  children: React.ReactNode;
-}) {
+function SectionTitle({ n, title, sub }: { n: string; title: string; sub?: string }) {
+  const heading = n.trim() ? `${n} ${title}` : title;
   return (
-    <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-      <div className="border-b border-slate-100 px-5 py-3.5 dark:border-slate-800">
-        <div className="flex items-baseline gap-2">
-          <span className="text-base leading-none">{emoji}</span>
-          <h3 className="text-sm font-bold tracking-tight text-slate-900 dark:text-slate-100">{title}</h3>
-        </div>
-        {sub && <p className="mt-1 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">{sub}</p>}
+    <div className="border-b border-slate-100 pb-2 dark:border-slate-800">
+      <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+        {heading}
       </div>
-      <div className="p-5">{children}</div>
-    </section>
+      {sub && (
+        <p className="mt-1 whitespace-pre-line text-xs text-slate-500 dark:text-slate-400">{sub}</p>
+      )}
+    </div>
   );
 }
-
-/** Quick-add presets for common variant types. Click → fills the first empty option group. */
-const VARIANT_PRESETS: { emoji: string; label: string; values: string[] }[] = [
-  { emoji: '🎨', label: 'สี', values: ['ดำ', 'ขาว', 'เทา'] },
-  { emoji: '📏', label: 'ไซส์', values: ['S', 'M', 'L', 'XL'] },
-  { emoji: '🍓', label: 'รสชาติ', values: [] },
-  { emoji: '🥤', label: 'ความจุ', values: [] },
-  { emoji: '⚖️', label: 'น้ำหนัก', values: [] },
-];
 
 function AddForm({
   form,
@@ -536,9 +437,6 @@ function AddForm({
   slotsRemaining,
   slotLimit,
   usedSlots,
-  templates,
-  onApplyTemplate,
-  onManageTemplates,
   onSaveAsTemplate,
 }: {
   form: FormState;
@@ -549,9 +447,6 @@ function AddForm({
   slotsRemaining: number;
   slotLimit: number;
   usedSlots: number;
-  templates: ProductTemplate[];
-  onApplyTemplate: (tpl: ProductTemplate) => void;
-  onManageTemplates: () => void;
   onSaveAsTemplate: (name: string, emoji: string) => void;
 }) {
   const [saveTplOpen, setSaveTplOpen] = useState(false);
@@ -596,181 +491,104 @@ function AddForm({
     form.price &&
     form.optionGroups.some((g) => g.label.trim() && parseValuesInput(g.valuesInput).length > 0);
 
-  const totalProgress = [
-    Boolean(form.name.trim()),
-    Boolean(form.price),
-    optionsHaveContent,
-    Boolean(form.description.trim()),
-    Boolean(form.sellingPoints.trim()),
-  ];
-  const progressPct = Math.round((totalProgress.filter(Boolean).length / totalProgress.length) * 100);
-
-  const fillEmptyVariant = (label: string, values: string[]) => {
-    const empty = form.optionGroups.find((g) => !g.label.trim() && !g.valuesInput.trim());
-    if (empty) {
-      updateOptionRow(empty.id, { label, valuesInput: values.join(', ') });
-    } else {
-      setForm((f) => ({
-        ...f,
-        optionGroups: [...f.optionGroups, { id: newId('og'), label, valuesInput: values.join(', ') }],
-      }));
-    }
-  };
-
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col bg-gradient-to-b from-brand-50/40 via-slate-50 to-slate-50 dark:from-brand-950/20 dark:via-slate-950 dark:to-slate-950">
-      {/* ── Sticky header with progress bar ── */}
-      <div className="sticky top-0 z-10 border-b border-slate-200/80 bg-white/95 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95">
-        <div className="flex items-center gap-3 px-5 py-3.5 sm:px-6">
-          <button type="button" onClick={onBack} className="grid h-9 w-9 place-items-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100" aria-label="ปิด">
-            <I.X className="h-4 w-4" />
-          </button>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <h2 className="text-base font-bold tracking-tight text-slate-900 dark:text-white">
-                {isEdit ? 'แก้ไขสินค้า' : 'เพิ่มสินค้าใหม่'}
-              </h2>
-              <span className="rounded-full bg-brand-100 px-2 py-0.5 text-[10px] font-bold text-brand-700 dark:bg-brand-900/50 dark:text-brand-300">
-                {progressPct}%
-              </span>
-            </div>
-            <div className="mt-0.5 truncate text-[11px] text-slate-500 dark:text-slate-400">
-              {isEdit ? 'แก้แล้วกดบันทึกได้เลย' : 'ใส่ข้อมูล = สอน AI ขายของแทนคุณ 🤖'}
-              <span className="mx-1 text-slate-300 dark:text-slate-600">·</span>
-              <span className={slotsRemaining > 0 ? 'text-slate-500 dark:text-slate-400' : 'font-semibold text-amber-600 dark:text-amber-400'}>
-                เหลือ {slotsRemaining}/{slotLimit}
-              </span>
-            </div>
+    <div className="flex h-full min-h-0 flex-1 flex-col bg-slate-50 dark:bg-slate-950">
+      <div className="flex items-center gap-3 border-b border-slate-200 bg-white px-6 py-3.5 dark:border-slate-800 dark:bg-slate-900">
+        <button type="button" onClick={onBack} className="btn-ghost -ml-1 p-1.5">
+          <I.X className="h-4 w-4" />
+        </button>
+        <div className="flex-1">
+          <div className="text-sm font-semibold text-slate-900 dark:text-white">{isEdit ? 'แก้ไขสินค้า' : 'เพิ่มสินค้า'}</div>
+          <div className="text-xs text-slate-500 dark:text-slate-400">
+            {isEdit ? 'แก้แล้วกดบันทึก — ข้อมูลจะอัปเดตให้ AI' : 'กรอกข้อมูล = สอน AI ขายของให้คุณ'}
+            <span className="text-slate-400 dark:text-slate-500"> · </span>
+            <span className={slotsRemaining > 0 ? 'font-medium text-slate-600 dark:text-slate-300' : 'font-semibold text-amber-600 dark:text-amber-400'}>
+              เพิ่มได้อีก {slotsRemaining} ชิ้น ({usedSlots}/{slotLimit})
+            </span>
           </div>
-          <button
-            type="button"
-            onClick={onSave}
-            disabled={!hasValidCore || (!isEdit && slotsRemaining <= 0)}
-            className="btn-primary text-sm disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {isEdit ? 'บันทึก' : '✨ บันทึก'}
-          </button>
         </div>
-        <div className="h-1 overflow-hidden bg-slate-100 dark:bg-slate-800">
-          <div className="h-full bg-gradient-to-r from-brand-400 to-brand-600 transition-all duration-500" style={{ width: `${progressPct}%` }} />
-        </div>
+        <button
+          type="button"
+          onClick={onSave}
+          disabled={!hasValidCore || (!isEdit && slotsRemaining <= 0)}
+          className="btn-primary text-sm disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {isEdit ? 'บันทึกการแก้ไข' : 'บันทึก'}
+        </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
-        <div className="mx-auto max-w-xl space-y-4">
-          {/* ── 📸 Image ── */}
-          <ProductCard emoji="📸" title="รูปสินค้า" sub="ใช้รูปสวย ๆ ลูกค้าจะเห็นรูปนี้ก่อนเสมอ">
+      <div className="min-h-0 flex-1 overflow-y-auto p-6">
+        <div className="w-full space-y-6">
+          {/* ข้อมูลสินค้า */}
+          <section className="space-y-4">
+            <SectionTitle n="" title="ข้อมูลสินค้า" />
             <button
               type="button"
-              className="group relative flex h-44 w-full flex-col items-center justify-center gap-2.5 rounded-2xl border-2 border-dashed border-slate-300 bg-gradient-to-br from-slate-50 to-white text-slate-400 transition hover:border-brand-400 hover:from-brand-50/70 hover:to-white hover:text-brand-600 dark:border-slate-700 dark:from-slate-800/40 dark:to-slate-900 dark:hover:border-brand-500 dark:hover:from-brand-950/30 dark:hover:text-brand-400"
+              className="flex h-28 w-full cursor-pointer items-center justify-center gap-2.5 rounded-xl border-2 border-dashed border-slate-200 bg-white text-sm text-slate-400 transition hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-brand-600 dark:hover:text-brand-400"
             >
-              <div className="grid h-12 w-12 place-items-center rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 transition group-hover:ring-brand-300 dark:bg-slate-800 dark:ring-slate-700 dark:group-hover:ring-brand-700">
-                <I.Image className="h-5 w-5" />
-              </div>
-              <div className="text-center">
-                <div className="text-sm font-medium">คลิกเลือกรูป หรือลากมาวางที่นี่</div>
-                <div className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500">PNG, JPG ขนาดไม่เกิน 5 MB</div>
-              </div>
+              <I.Image className="h-5 w-5" />
+              รูปสินค้า — ลากมาวาง หรือคลิกเพื่อเลือก
             </button>
-          </ProductCard>
-
-          {/* ── ✨ Basic info ── */}
-          <ProductCard emoji="✨" title="ข้อมูลหลัก" sub="ชื่อกับราคา — ลูกค้ากับ AI ใช้ทั้งคู่">
-            <div className="space-y-3">
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold text-slate-500 dark:text-slate-400">ชื่อสินค้า</label>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="col-span-2">
+                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">ชื่อสินค้า</label>
                 <input
                   value={form.name}
                   onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                   placeholder="เช่น เสื้อ Oversize Cotton"
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-base font-medium text-slate-900 placeholder:font-normal placeholder:text-slate-400 focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-4 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:bg-slate-900 dark:focus:ring-brand-900/40"
+                  className={inputClass}
                 />
               </div>
               <div>
-                <label className="mb-1.5 block text-xs font-semibold text-slate-500 dark:text-slate-400">ราคาขาย</label>
-                <div className="relative">
-                  <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">฿</span>
-                  <input
-                    type="number"
-                    value={form.price}
-                    onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
-                    placeholder="350"
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-base font-bold tabular-nums text-slate-900 placeholder:font-normal placeholder:text-slate-400 focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-4 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:bg-slate-900 dark:focus:ring-brand-900/40"
-                  />
-                </div>
+                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">ราคา (฿)</label>
+                <input
+                  type="number"
+                  value={form.price}
+                  onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
+                  placeholder="350"
+                  className={inputClass}
+                />
               </div>
             </div>
-          </ProductCard>
+          </section>
 
-          {/* ── 🎨 Variants ── */}
-          <ProductCard emoji="🎨" title="ตัวเลือกสินค้า" sub="ให้ลูกค้าเลือกได้เอง เช่น สี ไซส์ รสชาติ">
-            {/* Quick presets */}
-            <div className="mb-4 flex flex-wrap gap-1.5">
-              <span className="self-center text-[11px] text-slate-400 dark:text-slate-500">เพิ่มเร็ว:</span>
-              {VARIANT_PRESETS.map((p) => (
-                <button
-                  key={p.label}
-                  type="button"
-                  onClick={() => fillEmptyVariant(p.label, p.values)}
-                  className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600 transition hover:bg-brand-100 hover:text-brand-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-brand-900/40 dark:hover:text-brand-300"
-                >
-                  <span>{p.emoji}</span> {p.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="space-y-3">
-              {form.optionGroups.map((g) => {
-                const parsed = parseValuesInput(g.valuesInput);
-                return (
-                  <div key={g.id} className="rounded-xl border border-slate-200 bg-slate-50/60 p-3 transition focus-within:border-brand-300 focus-within:bg-white focus-within:ring-2 focus-within:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/40 dark:focus-within:border-brand-600 dark:focus-within:bg-slate-900 dark:focus-within:ring-brand-900/40">
-                    <div className="mb-2 flex items-center gap-2">
-                      <input
-                        value={g.label}
-                        onChange={(e) => updateOptionRow(g.id, { label: e.target.value })}
-                        placeholder="ชื่อตัวเลือก (เช่น สี)"
-                        className="min-w-0 flex-1 bg-transparent text-sm font-bold text-slate-900 placeholder:font-medium placeholder:text-slate-400 focus:outline-none dark:text-slate-100"
-                      />
-                      {form.optionGroups.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => removeOptionRow(g.id)}
-                          className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/30 dark:hover:text-rose-400"
-                          aria-label="ลบ"
-                        >
-                          <I.X className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                    </div>
-                    <input
-                      value={g.valuesInput}
-                      onChange={(e) => updateOptionRow(g.id, { valuesInput: e.target.value })}
-                      placeholder="ค่าตัวเลือก คั่นด้วยลูกน้ำ เช่น ดำ, ขาว, เทา"
-                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-600 dark:bg-slate-900 dark:focus:border-brand-500 dark:focus:ring-brand-900/30"
-                    />
-                    {parsed.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {parsed.map((v, idx) => (
-                          <span
-                            key={idx}
-                            className="inline-flex items-center rounded-md bg-brand-100 px-2 py-0.5 text-[11px] font-semibold text-brand-700 dark:bg-brand-900/40 dark:text-brand-300"
-                          >
-                            {v}
-                          </span>
-                        ))}
-                      </div>
+          {/* 2 ตัวเลือกสินค้า */}
+          <section className="space-y-3">
+            <SectionTitle
+              n=""
+              title="มีแบบไหนให้ลูกค้าเลือกบ้าง? (ถ้ามี)"
+              sub={'พิมพ์เองได้ทั้งหมด เช่น\n\nสี\nน้ำหนัก\nรสชาติ\nความจุ'}
+            />
+            <div className="grid gap-3 lg:grid-cols-2">
+              {form.optionGroups.map((g, i) => (
+                <div key={g.id} className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-[11px] font-medium text-slate-400">ชุดที่ {i + 1}</span>
+                    {form.optionGroups.length > 1 && (
+                      <button type="button" onClick={() => removeOptionRow(g.id)} className="text-xs text-slate-400 hover:text-rose-600 dark:hover:text-rose-400">
+                        ลบชุดนี้
+                      </button>
                     )}
                   </div>
-                );
-              })}
+                  <label className="mb-1 block text-xs font-semibold text-slate-500 dark:text-slate-400">ประเภทตัวเลือก (พิมพ์เอง)</label>
+                  <input
+                    value={g.label}
+                    onChange={(e) => updateOptionRow(g.id, { label: e.target.value })}
+                    placeholder="เช่น สี, น้ำหนัก, รสชาติ, ความจุ"
+                    className={'mb-2 ' + inputClass}
+                  />
+                  <label className="mb-1 block text-xs font-semibold text-slate-500 dark:text-slate-400">ค่าที่ลูกค้าเลือกได้ (พิมพ์เอง)</label>
+                  <input
+                    value={g.valuesInput}
+                    onChange={(e) => updateOptionRow(g.id, { valuesInput: e.target.value })}
+                    placeholder="เช่น ดำ, ขาว, เทา หรือ 250g, 500g"
+                    className={inputClass}
+                  />
+                </div>
+              ))}
             </div>
-
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={addOptionRow}
-                className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-dashed border-slate-300 px-3 py-2 text-xs font-medium text-slate-500 transition hover:border-brand-400 hover:bg-brand-50/50 hover:text-brand-600 dark:border-slate-700 dark:hover:border-brand-500 dark:hover:bg-brand-950/30 dark:hover:text-brand-400"
-              >
+            <div className="flex gap-2">
+              <button type="button" onClick={addOptionRow} className="btn-secondary flex-1 text-xs">
                 <I.Plus className="h-3.5 w-3.5" />
                 เพิ่มตัวเลือก
               </button>
@@ -781,15 +599,14 @@ function AddForm({
                   setSaveTplOpen(true);
                 }}
                 disabled={!optionsHaveContent}
-                title={optionsHaveContent ? 'บันทึกชุดตัวเลือกนี้เป็นแม่แบบ' : 'กรอกตัวเลือกก่อน'}
-                className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-brand-50 px-3 py-2 text-xs font-medium text-brand-700 transition hover:bg-brand-100 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-brand-950/40 dark:text-brand-300 dark:hover:bg-brand-900/50"
+                title={optionsHaveContent ? 'บันทึกชุดตัวเลือกนี้เป็นแม่แบบเพื่อใช้ซ้ำ' : 'กรอกชื่อตัวเลือกและค่าก่อน'}
+                className="btn-secondary flex-1 text-xs disabled:cursor-not-allowed disabled:opacity-40"
               >
                 💾 บันทึกเป็นแม่แบบ
               </button>
             </div>
-
             {saveTplOpen && (
-              <div className="mt-3 rounded-xl border border-brand-200 bg-brand-50/60 p-3 dark:border-brand-800 dark:bg-brand-950/40">
+              <div className="rounded-xl border border-brand-200 bg-brand-50/60 p-3 dark:border-brand-800 dark:bg-brand-950/40">
                 <label className="mb-1 block text-xs font-semibold text-slate-600 dark:text-slate-300">ตั้งชื่อแม่แบบ</label>
                 <input
                   autoFocus
@@ -831,57 +648,51 @@ function AddForm({
                 </div>
               </div>
             )}
-          </ProductCard>
+          </section>
 
-          {/* ── 📝 Description + selling points ── */}
-          <ProductCard emoji="📝" title="อธิบายสินค้า" sub="ให้ AI เล่าให้ลูกค้าฟังได้">
-            <div className="space-y-3">
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold text-slate-500 dark:text-slate-400">
-                  คำอธิบาย <span className="font-normal text-slate-400">— สินค้านี้คืออะไร</span>
-                </label>
-                <textarea
-                  value={form.description}
-                  onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-                  placeholder="เช่น เสื้อยืดผ้า Cotton 100% ทรงโอเวอร์ไซส์ ใส่สบาย ไม่ร้อน ใส่ได้ทั้งชายและหญิง..."
-                  rows={3}
-                  className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-4 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:bg-slate-900 dark:focus:ring-brand-900/40"
-                />
-              </div>
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold text-slate-500 dark:text-slate-400">
-                  จุดขาย ✨ <span className="font-normal text-slate-400">— ให้ AI ใช้ตอนปิดการขาย</span>
-                </label>
-                <textarea
-                  value={form.sellingPoints}
-                  onChange={(e) => setForm((f) => ({ ...f, sellingPoints: e.target.value }))}
-                  placeholder="เช่น ผ้านุ่ม ไม่ยับ, ส่งไว 1-2 วัน, สีไม่ตก, ใส่ออกกำลังกายได้"
-                  rows={2}
-                  className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-4 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:bg-slate-900 dark:focus:ring-brand-900/40"
-                />
-              </div>
-            </div>
-          </ProductCard>
+          {/* รายละเอียดสินค้า */}
+          <section className="space-y-2">
+            <SectionTitle
+              n=""
+              title="รายละเอียดสินค้า"
+              sub={'อธิบายสั้นๆ ให้ลูกค้ารู้ว่าสินค้าคืออะไร\n\nตัวอย่าง:\n\nผ้านุ่ม ใส่สบาย ระบายอากาศดี'}
+            />
+            <textarea
+              value={form.description}
+              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+              placeholder="เช่น ผ้านุ่ม ใส่สบาย ระบายอากาศดี"
+              rows={3}
+              className={'resize-none ' + inputClass}
+            />
+          </section>
 
-          {/* ── 📦 Stock ── */}
-          <ProductCard emoji="📦" title="สต๊อก" sub="ไม่บังคับ — ใส่ถ้ามีก็ได้">
-            <div>
-              <label className="mb-1.5 block text-xs font-semibold text-slate-500 dark:text-slate-400">จำนวนในสต๊อก</label>
-              <div className="relative max-w-[220px]">
-                <input
-                  type="number"
-                  value={form.stock}
-                  onChange={(e) => setForm((f) => ({ ...f, stock: e.target.value }))}
-                  placeholder="120"
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 pr-12 text-sm tabular-nums text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-4 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:bg-slate-900 dark:focus:ring-brand-900/40"
-                />
-                <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-400">ชิ้น</span>
-              </div>
-            </div>
-          </ProductCard>
+          {/* จุดเด่นสินค้า */}
+          <section className="space-y-2">
+            <SectionTitle
+              n=""
+              title="จุดเด่นสินค้า"
+              sub={'อะไรที่ทำให้ลูกค้าอยากซื้อ?\n\nเช่น:\n\nส่งไว, ผ้านุ่ม, กันน้ำ'}
+            />
+            <textarea
+              value={form.sellingPoints}
+              onChange={(e) => setForm((f) => ({ ...f, sellingPoints: e.target.value }))}
+              placeholder="เช่น ส่งไว, ผ้านุ่ม, กันน้ำ"
+              rows={2}
+              className={'resize-none ' + inputClass}
+            />
+          </section>
 
-          {/* Bottom spacing */}
-          <div className="h-4" />
+          {/* สต๊อก */}
+          <section className="space-y-2">
+            <SectionTitle n="" title="สต๊อก (ถ้ามี)" sub="จำนวนชิ้น หรือปล่อยว่างได้" />
+            <input
+              type="number"
+              value={form.stock}
+              onChange={(e) => setForm((f) => ({ ...f, stock: e.target.value }))}
+              placeholder="เช่น 120 (ไม่บังคับ)"
+              className={inputClass}
+            />
+          </section>
         </div>
       </div>
     </div>
@@ -1031,14 +842,11 @@ function TemplatesView({
             </section>
 
             <section className="space-y-3">
-              <div className="border-b border-slate-100 pb-2 dark:border-slate-800">
-                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                  ตัวเลือก
-                </div>
-                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                  ตั้งชื่อเองได้ เช่น สี / ไซส์ / ความจุ / ทรง — ค่าแต่ละตัวคั่นด้วยจุลภาคหรือเว้นวรรค
-                </p>
-              </div>
+              <SectionTitle
+                n=""
+                title="ตัวเลือก"
+                sub="ตั้งชื่อเองได้ เช่น สี / ไซส์ / ความจุ / ทรง — ค่าแต่ละตัวคั่นด้วยจุลภาคหรือเว้นวรรค"
+              />
               <div className="grid gap-3 lg:grid-cols-2">
                 {draft.optionGroups.map((g, i) => (
                   <div

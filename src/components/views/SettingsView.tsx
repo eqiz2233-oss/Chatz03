@@ -4,7 +4,6 @@ import type { Theme } from '../../context/AppPreferencesContext';
 import { useAppPreferences } from '../../context/AppPreferencesContext';
 import { ChannelIcon, I } from '../Icons';
 import {
-  disconnectFbPage,
   fetchFbStatus,
   openFbConnectPopup,
   type FbIntegrationStatus,
@@ -250,8 +249,6 @@ function Segmented<T extends string>({
 function MetaIntegrationSection({ t }: { t: (k: string) => string }) {
   const [status, setStatus] = useState<FbIntegrationStatus | null>(null);
   const [busy, setBusy] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [syncMsg, setSyncMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -268,32 +265,13 @@ function MetaIntegrationSection({ t }: { t: (k: string) => string }) {
   }, [refresh]);
 
   const onConnect = async () => {
-    setErr(null); setSyncMsg(null); setBusy(true);
+    setErr(null); setBusy(true);
     try {
       await openFbConnectPopup();
       await refresh();
       setTimeout(() => void refresh(), 3500);
     } catch (e) { setErr(String((e as Error).message || e)); }
     finally { setBusy(false); }
-  };
-
-  const onDisconnect = async () => {
-    setErr(null); setSyncMsg(null); setBusy(true);
-    try { await disconnectFbPage(); await refresh(); }
-    catch (e) { setErr(String((e as Error).message || e)); }
-    finally { setBusy(false); }
-  };
-
-  const onSyncHistory = async () => {
-    setErr(null); setSyncMsg(null); setSyncing(true);
-    try {
-      const r = await fetch('/api/fb/sync-history', { method: 'POST' });
-      const d = await r.json() as { ok?: boolean; totalThreads?: number; error?: string };
-      if (!r.ok) throw new Error(d.error || `status ${r.status}`);
-      setSyncMsg({ ok: true, text: `โหลดแชทเก่าสำเร็จ ${d.totalThreads ?? 0} ห้อง` });
-    } catch (e) {
-      setSyncMsg({ ok: false, text: String((e as Error).message || e) });
-    } finally { setSyncing(false); }
   };
 
   // Treat as connected when reply token exists OR page profile is present.
@@ -337,21 +315,9 @@ function MetaIntegrationSection({ t }: { t: (k: string) => string }) {
       {/* ── Shared action row ── */}
       {isConnected && (
         <div className="flex flex-wrap items-center gap-2">
-          <button type="button" onClick={onSyncHistory} disabled={syncing || busy} className="btn-secondary text-xs disabled:opacity-50">
-            {syncing ? 'กำลังโหลด…' : '⬇ โหลดแชทเก่า'}
-          </button>
-          <button type="button" onClick={onDisconnect} disabled={busy} className="text-xs text-rose-500 hover:text-rose-700 disabled:opacity-40 dark:text-rose-400">
-            ตัดการเชื่อมต่อ
-          </button>
-          <button type="button" onClick={() => void refresh()} disabled={busy} className="ml-auto text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+          <button type="button" onClick={() => void refresh()} disabled={busy} className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
             รีเฟรช
           </button>
-        </div>
-      )}
-
-      {syncMsg && (
-        <div className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs ${syncMsg.ok ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300' : 'bg-rose-50 text-rose-600 dark:bg-rose-950/30 dark:text-rose-300'}`}>
-          {syncMsg.ok ? <I.Check className="h-3 w-3" /> : <I.X className="h-3 w-3" />} {syncMsg.text}
         </div>
       )}
       {err && (
@@ -466,11 +432,6 @@ function LineIntegrationCard({ t }: { t: (k: string) => string }) {
           </a>
         }
       />
-      {!connected && (
-        <div className="rounded-xl bg-slate-50 px-4 py-3 text-xs text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
-          ใส่ <code className="rounded bg-white px-1 py-0.5 font-mono ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700">LINE_CHANNEL_SECRET</code> และ <code className="rounded bg-white px-1 py-0.5 font-mono ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700">LINE_CHANNEL_ACCESS_TOKEN</code> ใน Railway Variables แล้ว Redeploy
-        </div>
-      )}
     </div>
   );
 }

@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppPreferences } from '../../context/AppPreferencesContext';
 import type { Locale } from '../../i18n/messages';
 
-/** Daily counts for the chart — replace with API data when available. */
-const CHATS_PER_DAY_30 = Array.from({ length: 30 }, () => 0);
+/** Daily counts by channel — replace with API data when available. */
+const CHATS_LINE_30 = Array.from({ length: 30 }, () => 0);
+const CHATS_IG_30 = Array.from({ length: 30 }, () => 0);
+const CHATS_FB_30 = Array.from({ length: 30 }, () => 0);
 
 function rollingDayLabels(count: number, locale: Locale): string[] {
   const locTag = locale === 'th' ? 'th-TH' : 'en-US';
@@ -137,14 +139,35 @@ export function AnalyticsView() {
   const { t, locale } = useAppPreferences();
 
   const chart = useMemo(() => {
-    const values = CHATS_PER_DAY_30;
-    const max = Math.max(...values, 1);
+    const lineValues = CHATS_LINE_30;
+    const igValues = CHATS_IG_30;
+    const fbValues = CHATS_FB_30;
+    const max = Math.max(...lineValues, ...igValues, ...fbValues, 1);
     const raw = rollingDayLabels(30, locale);
     const labels = raw.map((lab, i) => (i % 5 === 0 || i === raw.length - 1 ? lab : ''));
+    const count = raw.length;
+    const stepX = 28;
+    const width = Math.max(760, (count - 1) * stepX + 24);
+    const height = 152;
+    const toPoints = (arr: number[]) =>
+      arr
+        .map((v, i) => {
+          const x = 12 + i * stepX;
+          const y = height - (v / max) * (height - 14);
+          return `${x},${Number.isFinite(y) ? y.toFixed(2) : height}`;
+        })
+        .join(' ');
+
     return {
-      values,
+      lineValues,
+      igValues,
+      fbValues,
+      linePoints: toPoints(lineValues),
+      igPoints: toPoints(igValues),
+      fbPoints: toPoints(fbValues),
       labels,
-      max,
+      width,
+      height,
       titleKey: 'analytics.chartTitle30d' as const,
       subKey: 'analytics.chartSub30d' as const,
       barTipKey: 'analytics.dailyBarTip' as const,
@@ -204,31 +227,36 @@ export function AnalyticsView() {
             <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{t(chart.titleKey)}</div>
             <div className="text-xs text-slate-500 dark:text-slate-400">{t(chart.subKey)}</div>
           </div>
-          <div className="mt-4 flex h-48 gap-1.5 overflow-x-auto pb-1 sm:gap-2" role="img" aria-label={t(chart.ariaKey)}>
-            {chart.values.map((count, i) => (
-              <div key={i} className="flex h-full w-4 min-h-0 shrink-0 flex-col sm:w-5">
-                <div className="flex min-h-0 flex-1 flex-col justify-end">
-                  <div
-                    className="w-full min-w-[4px] rounded-md bg-gradient-to-t from-brand-500 to-fuchsia-500 shadow-sm transition hover:opacity-80"
-                    style={{
-                      height: `${(count / chart.max) * 100}%`,
-                      minHeight: count > 0 ? 4 : 0,
-                      maxHeight: '100%',
-                    }}
-                    title={t(chart.barTipKey, { n: count })}
-                  />
-                </div>
-                <div className="min-h-[0.875rem] max-w-full shrink-0 text-center text-[10px] tabular-nums leading-tight text-slate-400 dark:text-slate-500">
-                  {chart.labels[i] ? (
-                    <span className="inline-block max-w-[2.75rem] truncate align-top" title={chart.labels[i]}>
-                      {chart.labels[i]}
-                    </span>
-                  ) : (
-                    '\u00a0'
-                  )}
-                </div>
+          <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] font-medium">
+            <span className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+              <span className="h-1.5 w-4 rounded-full bg-emerald-500" />
+              LINE
+            </span>
+            <span className="inline-flex items-center gap-1.5 text-fuchsia-600 dark:text-fuchsia-400">
+              <span className="h-1.5 w-4 rounded-full bg-fuchsia-500" />
+              Instagram
+            </span>
+            <span className="inline-flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
+              <span className="h-1.5 w-4 rounded-full bg-blue-500" />
+              Facebook
+            </span>
+          </div>
+          <div className="mt-3 overflow-x-auto pb-1" role="img" aria-label={t(chart.ariaKey)}>
+            <div className="min-w-[760px]" style={{ width: `${chart.width}px` }}>
+              <svg width={chart.width} height={chart.height} className="block">
+                <line x1="0" y1={chart.height - 1} x2={chart.width} y2={chart.height - 1} className="stroke-slate-200 dark:stroke-slate-700" />
+                <polyline points={chart.linePoints} fill="none" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                <polyline points={chart.igPoints} fill="none" stroke="#d946ef" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                <polyline points={chart.fbPoints} fill="none" stroke="#3b82f6" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <div className="mt-1 grid" style={{ gridTemplateColumns: `repeat(${chart.labels.length}, minmax(0, 1fr))` }}>
+                {chart.labels.map((lab, i) => (
+                  <div key={i} className="text-center text-[10px] tabular-nums leading-tight text-slate-400 dark:text-slate-500">
+                    {lab || '\u00a0'}
+                  </div>
+                ))}
               </div>
-            ))}
+            </div>
           </div>
         </div>
 
