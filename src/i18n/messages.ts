@@ -309,7 +309,7 @@ const enFlat: Record<string, string> = {
 };
 
 const thFlat: Record<string, string> = {
-  'nav.inbox': 'กล่องข้อความรวม',
+  'nav.inbox': 'กล่องข้อความ',
   'nav.orders': 'ออเดอร์',
   'nav.slips': 'ตรวจสลิป',
   'nav.shop': 'ร้านของฉัน',

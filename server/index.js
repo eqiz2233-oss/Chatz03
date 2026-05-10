@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
@@ -158,6 +159,7 @@ function tokenForIgId(igId) {
 
 const eventsBuffer = [];
 const MAX_EVENTS = 200;
+const CHAT_STORE_FILE = path.join(__dirname, 'chat-store.json');
 
 /**
  * Per-conversation auto-reply (bot) toggle. Conversations default to ON; the
@@ -173,6 +175,7 @@ function isBotEnabled(conversationId) {
 }
 function setBotEnabled(conversationId, enabled) {
   botStates.set(String(conversationId), Boolean(enabled));
+  markChatStateDirty();
 }
 
 /** Last webhook outcome (for /api/health + debugging). */
@@ -192,6 +195,8 @@ let fbWebhookDebug = {
 
 /** @type {Map<string, { kind: string; targetId: string; key: string; displayName: string | null; pictureUrl: string | null; messages: Array<{ id: string; receivedAt: string; sender: string; text?: string; image?: string }>; updatedAt: string }>} */
 const fbThreads = new Map();
+const fbProfileBackfillAttempts = new Map(); // threadKey -> unix ms
+const FB_PROFILE_BACKFILL_COOLDOWN_MS = 90 * 1000;
 
 function getOrCreateFbThread(targetId, channel = 'fb') {
   const key = `${channel}:${targetId}`;
@@ -247,6 +252,7 @@ async function enrichFbProfile(psid, thread, pageId) {
     const pic = messengerProfilePicFromGraph(d);
     if (pic) thread.pictureUrl = pic;
     thread.updatedAt = new Date().toISOString();
+    markChatStateDirty();
   } catch (e) {
     console.warn('FB getProfile failed:', e?.message || e);
   }
@@ -277,6 +283,7 @@ async function enrichIgProfile(igsid, thread, igBusinessAccountId) {
     const pic = typeof d.profile_picture_url === 'string' ? d.profile_picture_url : null;
     if (pic) thread.pictureUrl = pic;
     thread.updatedAt = new Date().toISOString();
+    markChatStateDirty();
   } catch (e) {
     console.warn('IG getProfile failed:', e?.message || e);
   }
@@ -326,6 +333,29 @@ function metaMessagingMediaFromEvent(ev) {
     textOut = `[${msg.attachments[0].type || 'attachment'}]`;
   }
   return { textOut, imageUrl, videoUrl, isSticker };
+}
+
+/**
+ * Some Meta stickers arrive as regular "image" attachments (without explicit
+ * `type=sticker`), so we need URL/payload heuristics to avoid slip checks.
+ */
+function looksLikeMetaStickerAttachment(ev, imageUrl) {
+  const msg = ev?.message;
+  if (!msg) return false;
+  if (msg?.sticker_id) return true;
+  for (const att of msg?.attachments || []) {
+    const t = String(att?.type || '').toLowerCase();
+    if (t === 'sticker') return true;
+    const payloadSticker = att?.payload?.sticker_id;
+    if (payloadSticker) return true;
+    const payloadType = String(att?.payload?.type || '').toLowerCase();
+    if (payloadType === 'sticker') return true;
+  }
+  const u = String(imageUrl || '').toLowerCase();
+  if (!u) return false;
+  // Common CDN/path hints for sticker assets.
+  if (u.includes('sticker') || u.includes('/stickers/') || u.includes('emoji')) return true;
+  return false;
 }
 
 /**
@@ -407,6 +437,30 @@ function fbThreadToApiConversation(thread) {
   };
 }
 
+function looksFallbackDisplayName(name, channel) {
+  if (!name || typeof name !== 'string') return true;
+  const s = name.trim();
+  if (!s) return true;
+  if (channel === 'ig') return /^IG\s+•\s+/i.test(s);
+  return /^FB\s+•\s+/i.test(s);
+}
+
+function scheduleFbProfileBackfill() {
+  const now = Date.now();
+  for (const thread of fbThreads.values()) {
+    const missingName = looksFallbackDisplayName(thread.displayName, thread.channel);
+    if (!missingName) continue;
+    const lastTryAt = fbProfileBackfillAttempts.get(thread.key) || 0;
+    if (now - lastTryAt < FB_PROFILE_BACKFILL_COOLDOWN_MS) continue;
+    fbProfileBackfillAttempts.set(thread.key, now);
+    if (thread.channel === 'ig') {
+      void enrichIgProfile(thread.targetId, thread, null);
+    } else {
+      void enrichFbProfile(thread.targetId, thread, null);
+    }
+  }
+}
+
 function verifyFbSignature(rawBody, signatureHeader) {
   if (!fbHasAppSecret) return null; // skipped
   if (!signatureHeader || typeof signatureHeader !== 'string') return false;
@@ -421,11 +475,124 @@ function verifyFbSignature(rawBody, signatureHeader) {
 
 /** @type {Map<string, { kind: string; targetId: string; key: string; displayName: string | null; pictureUrl: string | null; messages: Array<{ id: string; receivedAt: string; sender: string; text?: string; image?: string; video?: string }>; updatedAt: string }>} */
 const lineThreads = new Map();
+let chatStateSaveTimer = null;
+let chatStateSaveInFlight = false;
+
+function toIsoOrNow(v) {
+  if (typeof v === 'string' && !Number.isNaN(new Date(v).getTime())) return v;
+  return new Date().toISOString();
+}
+
+function normalizeThreadMessages(messages) {
+  if (!Array.isArray(messages)) return [];
+  return messages.map((m) => ({
+    id: String(m?.id || crypto.randomUUID()),
+    receivedAt: toIsoOrNow(m?.receivedAt),
+    sender: m?.sender === 'agent' || m?.sender === 'ai' ? m.sender : 'customer',
+    text: typeof m?.text === 'string' ? m.text : undefined,
+    image: typeof m?.image === 'string' ? m.image : undefined,
+    video: typeof m?.video === 'string' ? m.video : undefined,
+    meta: m?.meta && typeof m.meta === 'object' ? m.meta : undefined,
+  }));
+}
+
+function serializeChatState() {
+  return {
+    version: 1,
+    savedAt: new Date().toISOString(),
+    lineThreads: Array.from(lineThreads.values()),
+    fbThreads: Array.from(fbThreads.values()),
+    botStates: Object.fromEntries(botStates.entries()),
+  };
+}
+
+function ensureServerDir() {
+  if (!existsSync(__dirname)) mkdirSync(__dirname, { recursive: true });
+}
+
+function loadPersistedChatStateSync() {
+  try {
+    if (!existsSync(CHAT_STORE_FILE)) return;
+    const raw = JSON.parse(readFileSync(CHAT_STORE_FILE, 'utf8'));
+    const line = Array.isArray(raw?.lineThreads) ? raw.lineThreads : [];
+    for (const t of line) {
+      const kind = t?.kind === 'group' || t?.kind === 'room' ? t.kind : 'user';
+      const targetId = String(t?.targetId || '');
+      if (!targetId) continue;
+      const key = `${kind}:${targetId}`;
+      lineThreads.set(key, {
+        kind,
+        targetId,
+        key,
+        displayName: typeof t?.displayName === 'string' ? t.displayName : null,
+        pictureUrl: typeof t?.pictureUrl === 'string' ? t.pictureUrl : null,
+        messages: normalizeThreadMessages(t?.messages),
+        updatedAt: toIsoOrNow(t?.updatedAt),
+      });
+    }
+
+    const fb = Array.isArray(raw?.fbThreads) ? raw.fbThreads : [];
+    for (const t of fb) {
+      const channel = t?.channel === 'ig' ? 'ig' : 'fb';
+      const targetId = String(t?.targetId || '');
+      if (!targetId) continue;
+      const key = `${channel}:${targetId}`;
+      fbThreads.set(key, {
+        kind: 'user',
+        channel,
+        targetId,
+        key,
+        displayName: typeof t?.displayName === 'string' ? t.displayName : null,
+        pictureUrl: typeof t?.pictureUrl === 'string' ? t.pictureUrl : null,
+        messages: normalizeThreadMessages(t?.messages),
+        updatedAt: toIsoOrNow(t?.updatedAt),
+      });
+    }
+
+    const botObj = raw?.botStates && typeof raw.botStates === 'object' ? raw.botStates : null;
+    if (botObj) {
+      for (const [k, v] of Object.entries(botObj)) {
+        botStates.set(String(k), Boolean(v));
+      }
+    }
+    console.log(
+      '[chat-store] loaded',
+      `line=${lineThreads.size}`,
+      `fb=${fbThreads.size}`,
+      `botStates=${botStates.size}`,
+    );
+  } catch (e) {
+    console.warn('[chat-store] load failed:', e?.message || e);
+  }
+}
+
+async function persistChatStateNow() {
+  if (chatStateSaveInFlight) return;
+  chatStateSaveInFlight = true;
+  try {
+    ensureServerDir();
+    await writeFile(CHAT_STORE_FILE, JSON.stringify(serializeChatState(), null, 2), 'utf8');
+  } catch (e) {
+    console.warn('[chat-store] save failed:', e?.message || e);
+  } finally {
+    chatStateSaveInFlight = false;
+  }
+}
+
+function markChatStateDirty() {
+  if (chatStateSaveTimer) clearTimeout(chatStateSaveTimer);
+  chatStateSaveTimer = setTimeout(() => {
+    chatStateSaveTimer = null;
+    void persistChatStateNow();
+  }, 450);
+}
 
 function pushEvent(item) {
   eventsBuffer.unshift(item);
   if (eventsBuffer.length > MAX_EVENTS) eventsBuffer.length = MAX_EVENTS;
 }
+
+loadPersistedChatStateSync();
 
 const lineClient = hasToken
   ? new line.messagingApi.MessagingApiClient({ channelAccessToken: lineConfig.channelAccessToken })
@@ -518,6 +685,7 @@ async function enrichUserProfile(userId, thread) {
     thread.displayName = p.displayName;
     thread.pictureUrl = p.pictureUrl;
     thread.updatedAt = new Date().toISOString();
+    markChatStateDirty();
   } catch (e) {
     console.warn('LINE getProfile failed:', e?.message || e);
   }
@@ -570,6 +738,7 @@ async function maybeAttachSlip({
     });
     message.meta = { ...(message.meta || {}), slip: result };
     thread.updatedAt = new Date().toISOString();
+    markChatStateDirty();
   } catch (e) {
     console.warn('[slip] verify failed:', e?.message || e);
   }
@@ -686,6 +855,7 @@ app.post('/api/line/send', express.json({ limit: '50kb' }), async (req, res) => 
       text: body,
     });
     thread.updatedAt = now;
+    markChatStateDirty();
     return res.json({ ok: true });
   } catch (e) {
     console.error('LINE pushMessage failed:', e?.message || e);
@@ -743,6 +913,7 @@ app.post(
             if (media.video) row.video = media.video;
             thread.messages.push(row);
             thread.updatedAt = new Date().toISOString();
+            markChatStateDirty();
 
             // Slip auto-verify: any image arriving from a customer is treated
             // as a candidate slip. LINE-hosted images need a channel-token
@@ -846,6 +1017,8 @@ app.post('/api/slips/verify', express.json({ limit: '50kb' }), async (req, res) 
 });
 
 app.get('/api/fb/conversations', (_req, res) => {
+  // Retry profile enrichment in the background for threads still showing fallback ids.
+  scheduleFbProfileBackfill();
   const arr = Array.from(fbThreads.values())
     .filter((t) => t.messages.length > 0)
     .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
@@ -1001,9 +1174,11 @@ app.post(
             if (isSticker) row.isSticker = true;
             thread.messages.push(row);
             thread.updatedAt = new Date().toISOString();
+            markChatStateDirty();
 
             // Slip auto-verify on inbound images — but NEVER on stickers/emoji.
-            if (imageUrl && !videoUrl && !isSticker) {
+            const stickerLike = isSticker || looksLikeMetaStickerAttachment(ev, imageUrl);
+            if (imageUrl && !videoUrl && !stickerLike) {
               const channel = isInstagram ? 'ig' : 'fb';
               const conversationId = `${channel}:user:${psid}`;
               void maybeAttachSlip({
@@ -1066,6 +1241,7 @@ async function sendLineMessage({ conversationId, text, asAi }) {
     const now = new Date().toISOString();
     thread.messages.push({ id: crypto.randomUUID(), receivedAt: now, sender, text: body });
     thread.updatedAt = now;
+    markChatStateDirty();
     return { status: 200, ok: true };
   } catch (e) {
     console.error('LINE pushMessage failed:', e?.message || e);
@@ -1106,6 +1282,7 @@ async function sendMetaMessage({ conversationId, text, asAi }) {
     const now = new Date().toISOString();
     thread.messages.push({ id: data?.message_id || crypto.randomUUID(), receivedAt: now, sender, text: body });
     thread.updatedAt = now;
+    markChatStateDirty();
     return { status: 200, ok: true };
   } catch (e) {
     console.error('FB/IG send exception:', e?.message || e);
@@ -1447,6 +1624,7 @@ async function syncFbConversationHistory(pageId, pageToken, igAccountId) {
         }
         thread.messages.sort((a, b) => new Date(a.receivedAt) - new Date(b.receivedAt));
         if (thread.messages.length) thread.updatedAt = thread.messages.at(-1).receivedAt;
+        markChatStateDirty();
         // Enrich display name from Graph API if participants didn't include it
         if (!thread.displayName) {
           void enrichFbProfile(customer.id, thread, pageId).catch(() => {});
@@ -1493,6 +1671,7 @@ async function syncFbConversationHistory(pageId, pageToken, igAccountId) {
         }
         thread.messages.sort((a, b) => new Date(a.receivedAt) - new Date(b.receivedAt));
         if (thread.messages.length) thread.updatedAt = thread.messages.at(-1).receivedAt;
+        markChatStateDirty();
       }
     }
   } catch (e) {
@@ -1633,6 +1812,13 @@ app.use((err, req, res, _next) => {
   }
   console.error('[express]', req.method, p, err?.message || err);
   if (!res.headersSent) res.status(500).json({ error: 'server error' });
+});
+
+process.on('SIGINT', () => {
+  void persistChatStateNow().finally(() => process.exit(0));
+});
+process.on('SIGTERM', () => {
+  void persistChatStateNow().finally(() => process.exit(0));
 });
 
 app.listen(port, '0.0.0.0', () => {

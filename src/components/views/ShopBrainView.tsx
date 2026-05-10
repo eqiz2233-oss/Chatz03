@@ -29,6 +29,40 @@ export interface ProductTemplate {
 const TEMPLATE_EMOJI_OPTIONS = ['👕', '👖', '👗', '🧢', '👜', '👟', '🧴', '💄', '🍱', '🍩', '☕', '🥤', '🔋', '🎧', '📱', '💻', '🪑', '🏠', '🐶', '📦'];
 
 const TEMPLATES_STORAGE_KEY = 'chatz-product-templates-v1';
+const PRODUCTS_STORAGE_KEY = 'chatz-products-v1';
+
+function loadProducts(): Product[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(PRODUCTS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (p): p is Product =>
+        p &&
+        typeof p.id === 'string' &&
+        typeof p.name === 'string' &&
+        typeof p.price === 'number' &&
+        Array.isArray(p.optionGroups) &&
+        typeof p.description === 'string' &&
+        typeof p.sellingPoints === 'string' &&
+        typeof p.imageEmoji === 'string' &&
+        typeof p.aiReady === 'boolean',
+    );
+  } catch {
+    return [];
+  }
+}
+
+function persistProducts(list: Product[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(list));
+  } catch {
+    /* quota / private mode — silently ignore */
+  }
+}
 
 function loadTemplates(): ProductTemplate[] {
   if (typeof window === 'undefined') return [];
@@ -162,7 +196,7 @@ function formatOptionSummary(groups: ProductOptionGroup[]): string {
 type ShopMode = 'list' | 'add' | 'edit' | 'templates';
 
 export function ShopBrainView() {
-  const [products, setProducts] = useState<Product[]>([]);
+  const [products, setProducts] = useState<Product[]>(loadProducts);
   const [mode, setMode] = useState<ShopMode>('list');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(BLANK);
@@ -171,6 +205,10 @@ export function ShopBrainView() {
   useEffect(() => {
     persistTemplates(templates);
   }, [templates]);
+
+  useEffect(() => {
+    persistProducts(products);
+  }, [products]);
 
   const saveCurrentAsTemplate = (name: string, emoji: string) => {
     const cleanName = name.trim();
@@ -321,19 +359,44 @@ export function ShopBrainView() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-5">
-        <div className="space-y-2">
-          {products.map((p) => (
-            <ProductRow
-              key={p.id}
-              product={p}
-              slotsRemaining={slotsRemaining}
-              slotLimit={SHOP_PRODUCT_SLOT_LIMIT}
-              usedSlots={products.length}
-              onEdit={() => openEdit(p)}
-              onDelete={() => confirmDelete(p.id, p.name)}
-            />
-          ))}
-        </div>
+        {products.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-5 py-6 text-center dark:border-slate-600 dark:bg-slate-900">
+            <div className="text-2xl">🛍️</div>
+            <h3 className="mt-2 text-sm font-semibold text-slate-900 dark:text-slate-100">ยังไม่มีสินค้าในร้านของคุณ</h3>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              กดปุ่มเพิ่มสินค้า เพื่อใส่ชื่อสินค้า ราคา และรายละเอียดสั้น ๆ ให้ AI ช่วยขายได้ทันที
+            </p>
+            <button
+              type="button"
+              onClick={openAdd}
+              disabled={!canAddProduct}
+              className="btn-primary mt-4 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <I.Plus className="h-4 w-4" />
+              เพิ่มสินค้า
+            </button>
+          </div>
+        ) : (
+          <section className="rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+            <div className="mb-2 px-1">
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">สินค้าของร้านคุณ</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">แสดงเฉพาะข้อมูลจริงที่คุณเพิ่มเท่านั้น</p>
+            </div>
+            <div className="space-y-2">
+              {products.map((p) => (
+                <ProductRow
+                  key={p.id}
+                  product={p}
+                  slotsRemaining={slotsRemaining}
+                  slotLimit={SHOP_PRODUCT_SLOT_LIMIT}
+                  usedSlots={products.length}
+                  onEdit={() => openEdit(p)}
+                  onDelete={() => confirmDelete(p.id, p.name)}
+                />
+              ))}
+            </div>
+          </section>
+        )}
       </div>
     </div>
   );
@@ -595,34 +658,6 @@ function AddForm({
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
         <div className="mx-auto max-w-xl space-y-4">
-          {/* ── Templates: friendly chip strip ── */}
-          {templates.length > 0 && (
-            <section className="overflow-hidden rounded-2xl border border-brand-200/60 bg-gradient-to-br from-brand-50 to-white p-4 dark:border-brand-800/50 dark:from-brand-950/40 dark:to-slate-900">
-              <div className="mb-2.5 flex items-center justify-between">
-                <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest text-brand-700 dark:text-brand-300">
-                  ⚡ ใช้แม่แบบเร็ว
-                </span>
-                <button type="button" onClick={onManageTemplates} className="text-[11px] font-medium text-brand-600 hover:underline dark:text-brand-300">
-                  จัดการ →
-                </button>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {templates.map((tpl) => (
-                  <button
-                    key={tpl.id}
-                    type="button"
-                    onClick={() => onApplyTemplate(tpl)}
-                    className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm ring-1 ring-brand-200/80 transition hover:bg-brand-50 hover:ring-brand-400 dark:bg-slate-800 dark:text-slate-200 dark:ring-brand-800/60 dark:hover:bg-slate-700"
-                    title={tpl.optionGroups.map((g) => `${g.label}: ${g.values.join(' ')}`).join(' · ')}
-                  >
-                    <span>{tpl.emoji}</span>
-                    <span>{tpl.name}</span>
-                  </button>
-                ))}
-              </div>
-            </section>
-          )}
-
           {/* ── 📸 Image ── */}
           <ProductCard emoji="📸" title="รูปสินค้า" sub="ใช้รูปสวย ๆ ลูกค้าจะเห็นรูปนี้ก่อนเสมอ">
             <button
