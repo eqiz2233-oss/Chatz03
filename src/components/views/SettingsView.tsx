@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { Locale } from '../../i18n/messages';
 import type { Theme } from '../../context/AppPreferencesContext';
 import { useAppPreferences } from '../../context/AppPreferencesContext';
+import { useAuth } from '../../context/AuthContext';
 import { ChannelIcon, I } from '../Icons';
 import {
   fetchFbStatus,
@@ -94,7 +95,119 @@ function GeneralTab({
           ]}
         />
       </SectionCard>
+
+      <AccountCard t={t} locale={locale} />
     </div>
+  );
+}
+
+function AccountCard({ t, locale }: { t: (k: string) => string; locale: Locale }) {
+  const { user, logout } = useAuth();
+  const [showPw, setShowPw] = useState(false);
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentPassword: current, newPassword: next }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        const reason = j?.error;
+        const text =
+          reason === 'invalid_current'
+            ? locale === 'th' ? 'รหัสผ่านปัจจุบันไม่ถูกต้อง' : 'Current password is wrong'
+            : reason === 'too_short'
+            ? locale === 'th' ? 'รหัสผ่านใหม่ต้องอย่างน้อย 6 ตัว' : 'New password must be at least 6 chars'
+            : reason || `HTTP ${r.status}`;
+        setMsg({ kind: 'err', text });
+      } else {
+        setMsg({ kind: 'ok', text: locale === 'th' ? 'เปลี่ยนรหัสผ่านสำเร็จ' : 'Password changed' });
+        setCurrent('');
+        setNext('');
+        setShowPw(false);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <SectionCard
+      emoji="👤"
+      title={locale === 'th' ? 'บัญชี' : 'Account'}
+      desc={user ? `${user.displayName || user.username} • ${user.role}` : null}
+    >
+      {!showPw ? (
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-xs text-slate-500 dark:text-slate-400">
+            {locale === 'th' ? 'เปลี่ยนรหัสผ่านหรือออกจากระบบได้ที่นี่' : 'Change password or sign out here.'}
+          </div>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => setShowPw(true)} className="btn-secondary text-xs">
+              {locale === 'th' ? 'เปลี่ยนรหัสผ่าน' : 'Change password'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void logout()}
+              className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3.5 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-100 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-200 dark:hover:bg-rose-900/50"
+            >
+              {t('login.logout')}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <form onSubmit={submit} className="space-y-2 text-sm">
+          <input
+            type="password"
+            placeholder={locale === 'th' ? 'รหัสผ่านปัจจุบัน' : 'Current password'}
+            value={current}
+            onChange={(e) => setCurrent(e.target.value)}
+            className="input"
+            required
+            autoFocus
+          />
+          <input
+            type="password"
+            placeholder={locale === 'th' ? 'รหัสผ่านใหม่ (อย่างน้อย 6 ตัว)' : 'New password (min 6 chars)'}
+            value={next}
+            onChange={(e) => setNext(e.target.value)}
+            className="input"
+            minLength={6}
+            required
+          />
+          {msg && (
+            <div
+              className={
+                'rounded-lg px-3 py-1.5 text-xs ' +
+                (msg.kind === 'ok'
+                  ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-200'
+                  : 'bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-200')
+              }
+            >
+              {msg.text}
+            </div>
+          )}
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={() => { setShowPw(false); setMsg(null); }} className="btn-secondary text-xs">
+              {locale === 'th' ? 'ยกเลิก' : 'Cancel'}
+            </button>
+            <button type="submit" disabled={busy} className="btn-primary text-xs disabled:opacity-60">
+              {busy ? '…' : locale === 'th' ? 'บันทึก' : 'Save'}
+            </button>
+          </div>
+        </form>
+      )}
+    </SectionCard>
   );
 }
 
@@ -108,17 +221,163 @@ function ConnectTab({ t }: { t: (k: string) => string }) {
   );
 }
 
+interface BotSettings {
+  brandVoice: string;
+  paymentInfo: { kbankAccount: string; promptPay: string };
+  autoGreet: boolean;
+  autoFaq: boolean;
+  autoSlipConfirm: boolean;
+  ocr: boolean;
+  dedupe: boolean;
+  bankApi: boolean;
+  autoPaid: boolean;
+  ai5: boolean;
+  ai6: boolean;
+}
+
+const DEFAULT_BOT_SETTINGS: BotSettings = {
+  brandVoice: '',
+  paymentInfo: { kbankAccount: '', promptPay: '' },
+  autoGreet: true,
+  autoFaq: true,
+  autoSlipConfirm: true,
+  ocr: true,
+  dedupe: true,
+  bankApi: true,
+  autoPaid: true,
+  ai5: false,
+  ai6: true,
+};
+
+interface AiStatus {
+  enabled: boolean;
+  model: string | null;
+}
+
 function BotTab({ t }: { t: (k: string) => string }) {
+  const [settings, setSettings] = useState<BotSettings>(DEFAULT_BOT_SETTINGS);
+  const [loaded, setLoaded] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [ai, setAi] = useState<AiStatus | null>(null);
+
+  // Probe whether the backend has ANTHROPIC_API_KEY wired so we can show the
+  // shop owner whether AI replies are actually live or just toggled in the UI.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const r = await fetch('/api/health', { credentials: 'include' });
+        if (!r.ok) return;
+        const j = await r.json();
+        if (!cancelled) setAi({ enabled: Boolean(j?.ai?.enabled), model: j?.ai?.model || null });
+      } catch {
+        /* offline ok */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Load once
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const r = await fetch('/api/bot/settings', { credentials: 'include' });
+        if (!r.ok) return;
+        const j = (await r.json()) as { settings: Partial<BotSettings> };
+        if (cancelled) return;
+        setSettings({
+          ...DEFAULT_BOT_SETTINGS,
+          ...j.settings,
+          paymentInfo: {
+            ...DEFAULT_BOT_SETTINGS.paymentInfo,
+            ...(j.settings?.paymentInfo || {}),
+          },
+        });
+      } finally {
+        if (!cancelled) setLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Debounced auto-save
+  useEffect(() => {
+    if (!loaded) return;
+    setSaveStatus('saving');
+    const id = window.setTimeout(async () => {
+      try {
+        const r = await fetch('/api/bot/settings', {
+          method: 'PUT',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ settings }),
+        });
+        setSaveStatus(r.ok ? 'saved' : 'error');
+      } catch {
+        setSaveStatus('error');
+      }
+      window.setTimeout(() => setSaveStatus('idle'), 1500);
+    }, 600);
+    return () => window.clearTimeout(id);
+  }, [settings, loaded]);
+
+  const set = <K extends keyof BotSettings>(key: K, value: BotSettings[K]) =>
+    setSettings((s) => ({ ...s, [key]: value }));
+
+  const setPayment = (patch: Partial<BotSettings['paymentInfo']>) =>
+    setSettings((s) => ({ ...s, paymentInfo: { ...s.paymentInfo, ...patch } }));
+
   return (
     <div className="mx-auto max-w-lg space-y-4">
+      <div className="-mb-1 flex items-center justify-end gap-2 text-[11px] text-slate-400 dark:text-slate-500">
+        {saveStatus === 'saving' && <span>กำลังบันทึก…</span>}
+        {saveStatus === 'saved' && <span className="text-emerald-600 dark:text-emerald-400">บันทึกแล้ว ✓</span>}
+        {saveStatus === 'error' && <span className="text-rose-500">บันทึกไม่สำเร็จ</span>}
+      </div>
+
+      {ai && (
+        ai.enabled ? (
+          <div className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 dark:border-emerald-900/50 dark:bg-emerald-950/40">
+            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-emerald-500 text-white">
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </div>
+            <div className="min-w-0 flex-1 text-sm">
+              <div className="font-semibold text-emerald-900 dark:text-emerald-100">AI ปิดการขาย พร้อมใช้งาน</div>
+              <div className="mt-0.5 text-xs text-emerald-700 dark:text-emerald-300">
+                ใช้โมเดล <span className="font-mono">{ai.model}</span> — บอทจะตอบลูกค้าตามแบรนด์และ catalog สินค้าโดยอัตโนมัติ
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/50 dark:bg-amber-950/40">
+            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-500 text-white">
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </div>
+            <div className="min-w-0 flex-1 text-sm">
+              <div className="font-semibold text-amber-900 dark:text-amber-100">AI ปิดการขาย ยังไม่ทำงาน</div>
+              <div className="mt-0.5 text-xs text-amber-800 dark:text-amber-200">
+                ตั้งค่า <span className="font-mono">ANTHROPIC_API_KEY</span> ใน Railway → Variables เพื่อเปิดใช้งาน บอทจะตอบลูกค้าอัตโนมัติด้วยข้อมูลแบรนด์ + สินค้าของคุณ
+              </div>
+            </div>
+          </div>
+        )
+      )}
+
       <SectionCard emoji="⚡" title={t('settings.aiEngine')} desc={locale === 'th' ? 'เปิด-ปิดฟีเจอร์บอทได้ตามต้องการ' : 'Turn each bot feature on or off'}>
         <div className="space-y-2">
-          <ToggleRow title={t('settings.ai1t')} desc={t('settings.ai1d')} defaultOn />
-          <ToggleRow title={t('settings.ai2t')} desc={t('settings.ai2d')} defaultOn />
-          <ToggleRow title={t('settings.ai3t')} desc={t('settings.ai3d')} defaultOn />
-          <ToggleRow title={t('settings.ai4t')} desc={t('settings.ai4d')} defaultOn />
-          <ToggleRow title={t('settings.ai5t')} desc={t('settings.ai5d')} />
-          <ToggleRow title={t('settings.ai6t')} desc={t('settings.ai6d')} defaultOn />
+          <ToggleRow title={t('settings.ai1t')} desc={t('settings.ai1d')} on={settings.autoGreet} onChange={(v) => set('autoGreet', v)} />
+          <ToggleRow title={t('settings.ai2t')} desc={t('settings.ai2d')} on={settings.autoFaq} onChange={(v) => set('autoFaq', v)} />
+          <ToggleRow title={t('settings.ai3t')} desc={t('settings.ai3d')} on={settings.autoSlipConfirm} onChange={(v) => set('autoSlipConfirm', v)} />
+          <ToggleRow title={t('settings.ai4t')} desc={t('settings.ai4d')} on={settings.ocr} onChange={(v) => set('ocr', v)} />
+          <ToggleRow title={t('settings.ai5t')} desc={t('settings.ai5d')} on={settings.ai5} onChange={(v) => set('ai5', v)} />
+          <ToggleRow title={t('settings.ai6t')} desc={t('settings.ai6d')} on={settings.ai6} onChange={(v) => set('ai6', v)} />
         </div>
       </SectionCard>
 
@@ -126,26 +385,40 @@ function BotTab({ t }: { t: (k: string) => string }) {
         <textarea
           className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:ring-brand-900/30"
           rows={3}
-          defaultValue={t('settings.brandVoicePlaceholder')}
+          value={settings.brandVoice}
+          onChange={(e) => set('brandVoice', e.target.value)}
+          placeholder={t('settings.brandVoicePlaceholder')}
         />
       </SectionCard>
 
       <SectionCard emoji="📄" title={t('settings.payment')} desc={null}>
-        <div className="mb-3 flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 dark:border-slate-700 dark:bg-slate-800/60">
-          <div>
-            <div className="text-sm font-medium text-slate-900 dark:text-slate-100">{t('settings.centralAccount')}</div>
-            <div className="mt-0.5 font-mono text-xs text-slate-500 dark:text-slate-400">KBANK 123-4-56789-0</div>
-          </div>
-          <button className="btn-secondary text-xs">
-            <I.Copy className="h-3.5 w-3.5" />
-            {t('settings.copy')}
-          </button>
+        <div className="mb-3 grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/60">
+          <label className="block">
+            <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              {t('settings.centralAccount')} (KBANK)
+            </div>
+            <input
+              value={settings.paymentInfo.kbankAccount}
+              onChange={(e) => setPayment({ kbankAccount: e.target.value })}
+              placeholder="123-4-56789-0"
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-sm focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+            />
+          </label>
+          <label className="block">
+            <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">PromptPay</div>
+            <input
+              value={settings.paymentInfo.promptPay}
+              onChange={(e) => setPayment({ promptPay: e.target.value })}
+              placeholder="0812345678"
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-sm focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+            />
+          </label>
         </div>
         <div className="space-y-2">
-          <ToggleRow title={t('settings.ocr')} desc={t('settings.ocrD')} defaultOn />
-          <ToggleRow title={t('settings.dedupe')} desc={t('settings.dedupeD')} defaultOn />
-          <ToggleRow title={t('settings.bankApi')} desc={t('settings.bankApiD')} defaultOn />
-          <ToggleRow title={t('settings.autoPaid')} desc={t('settings.autoPaidD')} defaultOn />
+          <ToggleRow title={t('settings.ocr')} desc={t('settings.ocrD')} on={settings.ocr} onChange={(v) => set('ocr', v)} />
+          <ToggleRow title={t('settings.dedupe')} desc={t('settings.dedupeD')} on={settings.dedupe} onChange={(v) => set('dedupe', v)} />
+          <ToggleRow title={t('settings.bankApi')} desc={t('settings.bankApiD')} on={settings.bankApi} onChange={(v) => set('bankApi', v)} />
+          <ToggleRow title={t('settings.autoPaid')} desc={t('settings.autoPaidD')} on={settings.autoPaid} onChange={(v) => set('autoPaid', v)} />
         </div>
       </SectionCard>
     </div>
@@ -182,12 +455,31 @@ function SectionCard({
   );
 }
 
-function ToggleRow({ title, desc, defaultOn }: { title: string; desc: string; defaultOn?: boolean }) {
-  const [on, setOn] = useState(defaultOn ?? false);
+function ToggleRow({
+  title,
+  desc,
+  defaultOn,
+  on: controlledOn,
+  onChange,
+}: {
+  title: string;
+  desc: string;
+  defaultOn?: boolean;
+  on?: boolean;
+  onChange?: (v: boolean) => void;
+}) {
+  const [uOn, setUOn] = useState(defaultOn ?? false);
+  const isControlled = typeof controlledOn === 'boolean';
+  const on = isControlled ? Boolean(controlledOn) : uOn;
+  const toggle = () => {
+    const next = !on;
+    if (isControlled) onChange?.(next);
+    else setUOn(next);
+  };
   return (
     <button
       type="button"
-      onClick={() => setOn(!on)}
+      onClick={toggle}
       className="flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-left transition hover:bg-slate-50 dark:hover:bg-slate-800/50"
     >
       <div className="min-w-0 flex-1">

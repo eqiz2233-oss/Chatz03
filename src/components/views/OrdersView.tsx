@@ -5,7 +5,6 @@ import {
   useRef,
   useState,
   type Dispatch,
-  type RefObject,
   type SetStateAction,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -120,14 +119,12 @@ function countActiveFilters(f: OrderFiltersState): number {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Stable 2-letter avatar initials from customer name */
 function initials(name: string) {
   const parts = name.trim().split(/\s+/);
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
   return name.slice(0, 2).toUpperCase();
 }
 
-/** Deterministic pastel colour from string */
 function avatarColor(str: string) {
   const palette = [
     'bg-violet-500', 'bg-blue-500', 'bg-emerald-500',
@@ -191,7 +188,9 @@ function SlipImageLightbox({
 
 export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest) => void }) {
   const { t } = useAppPreferences();
-  const list = seed;
+  const [serverOrders, setServerOrders] = useState<Order[] | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const list = serverOrders ?? seed;
   const [slipPreview, setSlipPreview] = useState<string | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
   const [filters, setFilters] = useState<OrderFiltersState>(DEFAULT_ORDER_FILTERS);
@@ -199,12 +198,43 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
   const [search, setSearch] = useState('');
   const filterWrapRef = useRef<HTMLDivElement>(null);
 
+  // Pull persisted orders from the backend on mount and after every create.
+  const loadOrders = useCallback(async () => {
+    try {
+      const r = await fetch('/api/orders', { credentials: 'include' });
+      if (!r.ok) return;
+      const j = (await r.json()) as { items: Order[] };
+      setServerOrders(Array.isArray(j.items) ? j.items : []);
+    } catch {
+      /* offline or auth gate — fall back to seed */
+    }
+  }, []);
+
+  useEffect(() => { void loadOrders(); }, [loadOrders]);
+
+  const onCreateOrder = useCallback(
+    async (draft: Omit<Order, 'id' | 'createdAt'>) => {
+      const order: Order = { ...draft, id: '', createdAt: new Date().toISOString() } as Order;
+      const r = await fetch('/api/orders', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error((j as { error?: string })?.error || `HTTP ${r.status}`);
+      }
+      await loadOrders();
+    },
+    [loadOrders],
+  );
+
   const baseFiltered = useMemo(
     () => list.filter((o) => orderMatchesFilters(o, filters)),
     [list, filters],
   );
 
-  /** Quick search on top of filters */
   const searchFiltered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return baseFiltered;
@@ -223,10 +253,7 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
 
   const countByStatus = useMemo(() => {
     const m: Record<OrderStatus | 'all', number> = { all: 0, pending: 0, paid: 0, shipped: 0, cancelled: 0 };
-    for (const o of searchFiltered) {
-      m[o.status]++;
-      m.all++;
-    }
+    for (const o of searchFiltered) { m[o.status]++; m.all++; }
     return m;
   }, [searchFiltered]);
 
@@ -258,6 +285,14 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
       {slipPreview && (
         <SlipImageLightbox src={slipPreview} onClose={() => setSlipPreview(null)} t={t} />
       )}
+      {createOpen && (
+        <CreateOrderModal
+          t={t}
+          shops={shops}
+          onClose={() => setCreateOpen(false)}
+          onSubmit={async (draft) => { await onCreateOrder(draft); setCreateOpen(false); }}
+        />
+      )}
 
       {/* ── Top bar ── */}
       <div className="shrink-0 border-b border-slate-200 bg-white px-6 py-4 dark:border-slate-800 dark:bg-slate-900">
@@ -269,7 +304,6 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
             <p className="text-xs text-slate-500 dark:text-slate-400">{t('orders.subtitle')}</p>
           </div>
           <div className="flex items-center gap-2">
-            {/* Advanced filter */}
             <div className="relative" ref={filterWrapRef}>
               <button
                 type="button"
@@ -296,7 +330,11 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
                 />
               )}
             </div>
-            <button className="btn-primary text-xs">
+            <button
+              type="button"
+              onClick={() => setCreateOpen(true)}
+              className="btn-primary text-xs"
+            >
               <I.Plus className="h-4 w-4" />
               {t('orders.create')}
             </button>
@@ -307,20 +345,14 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
       {/* ── Status tabs + search ── */}
       <div className="shrink-0 border-b border-slate-200 bg-white px-6 dark:border-slate-800 dark:bg-slate-900">
         <div className="flex items-end justify-between gap-4">
-          {/* Status tabs */}
           <div className="flex items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {/* All tab */}
             {(
               [
                 { key: 'all' as const, label: t('orders.tab.all') },
-                ...STATUS_KEYS.map((k) => ({
-                  key: k,
-                  label: t(STATUS_CONFIG[k].labelKey),
-                })),
+                ...STATUS_KEYS.map((k) => ({ key: k, label: t(STATUS_CONFIG[k].labelKey) })),
               ] as { key: OrderStatus | 'all'; label: string }[]
             ).map(({ key, label }) => {
               const isActive = statusTab === key;
-              const count = countByStatus[key];
               return (
                 <button
                   key={key}
@@ -342,14 +374,13 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
                         : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400')
                     }
                   >
-                    {count}
+                    {countByStatus[key]}
                   </span>
                 </button>
               );
             })}
           </div>
 
-          {/* Inline search */}
           <div className="relative mb-2.5 shrink-0">
             <I.Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
             <input
@@ -392,15 +423,20 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
           <tbody className="divide-y divide-slate-100 bg-white dark:divide-slate-800/80 dark:bg-slate-900">
             {displayed.length === 0 ? (
               <tr>
-                <td
-                  colSpan={8}
-                  className="px-4 py-16 text-center text-sm text-slate-400 dark:text-slate-500"
-                >
+                <td colSpan={8} className="px-4 py-16 text-center text-sm text-slate-400 dark:text-slate-500">
                   {t('orders.empty')}
                 </td>
               </tr>
             ) : (
-              displayed.map((o) => <OrderRow key={o.id} order={o} t={t} onGoToChat={goToChat} onSlipPreview={setSlipPreview} />)
+              displayed.map((o) => (
+                <OrderRow
+                  key={o.id}
+                  order={o}
+                  t={t}
+                  onGoToChat={goToChat}
+                  onSlipPreview={setSlipPreview}
+                />
+              ))
             )}
           </tbody>
         </table>
@@ -428,56 +464,38 @@ function OrderRow({
 
   return (
     <tr className="group transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40">
-      {/* Order ID */}
       <td className="px-4 py-3.5">
         <span className="font-mono text-[12px] font-semibold text-slate-700 dark:text-slate-300">
           {o.id}
         </span>
       </td>
-
-      {/* Customer */}
       <td className="px-4 py-3.5">
         <div className="flex items-center gap-2.5">
-          <span
-            className={
-              'grid h-8 w-8 shrink-0 place-items-center rounded-full text-[11px] font-bold text-white ' +
-              color
-            }
-          >
+          <span className={'grid h-8 w-8 shrink-0 place-items-center rounded-full text-[11px] font-bold text-white ' + color}>
             {initials(o.customer)}
           </span>
           <div className="min-w-0">
-            <div className="truncate text-[13px] font-medium text-slate-900 dark:text-slate-100">
-              {o.customer}
-            </div>
+            <div className="truncate text-[13px] font-medium text-slate-900 dark:text-slate-100">{o.customer}</div>
             <div className="truncate text-[11px] text-slate-400 dark:text-slate-500">
               {o.shop} • {t('orders.commission')} {o.commissionPct}%
             </div>
           </div>
         </div>
       </td>
-
-      {/* Product */}
       <td className="px-4 py-3.5">
         <div className="text-[13px] text-slate-900 dark:text-slate-100">{o.product}</div>
         <div className="text-[11px] text-slate-400 dark:text-slate-500">x{o.qty}</div>
       </td>
-
-      {/* Channel */}
       <td className="px-4 py-3.5 text-center">
         <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800">
           <ChannelIcon channel={o.channel} className="h-4 w-4" />
         </span>
       </td>
-
-      {/* Date */}
       <td className="px-4 py-3.5">
         <span className="text-[12px] text-slate-500 dark:text-slate-400">
           {o.orderDate ?? o.createdAt?.slice(0, 10) ?? '—'}
         </span>
       </td>
-
-      {/* Amount */}
       <td className="px-4 py-3.5 text-right">
         <span className="text-[14px] font-semibold tabular-nums text-slate-900 dark:text-slate-100">
           ฿{o.amount.toLocaleString()}
@@ -493,15 +511,8 @@ function OrderRow({
           </button>
         )}
       </td>
-
-      {/* Status badge */}
       <td className="px-4 py-3.5">
-        <span
-          className={
-            'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ' +
-            sc.badgeCls
-          }
-        >
+        <span className={'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ' + sc.badgeCls}>
           <span className={'h-1.5 w-1.5 rounded-full ' + sc.dotCls} />
           {t(sc.labelKey)}
         </span>
@@ -512,8 +523,6 @@ function OrderRow({
           </span>
         )}
       </td>
-
-      {/* Actions */}
       <td className="px-4 py-3.5">
         <button
           type="button"
@@ -555,51 +564,23 @@ function FilterPanel({
     >
       <div className="max-h-[min(70vh,28rem)] space-y-2.5 overflow-y-auto pr-0.5">
         <label className="block">
-          <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-            {t('orders.filter.product')}
-          </span>
-          <input
-            type="search"
-            value={filters.product}
-            onChange={(e) => setFilters((f) => ({ ...f, product: e.target.value }))}
-            className={inputCls}
-          />
+          <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">{t('orders.filter.product')}</span>
+          <input type="search" value={filters.product} onChange={(e) => setFilters((f) => ({ ...f, product: e.target.value }))} className={inputCls} />
         </label>
         <label className="block">
-          <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-            {t('orders.filter.customer')}
-          </span>
-          <input
-            type="search"
-            value={filters.customer}
-            onChange={(e) => setFilters((f) => ({ ...f, customer: e.target.value }))}
-            className={inputCls}
-          />
+          <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">{t('orders.filter.customer')}</span>
+          <input type="search" value={filters.customer} onChange={(e) => setFilters((f) => ({ ...f, customer: e.target.value }))} className={inputCls} />
         </label>
         <label className="block">
-          <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-            {t('orders.filter.shop')}
-          </span>
-          <select
-            value={filters.shop}
-            onChange={(e) => setFilters((f) => ({ ...f, shop: e.target.value }))}
-            className={inputCls}
-          >
+          <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">{t('orders.filter.shop')}</span>
+          <select value={filters.shop} onChange={(e) => setFilters((f) => ({ ...f, shop: e.target.value }))} className={inputCls}>
             <option value="">{t('orders.filter.shopAll')}</option>
-            {shops.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
+            {shops.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
         </label>
         <label className="block">
-          <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-            {t('orders.filter.channel')}
-          </span>
-          <select
-            value={filters.channel}
-            onChange={(e) => setFilters((f) => ({ ...f, channel: e.target.value as 'all' | Channel }))}
-            className={inputCls}
-          >
+          <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">{t('orders.filter.channel')}</span>
+          <select value={filters.channel} onChange={(e) => setFilters((f) => ({ ...f, channel: e.target.value as 'all' | Channel }))} className={inputCls}>
             <option value="all">{t('orders.filter.channelAll')}</option>
             <option value="line">{t('orders.filter.chLine')}</option>
             <option value="facebook">{t('orders.filter.chFb')}</option>
@@ -608,65 +589,27 @@ function FilterPanel({
         </label>
         <div className="grid grid-cols-2 gap-2">
           <label className="block">
-            <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-              {t('orders.filter.amountMin')}
-            </span>
-            <input
-              type="number"
-              inputMode="numeric"
-              min={0}
-              value={filters.minAmount}
-              onChange={(e) => setFilters((f) => ({ ...f, minAmount: e.target.value }))}
-              className={inputCls}
-            />
+            <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">{t('orders.filter.amountMin')}</span>
+            <input type="number" inputMode="numeric" min={0} value={filters.minAmount} onChange={(e) => setFilters((f) => ({ ...f, minAmount: e.target.value }))} className={inputCls} />
           </label>
           <label className="block">
-            <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-              {t('orders.filter.amountMax')}
-            </span>
-            <input
-              type="number"
-              inputMode="numeric"
-              min={0}
-              value={filters.maxAmount}
-              onChange={(e) => setFilters((f) => ({ ...f, maxAmount: e.target.value }))}
-              className={inputCls}
-            />
+            <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">{t('orders.filter.amountMax')}</span>
+            <input type="number" inputMode="numeric" min={0} value={filters.maxAmount} onChange={(e) => setFilters((f) => ({ ...f, maxAmount: e.target.value }))} className={inputCls} />
           </label>
         </div>
         <div className="grid grid-cols-2 gap-2">
           <label className="block">
-            <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-              {t('orders.filter.dateFrom')}
-            </span>
-            <input
-              type="date"
-              value={filters.dateFrom}
-              onChange={(e) => setFilters((f) => ({ ...f, dateFrom: e.target.value }))}
-              className={inputCls + ' text-[11px]'}
-            />
+            <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">{t('orders.filter.dateFrom')}</span>
+            <input type="date" value={filters.dateFrom} onChange={(e) => setFilters((f) => ({ ...f, dateFrom: e.target.value }))} className={inputCls + ' text-[11px]'} />
           </label>
           <label className="block">
-            <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-              {t('orders.filter.dateTo')}
-            </span>
-            <input
-              type="date"
-              value={filters.dateTo}
-              onChange={(e) => setFilters((f) => ({ ...f, dateTo: e.target.value }))}
-              className={inputCls + ' text-[11px]'}
-            />
+            <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">{t('orders.filter.dateTo')}</span>
+            <input type="date" value={filters.dateTo} onChange={(e) => setFilters((f) => ({ ...f, dateTo: e.target.value }))} className={inputCls + ' text-[11px]'} />
           </label>
         </div>
         <label className="block">
-          <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-            {t('orders.filter.slip')}
-          </span>
-          <select
-            value={filters.slip}
-            onChange={(e) => setFilters((f) => ({ ...f, slip: e.target.value as SlipFilterMode }))}
-            className={inputCls}
-          >
+          <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">{t('orders.filter.slip')}</span>
+          <select value={filters.slip} onChange={(e) => setFilters((f) => ({ ...f, slip: e.target.value as SlipFilterMode }))} className={inputCls}>
             <option value="all">{t('orders.filter.slipAll')}</option>
             <option value="with_slip">{t('orders.filter.slipWith')}</option>
             <option value="no_slip">{t('orders.filter.slipWithout')}</option>
@@ -682,5 +625,127 @@ function FilterPanel({
         </button>
       </div>
     </div>
+  );
+}
+
+// ─── Create order modal ───────────────────────────────────────────────────────
+
+function CreateOrderModal({
+  t,
+  shops,
+  onClose,
+  onSubmit,
+}: {
+  t: (k: string, vars?: Record<string, string | number>) => string;
+  shops: string[];
+  onClose: () => void;
+  onSubmit: (draft: Omit<Order, 'id' | 'createdAt'>) => Promise<void>;
+}) {
+  const [customer, setCustomer] = useState('');
+  const [product, setProduct] = useState('');
+  const [qty, setQty] = useState('1');
+  const [amount, setAmount] = useState('');
+  const [channel, setChannel] = useState<Channel>('line');
+  const [shop, setShop] = useState(shops[0] || '');
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!customer.trim() || !product.trim() || !amount.trim()) {
+      setErr(t('orders.create.required'));
+      return;
+    }
+    const amt = Number(amount.replace(/,/g, ''));
+    if (!Number.isFinite(amt) || amt < 0) {
+      setErr(t('orders.create.required'));
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await onSubmit({
+        customer: customer.trim(),
+        product: product.trim(),
+        qty: Math.max(1, Number(qty) || 1),
+        amount: amt,
+        channel,
+        status: 'pending',
+        shop: shop.trim() || 'My Shop',
+        commissionPct: 0,
+        orderDate: new Date().toISOString().slice(0, 10),
+      });
+    } catch (e) {
+      setErr(String((e as Error)?.message || e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[200] grid place-items-center bg-slate-900/40 px-4 backdrop-blur-sm dark:bg-black/60">
+      <form
+        onSubmit={submit}
+        className="w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+      >
+        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3 dark:border-slate-800">
+          <h2 className="text-base font-semibold text-slate-900 dark:text-white">{t('orders.create.title')}</h2>
+          <button type="button" onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
+            <I.X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="space-y-3 p-5 text-sm">
+          <Field label={t('orders.create.customer')}>
+            <input autoFocus value={customer} onChange={(e) => setCustomer(e.target.value)} className="input" required />
+          </Field>
+          <Field label={t('orders.create.product')}>
+            <input value={product} onChange={(e) => setProduct(e.target.value)} className="input" required />
+          </Field>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="Qty">
+              <input type="number" min={1} value={qty} onChange={(e) => setQty(e.target.value)} className="input" />
+            </Field>
+            <Field label={t('orders.create.amount')}>
+              <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} className="input" required />
+            </Field>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label={t('orders.create.channel')}>
+              <select value={channel} onChange={(e) => setChannel(e.target.value as Channel)} className="input">
+                <option value="line">LINE</option>
+                <option value="facebook">Facebook</option>
+                <option value="ig">Instagram</option>
+              </select>
+            </Field>
+            <Field label={t('orders.create.shop')}>
+              <input value={shop} onChange={(e) => setShop(e.target.value)} className="input" placeholder="My Shop" />
+            </Field>
+          </div>
+          <Field label={t('orders.create.notes')}>
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="input" />
+          </Field>
+          {err && (
+            <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-950/40 dark:text-rose-200">{err}</div>
+          )}
+        </div>
+        <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-3 dark:border-slate-800 dark:bg-slate-900/60">
+          <button type="button" onClick={onClose} className="btn-secondary text-xs">{t('orders.create.cancel')}</button>
+          <button type="submit" disabled={busy} className="btn-primary text-xs disabled:opacity-60">
+            {busy ? '…' : t('orders.create.save')}
+          </button>
+        </div>
+      </form>
+    </div>,
+    document.body,
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</div>
+      {children}
+    </label>
   );
 }

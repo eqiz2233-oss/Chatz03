@@ -23,6 +23,34 @@ import {
   slipStats,
   isEasySlipEnabled,
 } from './slips.js';
+import {
+  initDb,
+  hasPg,
+  listProducts as dbListProducts,
+  upsertProduct as dbUpsertProduct,
+  deleteProduct as dbDeleteProduct,
+  listOrders as dbListOrders,
+  upsertOrder as dbUpsertOrder,
+  deleteOrder as dbDeleteOrder,
+  recordSlipAction,
+  listSlipActionsBySlipIds,
+  logChatEvent,
+  chatEventsByDay,
+  kvGet,
+  kvSet,
+} from './db.js';
+import {
+  bootstrapAuth,
+  login as authLogin,
+  logout as authLogout,
+  userFromRequest,
+  setSessionCookie,
+  clearSessionCookie,
+  getCookieToken,
+  requireAuth,
+  changePassword,
+} from './auth.js';
+import { isAiEnabled, aiModel, generateReply, generateSlipThankYou } from './ai.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
@@ -814,6 +842,38 @@ async function maybeAttachSlip({
     message.meta = { ...(message.meta || {}), slip: result };
     thread.updatedAt = new Date().toISOString();
     markChatStateDirty();
+
+    // AI thank-you + ask for shipping info — only when:
+    //   * slip verified by EasySlip (not mock, not failed/duplicate)
+    //   * autoSlipConfirm is on in Settings → Bot
+    //   * bot is enabled for this conversation
+    if (
+      result?.status === 'verified' &&
+      !result?.mock &&
+      isAiEnabled() &&
+      isBotEnabled(conversationId)
+    ) {
+      void (async () => {
+        try {
+          const settings = await kvGet('bot.settings.v1', {});
+          if (settings && settings.autoSlipConfirm === false) return;
+          const text = await generateSlipThankYou({
+            customerName: thread.displayName || '',
+            amount: result.amount,
+            bank: result.bank,
+            botSettings: settings || {},
+          });
+          if (!text) return;
+          if (channel === 'line') {
+            await sendLineMessage({ conversationId, text, asAi: true });
+          } else {
+            await sendMetaMessage({ conversationId, text, asAi: true });
+          }
+        } catch (e) {
+          console.warn('[ai] slip thank-you failed:', e?.message || e);
+        }
+      })();
+    }
   } catch (e) {
     console.warn('[slip] verify failed:', e?.message || e);
   }
@@ -852,7 +912,27 @@ function threadToApiConversation(thread) {
   };
 }
 
-app.use(cors());
+app.use(cors({ origin: true, credentials: true }));
+
+// ---------------------------------------------------------------------------
+// Auth gate. Webhooks, OAuth callbacks, health check, login, and the public
+// privacy/data-deletion endpoints stay open. Everything else under /api needs
+// a valid session cookie.
+// ---------------------------------------------------------------------------
+const AUTH_ALLOWLIST = [
+  '/api/health',
+  '/api/auth/login',
+  '/api/auth/logout',
+  '/api/auth/me',
+  '/api/line/webhook',
+  '/api/fb/webhook',
+  '/api/fb/oauth/start',
+  '/api/fb/oauth/callback',
+  '/api/privacy',
+  '/api/fb/data-deletion',
+  '/api/fb/data-deletion/status',
+];
+app.use(requireAuth({ allowList: AUTH_ALLOWLIST }));
 
 app.get('/api/health', (_req, res) => {
   syncFbConfigFromEnv();
@@ -884,6 +964,10 @@ app.get('/api/health', (_req, res) => {
     fbConversationsCount,
     fbWebhook: fbWebhookDebug,
     slipChecker: { enabled: isEasySlipEnabled(), ...slipStats() },
+    ai: {
+      enabled: isAiEnabled(),
+      model: isAiEnabled() ? aiModel() : null,
+    },
     envPath: path.join(__dirname, '..', '.env'),
   });
 });
@@ -965,6 +1049,7 @@ app.post('/api/line/send', express.json({ limit: '50kb' }), async (req, res) => 
       text: body,
     });
     thread.updatedAt = now;
+    void logChatEvent({ channel: 'line', convId: `line:${kind}:${targetId}`, direction: 'out' });
     markChatStateDirty();
     return res.json({ ok: true });
   } catch (e) {
@@ -1024,6 +1109,19 @@ app.post(
             thread.messages.push(row);
             thread.updatedAt = new Date().toISOString();
             markChatStateDirty();
+            void logChatEvent({ channel: 'line', convId: `line:${kind}:${targetId}`, direction: 'in' });
+
+            // AI auto-reply for text-only customer messages. Image-bearing
+            // messages flow through the slip path below — that path posts its
+            // own AI thank-you when the slip verifies.
+            if (textOut && !media.image && !media.video && event.message.type === 'text') {
+              void tryAutoReply({
+                channel: 'line',
+                conversationId: `line:${src.kind}:${src.targetId}`,
+                thread,
+                customerText: textOut,
+              });
+            }
 
             // Slip auto-verify: any image arriving from a customer is treated
             // as a candidate slip. LINE-hosted images need a channel-token
@@ -1286,6 +1384,25 @@ app.post(
             thread.messages.push(row);
             thread.updatedAt = new Date().toISOString();
             markChatStateDirty();
+            const convIdForChannel = thread.channel === 'ig'
+              ? `ig:user:${thread.targetId}`
+              : `fb:user:${thread.targetId}`;
+            void logChatEvent({
+              channel: thread.channel === 'ig' ? 'ig' : 'fb',
+              convId: convIdForChannel,
+              direction: 'in',
+            });
+
+            // AI auto-reply for plain text messages (no image, no sticker).
+            // Image-bearing messages go through the slip path below.
+            if (textOut && !imageUrl && !videoUrl && !isSticker) {
+              void tryAutoReply({
+                channel: thread.channel === 'ig' ? 'ig' : 'fb',
+                conversationId: convIdForChannel,
+                thread,
+                customerText: textOut,
+              });
+            }
 
             // Slip auto-verify on inbound images — but NEVER on stickers/emoji.
             const stickerLike = isSticker || looksLikeMetaStickerAttachment(ev, imageUrl);
@@ -1353,6 +1470,7 @@ async function sendLineMessage({ conversationId, text, asAi }) {
     thread.messages.push({ id: crypto.randomUUID(), receivedAt: now, sender, text: body });
     thread.updatedAt = now;
     markChatStateDirty();
+    void logChatEvent({ channel: 'line', convId: `line:${kind}:${targetId}`, direction: 'out' });
     return { status: 200, ok: true };
   } catch (e) {
     console.error('LINE pushMessage failed:', e?.message || e);
@@ -1394,10 +1512,69 @@ async function sendMetaMessage({ conversationId, text, asAi }) {
     thread.messages.push({ id: data?.message_id || crypto.randomUUID(), receivedAt: now, sender, text: body });
     thread.updatedAt = now;
     markChatStateDirty();
+    void logChatEvent({
+      channel: channel === 'ig' ? 'ig' : 'fb',
+      convId: `${channel}:user:${targetId}`,
+      direction: 'out',
+    });
     return { status: 200, ok: true };
   } catch (e) {
     console.error('FB/IG send exception:', e?.message || e);
     return { status: 502, error: String(e?.message || e) };
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// AI auto-reply.
+//
+// Called from the inbound webhook handlers right after a customer message is
+// stored. We bail silently in any of these cases:
+//   * Bot is turned off for this conversation (per-thread switch in the UI)
+//   * autoFaq toggle is off in Settings → Bot
+//   * No ANTHROPIC_API_KEY set (mock-only deploy)
+//   * The customer message is empty / sticker-only / image-only
+//   * Claude returns null (rate limit, error, refusal)
+// On success, we push the reply through the same send path the human agent
+// uses, tagged sender='ai' so it shows up with the AI badge in the inbox.
+// ──────────────────────────────────────────────────────────────────────────
+async function tryAutoReply({ channel, conversationId, thread, customerText }) {
+  if (!isAiEnabled()) return;
+  if (!customerText || !String(customerText).trim()) return;
+  if (!isBotEnabled(conversationId)) return;
+  let settings;
+  try {
+    settings = await kvGet('bot.settings.v1', {});
+  } catch {
+    settings = {};
+  }
+  if (settings && settings.autoFaq === false) return;
+
+  let products = [];
+  try {
+    products = await dbListProducts();
+  } catch {
+    /* swallow — empty catalog is fine */
+  }
+
+  const reply = await generateReply({
+    customerText,
+    customerName: thread?.displayName || '',
+    channel,
+    threadMessages: thread?.messages || [],
+    products,
+    botSettings: settings || {},
+    locale: 'th',
+  });
+  if (!reply) return;
+
+  try {
+    if (channel === 'line') {
+      await sendLineMessage({ conversationId, text: reply, asAi: true });
+    } else {
+      await sendMetaMessage({ conversationId, text: reply, asAi: true });
+    }
+  } catch (e) {
+    console.warn('[ai] send-back failed:', e?.message || e);
   }
 }
 
@@ -1895,6 +2072,318 @@ app.post('/api/fb/integration/disconnect', async (_req, res) => {
   }
 });
 
+// =====================================================================
+// Auth: login / logout / current user
+// =====================================================================
+
+app.post('/api/auth/login', express.json({ limit: '4kb' }), async (req, res) => {
+  const username = String(req.body?.username || '').trim();
+  const password = String(req.body?.password || '');
+  if (!username || !password) {
+    return res.status(400).json({ error: 'username + password required' });
+  }
+  try {
+    const result = await authLogin(username, password);
+    if (!result.ok) return res.status(401).json({ error: 'invalid_credentials' });
+    setSessionCookie(res, result.token);
+    res.json({ user: result.user });
+  } catch (e) {
+    console.error('[auth] login failed:', e?.message || e);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+app.post('/api/auth/logout', async (req, res) => {
+  try {
+    const tok = getCookieToken(req);
+    if (tok) await authLogout(tok);
+  } finally {
+    clearSessionCookie(res);
+    res.json({ ok: true });
+  }
+});
+
+app.get('/api/auth/me', async (req, res) => {
+  try {
+    const u = await userFromRequest(req);
+    if (!u) return res.json({ user: null });
+    res.json({ user: u });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+app.post('/api/auth/change-password', express.json({ limit: '4kb' }), async (req, res) => {
+  const u = req.user;
+  if (!u) return res.status(401).json({ error: 'unauthorized' });
+  const result = await changePassword(u.id, req.body?.currentPassword, req.body?.newPassword);
+  if (!result.ok) return res.status(400).json({ error: result.reason });
+  res.json({ ok: true });
+});
+
+// =====================================================================
+// Products (server-persisted shop catalog)
+// =====================================================================
+
+app.get('/api/products', async (_req, res) => {
+  try {
+    const items = await dbListProducts();
+    res.json({ items });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+app.post('/api/products', express.json({ limit: '5mb' }), async (req, res) => {
+  try {
+    const p = req.body?.product;
+    if (!p?.id) return res.status(400).json({ error: 'product.id required' });
+    const saved = await dbUpsertProduct(p);
+    res.json({ product: saved });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+app.delete('/api/products/:id', async (req, res) => {
+  try {
+    await dbDeleteProduct(String(req.params.id || ''));
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+// =====================================================================
+// Orders (CRUD)
+// =====================================================================
+
+app.get('/api/orders', async (_req, res) => {
+  try {
+    const items = await dbListOrders();
+    res.json({ items });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+app.post('/api/orders', express.json({ limit: '256kb' }), async (req, res) => {
+  try {
+    const o = req.body?.order;
+    if (!o) return res.status(400).json({ error: 'order required' });
+    if (!o.id) o.id = `ord_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    if (!o.createdAt) o.createdAt = new Date().toISOString();
+    const saved = await dbUpsertOrder(o);
+    res.json({ order: saved });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+app.patch('/api/orders/:id', express.json({ limit: '256kb' }), async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    if (!id) return res.status(400).json({ error: 'id required' });
+    const all = await dbListOrders();
+    const existing = all.find((o) => o?.id === id);
+    if (!existing) return res.status(404).json({ error: 'not_found' });
+    const merged = { ...existing, ...(req.body?.patch || {}), id };
+    const saved = await dbUpsertOrder(merged);
+    res.json({ order: saved });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+app.delete('/api/orders/:id', async (req, res) => {
+  try {
+    await dbDeleteOrder(String(req.params.id || ''));
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+// =====================================================================
+// Slip review actions (confirm / reject / re-verify)
+// =====================================================================
+
+app.post('/api/slips/:id/confirm', async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const slip = getSlip(id);
+    if (!slip) return res.status(404).json({ error: 'not_found' });
+    const action = await recordSlipAction({
+      slipId: id,
+      action: 'confirm',
+      byUser: req.user?.username || null,
+    });
+    res.json({ ok: true, action });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+app.post('/api/slips/:id/reject', express.json({ limit: '4kb' }), async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const slip = getSlip(id);
+    if (!slip) return res.status(404).json({ error: 'not_found' });
+    const action = await recordSlipAction({
+      slipId: id,
+      action: 'reject',
+      byUser: req.user?.username || null,
+    });
+    res.json({ ok: true, action });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+app.post('/api/slips/reverify-all', async (_req, res) => {
+  try {
+    const all = listSlips();
+    const targets = all.filter((s) => s?.imageUrl && s?.result?.status !== 'verified');
+    const results = [];
+    for (const s of targets) {
+      try {
+        const r = await verifySlipBytes({ imageUrl: s.imageUrl });
+        results.push({ id: s.id, status: r.status });
+      } catch (e) {
+        results.push({ id: s.id, status: 'failed', error: String(e?.message || e) });
+      }
+    }
+    res.json({ ok: true, attempted: results.length, results });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+// Annotate /api/slips list with last action so the dashboard can mark
+// already-confirmed/rejected rows.
+app.get('/api/slips/actions', async (_req, res) => {
+  try {
+    const slips = listSlips();
+    const ids = slips.map((s) => s.id);
+    const m = await listSlipActionsBySlipIds(ids);
+    const out = {};
+    for (const [id, a] of m.entries()) out[id] = a;
+    res.json({ actions: out });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+// =====================================================================
+// Bot / Shop settings (brand voice, payment info, auto-reply toggles)
+// =====================================================================
+
+const BOT_SETTINGS_KEY = 'bot.settings.v1';
+const DEFAULT_BOT_SETTINGS = {
+  brandVoice: '',
+  paymentInfo: { kbankAccount: '', promptPay: '' },
+  autoGreet: true,
+  autoFaq: true,
+  autoSlipConfirm: true,
+  shopProfile: { shopName: '', tagline: '' },
+};
+
+app.get('/api/bot/settings', async (_req, res) => {
+  try {
+    const v = await kvGet(BOT_SETTINGS_KEY, DEFAULT_BOT_SETTINGS);
+    res.json({ settings: { ...DEFAULT_BOT_SETTINGS, ...(v || {}) } });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+app.put('/api/bot/settings', express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const incoming = req.body?.settings && typeof req.body.settings === 'object' ? req.body.settings : {};
+    const current = (await kvGet(BOT_SETTINGS_KEY, DEFAULT_BOT_SETTINGS)) || {};
+    const merged = { ...DEFAULT_BOT_SETTINGS, ...current, ...incoming };
+    await kvSet(BOT_SETTINGS_KEY, merged);
+    res.json({ settings: merged });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+// =====================================================================
+// Analytics: real KPIs computed from chat events, slips, and orders.
+// =====================================================================
+
+app.get('/api/analytics/summary', async (req, res) => {
+  try {
+    const days = Math.max(1, Math.min(180, Number(req.query?.days || 30)));
+    const events = await chatEventsByDay(days);
+    const slips = listSlips();
+    const orders = await dbListOrders();
+    const today = new Date().toISOString().slice(0, 10);
+    const sinceMs = Date.now() - days * 86400_000;
+
+    // Build per-day chat counts.
+    const days30 = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 86400_000);
+      days30.push(d.toISOString().slice(0, 10));
+    }
+    const chatsPerDay = days30.map((day) => {
+      const total = events
+        .filter((e) => e.day === day)
+        .reduce((sum, e) => sum + (e.n || 0), 0);
+      return { day, count: total };
+    });
+
+    // Channel mix (last `days`).
+    const channels = { line: 0, facebook: 0, ig: 0 };
+    for (const e of events) {
+      if (e.channel === 'line') channels.line += e.n || 0;
+      else if (e.channel === 'fb' || e.channel === 'facebook') channels.facebook += e.n || 0;
+      else if (e.channel === 'ig') channels.ig += e.n || 0;
+    }
+    const totalCh = channels.line + channels.facebook + channels.ig || 1;
+
+    // Slip stats.
+    const verifiedSlips = slips.filter((s) => s?.result?.status === 'verified');
+    const todaySlips = slips.filter((s) => String(s?.receivedAt || '').slice(0, 10) === today);
+    const verifiedAmountToday = todaySlips
+      .filter((s) => s?.result?.status === 'verified')
+      .reduce((sum, s) => sum + (Number(s?.result?.amount) || 0), 0);
+
+    // Order stats (within window).
+    const ordersInWindow = orders.filter((o) =>
+      o?.createdAt ? new Date(o.createdAt).getTime() >= sinceMs : false,
+    );
+    const orderRevenue = ordersInWindow
+      .filter((o) => o?.status === 'paid' || o?.status === 'shipped')
+      .reduce((sum, o) => sum + (Number(o?.amount) || 0), 0);
+    const ordersToday = orders.filter((o) =>
+      String(o?.createdAt || '').slice(0, 10) === today,
+    ).length;
+
+    res.json({
+      range: { days, today },
+      chatsPerDay,
+      channelMix: [
+        { channel: 'line', count: channels.line, pct: Math.round((channels.line / totalCh) * 100) },
+        { channel: 'facebook', count: channels.facebook, pct: Math.round((channels.facebook / totalCh) * 100) },
+        { channel: 'ig', count: channels.ig, pct: Math.round((channels.ig / totalCh) * 100) },
+      ],
+      kpis: {
+        chatsTotal: chatsPerDay.reduce((s, d) => s + d.count, 0),
+        slipsVerified: verifiedSlips.length,
+        verifiedAmountToday,
+        ordersTotal: ordersInWindow.length,
+        ordersToday,
+        revenue: orderRevenue,
+      },
+    });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
 const distIndex = path.join(__dirname, '..', 'dist', 'index.html');
 if (existsSync(distIndex)) {
   const distDir = path.dirname(distIndex);
@@ -1932,8 +2421,15 @@ process.on('SIGTERM', () => {
   void persistChatStateNow().finally(() => process.exit(0));
 });
 
-app.listen(port, '0.0.0.0', () => {
+app.listen(port, '0.0.0.0', async () => {
   syncFbConfigFromEnv();
+  try {
+    await initDb();
+    await bootstrapAuth();
+    console.log(`[db] persistence: ${hasPg ? 'Postgres (DATABASE_URL)' : 'JSON file (set DATABASE_URL for production)'}`);
+  } catch (e) {
+    console.error('[db] init failed:', e?.message || e);
+  }
   const base = (process.env.PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '') || `http://localhost:${port}`;
   console.log(`Backend listening on http://0.0.0.0:${port}`);
   console.log(`Public base URL : ${base}${process.env.PUBLIC_BASE_URL ? '' : '  (set PUBLIC_BASE_URL in .env for production OAuth)'}`);

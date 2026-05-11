@@ -30,6 +30,43 @@ const TEMPLATE_EMOJI_OPTIONS = ['👕', '👖', '👗', '🧢', '👜', '👟', 
 
 const TEMPLATES_STORAGE_KEY = 'chatz-product-templates-v1';
 
+/** Push the entire product list to the server. Used after add/edit/delete so
+ *  catalog persists across devices and survives container restarts. */
+async function syncProductToServer(p: Product) {
+  try {
+    await fetch('/api/products', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ product: p }),
+    });
+  } catch {
+    /* offline ok — local list still has it */
+  }
+}
+
+async function deleteProductOnServer(id: string) {
+  try {
+    await fetch(`/api/products/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    });
+  } catch {
+    /* ignore */
+  }
+}
+
+async function fetchServerProducts(): Promise<Product[] | null> {
+  try {
+    const r = await fetch('/api/products', { credentials: 'include' });
+    if (!r.ok) return null;
+    const j = (await r.json()) as { items: Product[] };
+    return Array.isArray(j.items) ? j.items : null;
+  } catch {
+    return null;
+  }
+}
+
 function loadTemplates(): ProductTemplate[] {
   if (typeof window === 'undefined') return [];
   try {
@@ -172,6 +209,31 @@ export function ShopBrainView() {
     persistTemplates(templates);
   }, [templates]);
 
+  useEffect(() => {
+    persistProducts(products);
+  }, [products]);
+
+  // On mount, hydrate from server. Server is source of truth — localStorage is
+  // just a fast path for instant render. If server has data, replace local.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const remote = await fetchServerProducts();
+      if (!cancelled && remote && remote.length > 0) {
+        setProducts(remote);
+      } else if (!cancelled && remote && remote.length === 0 && products.length > 0) {
+        // First-time migration: push existing localStorage catalog to the server.
+        for (const p of products) await syncProductToServer(p);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Intentionally run once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+
   const saveCurrentAsTemplate = (name: string, emoji: string) => {
     const cleanName = name.trim();
     if (!cleanName) return;
@@ -198,27 +260,24 @@ export function ShopBrainView() {
     if (!body) return;
 
     if (editingId) {
+      let updated: Product | null = null;
       setProducts((list) =>
-        list.map((p) =>
-          p.id === editingId
-            ? {
-                ...body,
-                id: editingId,
-                imageEmoji: p.imageEmoji,
-              }
-            : p,
-        ),
+        list.map((p) => {
+          if (p.id !== editingId) return p;
+          updated = { ...body, id: editingId, imageEmoji: p.imageEmoji };
+          return updated;
+        }),
       );
+      if (updated) void syncProductToServer(updated);
     } else {
       if (products.length >= SHOP_PRODUCT_SLOT_LIMIT) return;
-      setProducts((prev) => [
-        ...prev,
-        {
-          ...body,
-          id: 'p' + Date.now(),
-          imageEmoji: '📦',
-        },
-      ]);
+      const fresh: Product = {
+        ...body,
+        id: 'p' + Date.now(),
+        imageEmoji: '📦',
+      };
+      setProducts((prev) => [...prev, fresh]);
+      void syncProductToServer(fresh);
     }
     setForm(BLANK);
     setEditingId(null);
@@ -242,6 +301,7 @@ export function ShopBrainView() {
     const ok = window.confirm(`ลบสินค้า “${name}” ใช่หรือไม่?\nการลบจะทำทันทีและย้อนกลับไม่ได้`);
     if (!ok) return;
     setProducts((prev) => prev.filter((p) => p.id !== id));
+    void deleteProductOnServer(id);
   };
 
   if (mode === 'templates') {

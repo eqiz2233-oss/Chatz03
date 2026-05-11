@@ -1,9 +1,9 @@
 // Slip verification + storage.
 //
-// Real verification uses the EasySlip API (https://developer.easyslip.com) when
-// EASYSLIP_TOKEN is set. Without a token we fall back to a deterministic mock
-// derived from the image bytes — useful for local dev and demos so the UI is
-// never empty.
+// Real verification uses the EasySlip API v2 (https://api.easyslip.com/v2)
+// when EASYSLIP_TOKEN is set. Without a token we fall back to a deterministic
+// mock derived from the image bytes — useful for local dev and demos so the
+// UI is never empty.
 //
 // Records are kept in-memory (same as the rest of the inbox state). They are
 // keyed by transaction ref so duplicate slips show up as `duplicate` instead of
@@ -11,10 +11,13 @@
 
 import crypto from 'node:crypto';
 
-const EASYSLIP_ENDPOINT = 'https://developer.easyslip.com/api/v1/verify';
+// v2 (recommended) — base64 in JSON body. v1 fallback used if EASYSLIP_API_VERSION=v1.
+const EASYSLIP_V2_ENDPOINT = 'https://api.easyslip.com/v2/verify/bank';
+const EASYSLIP_V1_ENDPOINT = 'https://developer.easyslip.com/api/v1/verify';
 const MAX_SLIPS = 500;
 
 const easyslipToken = (process.env.EASYSLIP_TOKEN || '').trim();
+const easyslipVersion = ((process.env.EASYSLIP_API_VERSION || 'v2').trim().toLowerCase() === 'v1') ? 'v1' : 'v2';
 
 /** @type {Map<string, SlipRecord>} id -> record */
 const slipsById = new Map();
@@ -75,20 +78,33 @@ function bankShortName(bank) {
 }
 
 /**
+ * Pull the localized name out of either a v1 plain-string `name` or a v2
+ * `{ th, en }` object — preferring Thai when available.
+ */
+function nameFrom(account) {
+  const n = account?.name;
+  if (!n) return undefined;
+  if (typeof n === 'string') return n;
+  if (typeof n === 'object') return n.th || n.en || undefined;
+  return undefined;
+}
+
+/**
  * Map an EasySlip success payload to our internal SlipResult shape.
- * Reference shape:
- *   { status: 200, data: { transRef, date, amount: { amount }, sender: { bank, account: { name } }, receiver: {...} } }
+ * Handles BOTH v1 ({status: 200, data: {...}}) and
+ * v2 ({success: true, data: {rawSlip: {...}}}) response shapes.
  */
 function fromEasySlip(payload) {
-  const d = payload?.data || {};
+  // v2 wraps the slip under data.rawSlip; v1 puts it directly under data.
+  const d = payload?.data?.rawSlip || payload?.data || {};
   return {
     status: 'verified',
     amount: trimAmount(d?.amount?.amount ?? d?.amount),
     bank: bankShortName(d?.sender?.bank ?? d?.receiver?.bank),
     ref: d?.transRef || d?.ref1 || undefined,
     date: formatDate(d?.date),
-    senderName: d?.sender?.account?.name || undefined,
-    receiverName: d?.receiver?.account?.name || undefined,
+    senderName: nameFrom(d?.sender?.account),
+    receiverName: nameFrom(d?.receiver?.account),
   };
 }
 
@@ -162,8 +178,29 @@ export async function verifySlipBytes(opts) {
     return mockResult(hash);
   }
 
+  // v2 accepts: payload (QR string) | image (multipart file) | base64 | url.
+  // We send base64 as JSON — simplest and most reliable from a Node server.
   try {
-    const r = await fetch(EASYSLIP_ENDPOINT, {
+    if (easyslipVersion === 'v2') {
+      const r = await fetch(EASYSLIP_V2_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${easyslipToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ base64: buf.toString('base64') }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data?.success && data?.data) {
+        return fromEasySlip(data);
+      }
+      const msg = data?.error?.message || data?.message || `HTTP ${r.status}`;
+      const code = data?.error?.code ? ` [${data.error.code}]` : '';
+      return { status: 'failed', reason: `EasySlip${code}: ${msg}` };
+    }
+
+    // v1 legacy
+    const r = await fetch(EASYSLIP_V1_ENDPOINT, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${easyslipToken}`,

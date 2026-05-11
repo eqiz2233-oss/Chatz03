@@ -2,10 +2,24 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppPreferences } from '../../context/AppPreferencesContext';
 import type { Locale } from '../../i18n/messages';
 
-/** Daily counts by channel — replace with API data when available. */
-const CHATS_LINE_30 = Array.from({ length: 30 }, () => 0);
-const CHATS_IG_30 = Array.from({ length: 30 }, () => 0);
-const CHATS_FB_30 = Array.from({ length: 30 }, () => 0);
+interface AnalyticsSummary {
+  range: { days: number; today: string };
+  chatsPerDay: { day: string; count: number }[];
+  channelMix: { channel: 'line' | 'facebook' | 'ig'; count: number; pct: number }[];
+  kpis: {
+    chatsTotal: number;
+    slipsVerified: number;
+    verifiedAmountToday: number;
+    ordersTotal: number;
+    ordersToday: number;
+    revenue: number;
+  };
+}
+
+function fmtBaht(n: number): string {
+  if (!Number.isFinite(n)) return '฿0';
+  return '฿' + Math.round(n).toLocaleString('en-US');
+}
 
 function rollingDayLabels(count: number, locale: Locale): string[] {
   const locTag = locale === 'th' ? 'th-TH' : 'en-US';
@@ -137,13 +151,33 @@ function FlipKPI({
 
 export function AnalyticsView() {
   const { t, locale } = useAppPreferences();
+  const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const r = await fetch('/api/analytics/summary?days=30', { credentials: 'include' });
+        if (!r.ok) return;
+        const j = (await r.json()) as AnalyticsSummary;
+        if (!cancelled) setSummary(j);
+      } catch {
+        /* ignore */
+      }
+    };
+    void load();
+    const id = window.setInterval(load, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
 
   const chart = useMemo(() => {
-    const lineValues = CHATS_LINE_30;
-    const igValues = CHATS_IG_30;
-    const fbValues = CHATS_FB_30;
-    const max = Math.max(...lineValues, ...igValues, ...fbValues, 1);
-    const raw = rollingDayLabels(30, locale);
+    const days = summary?.chatsPerDay ?? [];
+    const values = days.length > 0 ? days.map((d) => d.count) : Array.from({ length: 30 }, () => 0);
+    const max = Math.max(...values, 1);
+    const raw = rollingDayLabels(values.length || 30, locale);
     const labels = raw.map((lab, i) => (i % 5 === 0 || i === raw.length - 1 ? lab : ''));
     const count = raw.length;
     const stepX = 28;
@@ -173,39 +207,47 @@ export function AnalyticsView() {
       barTipKey: 'analytics.dailyBarTip' as const,
       ariaKey: 'analytics.chartAria30d' as const,
     };
-  }, [locale]);
+  }, [locale, summary]);
 
-  const channelMixRows = useMemo(
-    () => [
-      { key: 'line', label: 'LINE', pct: 0, color: 'from-emerald-500 to-teal-600' },
-      { key: 'ig', label: 'Instagram', pct: 0, color: 'from-pink-500 to-fuchsia-600' },
-      { key: 'fb', label: 'Facebook', pct: 0, color: 'from-blue-500 to-indigo-600' },
-    ],
-    [],
-  );
+  const channelMixRows = useMemo(() => {
+    const map = new Map(summary?.channelMix?.map((c) => [c.channel, c.pct]) ?? []);
+    return [
+      { key: 'line', label: 'LINE', pct: map.get('line') ?? 0, color: 'from-emerald-500 to-teal-600' },
+      { key: 'ig', label: 'Instagram', pct: map.get('ig') ?? 0, color: 'from-pink-500 to-fuchsia-600' },
+      { key: 'fb', label: 'Facebook', pct: map.get('facebook') ?? 0, color: 'from-blue-500 to-indigo-600' },
+    ];
+  }, [summary]);
+
+  const todayRevenue = summary?.kpis.verifiedAmountToday ?? 0;
+  const monthRevenue = summary?.kpis.revenue ?? 0;
+  const ordersToday = summary?.kpis.ordersToday ?? 0;
+  const ordersTotal = summary?.kpis.ordersTotal ?? 0;
+  const slipsVerified = summary?.kpis.slipsVerified ?? 0;
+  const chatsTotal = summary?.kpis.chatsTotal ?? 0;
+  const convPct = chatsTotal > 0 ? Math.round((ordersTotal / chatsTotal) * 100) : 0;
 
   const revenueSlides = useMemo<KpiSlide[]>(
     () => [
-      { periodLabel: t('analytics.rangeToday'), value: '฿0', delta: t('analytics.kpiAwaitingData'), up: true },
-      { periodLabel: t('analytics.kpiPeriodMonth'), value: '฿0', delta: t('analytics.kpiAwaitingData'), up: true },
+      { periodLabel: t('analytics.rangeToday'), value: fmtBaht(todayRevenue), delta: `${slipsVerified} verified slips`, up: true },
+      { periodLabel: t('analytics.kpiPeriodMonth'), value: fmtBaht(monthRevenue), delta: `${ordersTotal} orders`, up: true },
     ],
-    [t],
+    [t, todayRevenue, monthRevenue, slipsVerified, ordersTotal],
   );
 
   const orderSlides = useMemo<KpiSlide[]>(
     () => [
-      { periodLabel: t('analytics.rangeToday'), value: '0', delta: t('analytics.kpiAwaitingData'), up: true },
-      { periodLabel: t('analytics.kpiPeriodMonth'), value: '0', delta: t('analytics.kpiAwaitingData'), up: true },
+      { periodLabel: t('analytics.rangeToday'), value: String(ordersToday), delta: `${chatsTotal} chats / 30d`, up: true },
+      { periodLabel: t('analytics.kpiPeriodMonth'), value: String(ordersTotal), delta: `${chatsTotal} chats`, up: true },
     ],
-    [t],
+    [t, ordersToday, ordersTotal, chatsTotal],
   );
 
   const convSlides = useMemo<KpiSlide[]>(
     () => [
-      { periodLabel: t('analytics.rangeToday'), value: '0%', delta: t('analytics.kpiAwaitingData'), up: true },
-      { periodLabel: t('analytics.kpiPeriodMonth'), value: '0%', delta: t('analytics.kpiAwaitingData'), up: true },
+      { periodLabel: t('analytics.rangeToday'), value: `${convPct}%`, delta: `${ordersTotal} / ${chatsTotal || 0}`, up: convPct >= 0 },
+      { periodLabel: t('analytics.kpiPeriodMonth'), value: `${convPct}%`, delta: t('analytics.kpiAwaitingData'), up: true },
     ],
-    [t],
+    [t, convPct, ordersTotal, chatsTotal],
   );
 
   return (
