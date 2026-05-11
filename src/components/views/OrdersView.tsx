@@ -42,6 +42,26 @@ const STATUS_CONFIG: Record<
   },
 };
 
+// payment badge + fulfillment badge derived from single status
+const PAYMENT_BADGE: Record<OrderStatus, { labelKey: string; cls: string }> = {
+  pending:   { labelKey: 'orders.payment.pending',   cls: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:ring-amber-800' },
+  paid:      { labelKey: 'orders.payment.paid',      cls: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-800' },
+  shipped:   { labelKey: 'orders.payment.paid',      cls: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-800' },
+  cancelled: { labelKey: 'orders.payment.cancelled', cls: 'bg-slate-100 text-slate-500 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-700' },
+};
+
+const FULFILLMENT_BADGE: Record<OrderStatus, { labelKey: string; cls: string }> = {
+  pending:   { labelKey: 'orders.fulfill.pending',   cls: 'bg-slate-100 text-slate-500 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-700' },
+  paid:      { labelKey: 'orders.fulfill.unfulfilled', cls: 'bg-blue-50 text-blue-700 ring-1 ring-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:ring-blue-800' },
+  shipped:   { labelKey: 'orders.fulfill.fulfilled', cls: 'bg-violet-50 text-violet-700 ring-1 ring-violet-200 dark:bg-violet-950/40 dark:text-violet-300 dark:ring-violet-800' },
+  cancelled: { labelKey: 'orders.fulfill.cancelled', cls: 'bg-slate-100 text-slate-500 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-700' },
+};
+
+// ─── Sort state ───────────────────────────────────────────────────────────────
+
+type SortKey = 'id' | 'amount' | 'date' | 'customer' | 'status';
+type SortDir = 'asc' | 'desc';
+
 const STATUS_KEYS: OrderStatus[] = ['pending', 'paid', 'shipped', 'cancelled'];
 
 // ─── Filter state ─────────────────────────────────────────────────────────────
@@ -196,6 +216,8 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
   const [filters, setFilters] = useState<OrderFiltersState>(DEFAULT_ORDER_FILTERS);
   const [statusTab, setStatusTab] = useState<OrderStatus | 'all'>('all');
   const [search, setSearch] = useState('');
+  const [sortKey, setSortKey] = useState<SortKey>('date');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
   const filterWrapRef = useRef<HTMLDivElement>(null);
 
   // Pull persisted orders from the backend on mount and after every create.
@@ -246,10 +268,18 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
     );
   }, [baseFiltered, search]);
 
-  const displayed = useMemo(
-    () => (statusTab === 'all' ? searchFiltered : searchFiltered.filter((o) => o.status === statusTab)),
-    [searchFiltered, statusTab],
-  );
+  const displayed = useMemo(() => {
+    const base = statusTab === 'all' ? searchFiltered : searchFiltered.filter((o) => o.status === statusTab);
+    return [...base].sort((a, b) => {
+      let cmp = 0;
+      if (sortKey === 'id') cmp = a.id.localeCompare(b.id);
+      else if (sortKey === 'amount') cmp = a.amount - b.amount;
+      else if (sortKey === 'date') cmp = (a.orderDate ?? a.createdAt ?? '').localeCompare(b.orderDate ?? b.createdAt ?? '');
+      else if (sortKey === 'customer') cmp = a.customer.localeCompare(b.customer);
+      else if (sortKey === 'status') cmp = a.status.localeCompare(b.status);
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [searchFiltered, statusTab, sortKey, sortDir]);
 
   const countByStatus = useMemo(() => {
     const m: Record<OrderStatus | 'all', number> = { all: 0, pending: 0, paid: 0, shipped: 0, cancelled: 0 };
@@ -280,6 +310,14 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
 
   const clearFilters = useCallback(() => setFilters({ ...DEFAULT_ORDER_FILTERS }), []);
 
+  const toggleSort = useCallback((key: SortKey) => {
+    setSortKey((prev) => {
+      if (prev === key) { setSortDir((d) => (d === 'asc' ? 'desc' : 'asc')); return key; }
+      setSortDir('desc');
+      return key;
+    });
+  }, []);
+
   return (
     <div className="flex h-screen flex-1 flex-col overflow-hidden bg-slate-50 dark:bg-slate-950">
       {slipPreview && (
@@ -297,55 +335,29 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
       {/* ── Top bar ── */}
       <div className="shrink-0 border-b border-slate-200 bg-white px-6 py-4 dark:border-slate-800 dark:bg-slate-900">
         <div className="flex items-center justify-between gap-4">
-          <div>
-            <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">
+          <div className="flex items-center gap-3">
+            <h1 className="text-lg font-bold tracking-tight text-slate-900 dark:text-white">
               {t('orders.title')}
             </h1>
-            <p className="text-xs text-slate-500 dark:text-slate-400">{t('orders.subtitle')}</p>
+            <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold tabular-nums text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+              {countByStatus.all}
+            </span>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="relative" ref={filterWrapRef}>
-              <button
-                type="button"
-                onClick={() => setFilterOpen((v) => !v)}
-                aria-expanded={filterOpen}
-                className="btn-secondary relative text-xs"
-              >
-                <I.Filter className="h-3.5 w-3.5" />
-                {t('orders.filter')}
-                {activeFilterCount > 0 && (
-                  <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-brand-600 px-1 text-[10px] font-bold text-white dark:bg-brand-500">
-                    {activeFilterCount > 9 ? '9+' : activeFilterCount}
-                  </span>
-                )}
-              </button>
-              {filterOpen && (
-                <FilterPanel
-                  t={t}
-                  filters={filters}
-                  setFilters={setFilters}
-                  onClear={clearFilters}
-                  onClose={() => setFilterOpen(false)}
-                  shops={shops}
-                />
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={() => setCreateOpen(true)}
-              className="btn-primary text-xs"
-            >
-              <I.Plus className="h-4 w-4" />
-              {t('orders.create')}
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => setCreateOpen(true)}
+            className="btn-primary text-xs"
+          >
+            <I.Plus className="h-4 w-4" />
+            {t('orders.create')}
+          </button>
         </div>
       </div>
 
-      {/* ── Status tabs + search ── */}
-      <div className="shrink-0 border-b border-slate-200 bg-white px-6 dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex items-end justify-between gap-4">
-          <div className="flex items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      {/* ── Status tabs ── */}
+      <div className="shrink-0 border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex items-end justify-between gap-2 px-6">
+          <div className="flex items-center gap-0.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {(
               [
                 { key: 'all' as const, label: t('orders.tab.all') },
@@ -380,8 +392,64 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
               );
             })}
           </div>
+          <div className="mb-2 flex shrink-0 items-center gap-2">
+            <span className="h-4 w-px bg-slate-200 dark:bg-slate-700" />
+            <button
+              type="button"
+              className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+            >
+              <I.Settings className="h-3.5 w-3.5" />
+              {t('orders.manageTable')}
+            </button>
+          </div>
+        </div>
+      </div>
 
-          <div className="relative mb-2.5 shrink-0">
+      {/* ── Filter bar ── */}
+      <div className="shrink-0 border-b border-slate-200 bg-white px-6 py-2 dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="relative" ref={filterWrapRef}>
+            <button
+              type="button"
+              onClick={() => setFilterOpen((v) => !v)}
+              aria-expanded={filterOpen}
+              className={
+                'relative flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[11px] font-medium transition ' +
+                (activeFilterCount > 0
+                  ? 'border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-700 dark:bg-brand-950/40 dark:text-brand-300'
+                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800')
+              }
+            >
+              <I.Filter className="h-3.5 w-3.5" />
+              {t('orders.filter')}
+              {activeFilterCount > 0 && (
+                <span className="grid h-4 min-w-4 place-items-center rounded-full bg-brand-600 px-1 text-[10px] font-bold text-white dark:bg-brand-500">
+                  {activeFilterCount > 9 ? '9+' : activeFilterCount}
+                </span>
+              )}
+            </button>
+            {filterOpen && (
+              <FilterPanel
+                t={t}
+                filters={filters}
+                setFilters={setFilters}
+                onClear={clearFilters}
+                onClose={() => setFilterOpen(false)}
+                shops={shops}
+              />
+            )}
+          </div>
+          {activeFilterCount > 0 && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="flex shrink-0 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-500 transition hover:bg-slate-50 hover:text-rose-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:text-rose-400"
+            >
+              <I.X className="h-3 w-3" />
+              {t('orders.filter.reset')}
+            </button>
+          )}
+          <div className="ml-auto relative shrink-0">
             <I.Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
             <input
               value={search}
@@ -395,27 +463,39 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
 
       {/* ── Table ── */}
       <div className="min-h-0 flex-1 overflow-auto">
-        <table className="w-full min-w-[700px] border-collapse">
+        <table className="w-full min-w-[820px] border-collapse">
           <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-900">
             <tr className="text-left">
-              {[
-                { key: 'id', label: t('orders.th.id'), cls: 'w-32' },
-                { key: 'customer', label: t('orders.th.customer'), cls: '' },
-                { key: 'product', label: t('orders.th.product'), cls: '' },
-                { key: 'channel', label: t('orders.th.channel'), cls: 'w-20 text-center' },
-                { key: 'date', label: t('orders.th.date'), cls: 'w-28' },
-                { key: 'amount', label: t('orders.th.amount'), cls: 'w-28 text-right' },
-                { key: 'status', label: t('orders.th.status'), cls: 'w-36' },
-                { key: 'actions', label: '', cls: 'w-24' },
-              ].map((col) => (
+              <th className="w-1 border-b border-slate-200 px-3 py-3 dark:border-slate-800" />
+              {(
+                [
+                  { key: 'id' as SortKey,       label: t('orders.th.id'),       cls: 'w-32' },
+                  { key: 'amount' as SortKey,   label: t('orders.th.amount'),   cls: 'w-28' },
+                  { key: 'status' as SortKey,   label: t('orders.th.status'),   cls: 'w-52' },
+                  { key: 'customer' as SortKey, label: t('orders.th.customer'), cls: '' },
+                  { key: null,                  label: t('orders.th.product'),  cls: '' },
+                  { key: null,                  label: t('orders.th.channel'),  cls: 'w-20 text-center' },
+                  { key: 'date' as SortKey,     label: t('orders.th.date'),     cls: 'w-28' },
+                  { key: null,                  label: '',                       cls: 'w-24' },
+                ] as { key: SortKey | null; label: string; cls: string }[]
+              ).map((col, i) => (
                 <th
-                  key={col.key}
+                  key={i}
+                  onClick={col.key ? () => toggleSort(col.key!) : undefined}
                   className={
                     'border-b border-slate-200 px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:border-slate-800 dark:text-slate-500 ' +
-                    col.cls
+                    col.cls +
+                    (col.key ? ' cursor-pointer select-none hover:text-slate-600 dark:hover:text-slate-300' : '')
                   }
                 >
-                  {col.label}
+                  {col.label && (
+                    <span className="inline-flex items-center gap-1">
+                      {col.label}
+                      {col.key && (
+                        <SortIcon active={sortKey === col.key} dir={sortDir} />
+                      )}
+                    </span>
+                  )}
                 </th>
               ))}
             </tr>
@@ -423,7 +503,7 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
           <tbody className="divide-y divide-slate-100 bg-white dark:divide-slate-800/80 dark:bg-slate-900">
             {displayed.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-16 text-center text-sm text-slate-400 dark:text-slate-500">
+                <td colSpan={9} className="px-4 py-16 text-center text-sm text-slate-400 dark:text-slate-500">
                   {t('orders.empty')}
                 </td>
               </tr>
@@ -445,6 +525,29 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
   );
 }
 
+// ─── Sort icon ────────────────────────────────────────────────────────────────
+
+function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
+  return (
+    <span className="inline-flex flex-col leading-none">
+      <svg width="7" height="5" viewBox="0 0 7 5" className={active && dir === 'asc' ? 'text-brand-500' : 'text-slate-300 dark:text-slate-600'}>
+        <path d="M3.5 0L7 5H0L3.5 0z" fill="currentColor" />
+      </svg>
+      <svg width="7" height="5" viewBox="0 0 7 5" className={active && dir === 'desc' ? 'text-brand-500' : 'text-slate-300 dark:text-slate-600'}>
+        <path d="M3.5 5L0 0H7L3.5 5z" fill="currentColor" />
+      </svg>
+    </span>
+  );
+}
+
+// ─── Customer short-ID ────────────────────────────────────────────────────────
+
+function shortId(str: string): string {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+  return `CST-${(h % 900) + 100}`;
+}
+
 // ─── Table row ────────────────────────────────────────────────────────────────
 
 function OrderRow({
@@ -458,71 +561,110 @@ function OrderRow({
   onGoToChat: (o: Order) => void;
   onSlipPreview: (url: string) => void;
 }) {
-  const sc = STATUS_CONFIG[o.status];
   const hasSlipImg = Boolean(o.slipImageUrl?.trim());
   const color = avatarColor(o.customer);
+  const cstId = shortId(o.customer + o.shop);
+  const payBadge = PAYMENT_BADGE[o.status];
+  const fulBadge = FULFILLMENT_BADGE[o.status];
+  const needsAttention = o.status === 'pending';
 
   return (
     <tr className="group transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40">
+      {/* alert dot */}
+      <td className="w-1 pl-3 pr-0 py-0">
+        <span
+          className={
+            'block h-1.5 w-1.5 rounded-full transition-opacity ' +
+            (needsAttention ? 'bg-rose-500' : 'opacity-0')
+          }
+        />
+      </td>
+
+      {/* Order ID */}
       <td className="px-4 py-3.5">
         <span className="font-mono text-[12px] font-semibold text-slate-700 dark:text-slate-300">
           {o.id}
         </span>
       </td>
+
+      {/* Total */}
+      <td className="px-4 py-3.5">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[14px] font-semibold tabular-nums text-slate-900 dark:text-slate-100">
+            ฿{o.amount.toLocaleString()}
+          </span>
+          {hasSlipImg && (
+            <button
+              type="button"
+              onClick={() => onSlipPreview(o.slipImageUrl!)}
+              title={t('orders.slipImageAria')}
+              className="inline-flex h-5 w-5 items-center justify-center rounded bg-emerald-100 text-emerald-600 transition hover:bg-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-400 dark:hover:bg-emerald-900/70"
+            >
+              <I.Image className="h-3 w-3" />
+            </button>
+          )}
+        </div>
+      </td>
+
+      {/* Status: payment + fulfillment badges */}
+      <td className="px-4 py-3.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className={'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ' + payBadge.cls}>
+            {t(payBadge.labelKey)}
+          </span>
+          {o.status !== 'cancelled' && (
+            <span className={'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ' + fulBadge.cls}>
+              {t(fulBadge.labelKey)}
+            </span>
+          )}
+          {o.slipStatus === 'verified' && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-800">
+              <I.Check className="h-2.5 w-2.5" />
+              {t('orders.slipVerified')}
+            </span>
+          )}
+        </div>
+      </td>
+
+      {/* Customer */}
       <td className="px-4 py-3.5">
         <div className="flex items-center gap-2.5">
-          <span className={'grid h-8 w-8 shrink-0 place-items-center rounded-full text-[11px] font-bold text-white ' + color}>
+          <span className={'grid h-7 w-7 shrink-0 place-items-center rounded-full text-[10px] font-bold text-white ' + color}>
             {initials(o.customer)}
           </span>
           <div className="min-w-0">
-            <div className="truncate text-[13px] font-medium text-slate-900 dark:text-slate-100">{o.customer}</div>
-            <div className="truncate text-[11px] text-slate-400 dark:text-slate-500">
-              {o.shop} • {t('orders.commission')} {o.commissionPct}%
+            <div className="flex items-center gap-1.5">
+              <span className="truncate text-[13px] font-medium text-slate-900 dark:text-slate-100">{o.customer}</span>
+              <span className="shrink-0 rounded bg-slate-100 px-1 py-px text-[10px] font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                {cstId}
+              </span>
             </div>
+            <div className="truncate text-[11px] text-slate-400 dark:text-slate-500">{o.shop}</div>
           </div>
         </div>
       </td>
+
+      {/* Product */}
       <td className="px-4 py-3.5">
         <div className="text-[13px] text-slate-900 dark:text-slate-100">{o.product}</div>
-        <div className="text-[11px] text-slate-400 dark:text-slate-500">x{o.qty}</div>
+        <div className="text-[11px] text-slate-400 dark:text-slate-500">×{o.qty}</div>
       </td>
+
+      {/* Channel */}
       <td className="px-4 py-3.5 text-center">
         <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800">
           <ChannelIcon channel={o.channel} className="h-4 w-4" />
         </span>
       </td>
+
+      {/* Date */}
       <td className="px-4 py-3.5">
         <span className="text-[12px] text-slate-500 dark:text-slate-400">
           {o.orderDate ?? o.createdAt?.slice(0, 10) ?? '—'}
         </span>
       </td>
-      <td className="px-4 py-3.5 text-right">
-        <span className="text-[14px] font-semibold tabular-nums text-slate-900 dark:text-slate-100">
-          ฿{o.amount.toLocaleString()}
-        </span>
-        {hasSlipImg && (
-          <button
-            type="button"
-            onClick={() => onSlipPreview(o.slipImageUrl!)}
-            title={t('orders.slipImageAria')}
-            className="ml-1.5 inline-flex h-5 w-5 items-center justify-center rounded bg-emerald-100 text-emerald-600 transition hover:bg-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-400 dark:hover:bg-emerald-900/70"
-          >
-            <I.Image className="h-3 w-3" />
-          </button>
-        )}
-      </td>
-      <td className="px-4 py-3.5">
-        <span className={'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ' + sc.badgeCls}>
-          <span className={'h-1.5 w-1.5 rounded-full ' + sc.dotCls} />
-          {t(sc.labelKey)}
-        </span>
-        {o.slipStatus === 'verified' && (
-          <span className="ml-1.5 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-800">
-            <I.Check className="h-2.5 w-2.5" />
-            {t('orders.slipVerified')}
-          </span>
-        )}
-      </td>
+
+      {/* Actions */}
       <td className="px-4 py-3.5">
         <button
           type="button"
