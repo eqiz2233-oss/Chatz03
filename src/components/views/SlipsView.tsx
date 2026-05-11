@@ -49,6 +49,30 @@ function channelLabel(ch: SlipApiRow['channel']): string {
 
 type SlipAction = { slipId: string; action: 'confirm' | 'reject'; byUser: string | null; at: string };
 
+function ModeBadge({
+  enabled,
+  t,
+}: {
+  enabled: boolean;
+  t: (key: string, vars?: Record<string, string | number>) => string;
+}) {
+  const labelKey = enabled ? ('slips.modeReal' as const) : ('slips.modeMock' as const);
+  const full = t(labelKey);
+  return (
+    <span
+      title={full}
+      className={
+        'inline-flex max-w-[11rem] cursor-default items-center truncate rounded-full px-2.5 py-1 text-[11px] font-medium ' +
+        (enabled
+          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200'
+          : 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200')
+      }
+    >
+      {full}
+    </span>
+  );
+}
+
 export function SlipsView() {
   const { t } = useAppPreferences();
   const [data, setData] = useState<SlipsApiResponse | null>(null);

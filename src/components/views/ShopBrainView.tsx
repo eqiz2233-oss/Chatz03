@@ -29,6 +29,7 @@ export interface ProductTemplate {
 const TEMPLATE_EMOJI_OPTIONS = ['👕', '👖', '👗', '🧢', '👜', '👟', '🧴', '💄', '🍱', '🍩', '☕', '🥤', '🔋', '🎧', '📱', '💻', '🪑', '🏠', '🐶', '📦'];
 
 const TEMPLATES_STORAGE_KEY = 'chatz-product-templates-v1';
+const PRODUCTS_STORAGE_KEY = 'chatz-products-v1';
 
 /** Push the entire product list to the server. Used after add/edit/delete so
  *  catalog persists across devices and survives container restarts. */
@@ -98,6 +99,15 @@ function persistTemplates(list: ProductTemplate[]) {
   if (typeof window === 'undefined') return;
   try {
     window.localStorage.setItem(TEMPLATES_STORAGE_KEY, JSON.stringify(list));
+  } catch {
+    /* quota / private mode — silently ignore */
+  }
+}
+
+function persistProducts(list: Product[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(list));
   } catch {
     /* quota / private mode — silently ignore */
   }

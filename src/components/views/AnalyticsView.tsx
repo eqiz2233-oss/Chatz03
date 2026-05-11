@@ -176,7 +176,11 @@ export function AnalyticsView() {
   const chart = useMemo(() => {
     const days = summary?.chatsPerDay ?? [];
     const values = days.length > 0 ? days.map((d) => d.count) : Array.from({ length: 30 }, () => 0);
-    const max = Math.max(...values, 1);
+    const n = values.length;
+    const lineValues = values;
+    const igValues = Array.from({ length: n }, () => 0);
+    const fbValues = Array.from({ length: n }, () => 0);
+    const max = Math.max(...lineValues, ...igValues, ...fbValues, 1);
     const raw = rollingDayLabels(values.length || 30, locale);
     const labels = raw.map((lab, i) => (i % 5 === 0 || i === raw.length - 1 ? lab : ''));
     const count = raw.length;
