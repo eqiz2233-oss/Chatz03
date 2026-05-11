@@ -915,7 +915,7 @@ function KeywordRulesCard() {
           <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-center text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-400">
             {locale === 'th'
               ? 'ยังไม่มีกฎ — ลองเพิ่มกฎแรก เช่น keyword: "ราคา" → ตอบ: "ราคา 250 บาทค่ะ"'
-              : 'No rules yet — try one like keyword: "price" → reply: "It's 250 THB"'}
+              : "No rules yet — try one like keyword: \"price\" → reply: \"It's 250 THB\""}
           </div>
         )}
         {rules?.map((rule) => (
