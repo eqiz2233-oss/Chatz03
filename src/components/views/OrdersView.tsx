@@ -15,48 +15,37 @@ import { ChannelIcon, I } from '../Icons';
 import { useAppPreferences } from '../../context/AppPreferencesContext';
 import { resolveConversationIdForOrder } from '../../lib/orderInbox';
 
-const COLUMN_KEYS: {
-  key: OrderStatus;
-  labelKey: string;
-  emoji: string;
-  headTint: string;
-  topAccent: string;
-  /** pending/paid = primary workflow; shipped/cancelled = de-emphasized archive */
-  tier: 'focus' | 'archive';
-}[] = [
-  {
-    key: 'pending',
+// ─── Status config ────────────────────────────────────────────────────────────
+
+const STATUS_CONFIG: Record<
+  OrderStatus,
+  { labelKey: string; badgeCls: string; dotCls: string }
+> = {
+  pending: {
     labelKey: 'orders.col.pending',
-    emoji: '⏳',
-    headTint: 'bg-sky-50/90 dark:bg-sky-950/35',
-    topAccent: 'border-t-2 border-t-sky-400',
-    tier: 'focus',
+    badgeCls: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:ring-amber-800',
+    dotCls: 'bg-amber-400',
   },
-  {
-    key: 'paid',
+  paid: {
     labelKey: 'orders.col.paid',
-    emoji: '💰',
-    headTint: 'bg-amber-50/95 dark:bg-amber-950/35',
-    topAccent: 'border-t-2 border-t-amber-400',
-    tier: 'focus',
+    badgeCls: 'bg-blue-50 text-blue-700 ring-1 ring-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:ring-blue-800',
+    dotCls: 'bg-blue-400',
   },
-  {
-    key: 'shipped',
+  shipped: {
     labelKey: 'orders.col.shipped',
-    emoji: '📦',
-    headTint: 'bg-slate-50/90 dark:bg-slate-900/80',
-    topAccent: 'border-t border-t-slate-200/95 dark:border-t-slate-600',
-    tier: 'archive',
+    badgeCls: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-800',
+    dotCls: 'bg-emerald-400',
   },
-  {
-    key: 'cancelled',
+  cancelled: {
     labelKey: 'orders.col.cancelled',
-    emoji: '✕',
-    headTint: 'bg-slate-50/90 dark:bg-slate-900/80',
-    topAccent: 'border-t border-t-slate-200/95 dark:border-t-slate-600',
-    tier: 'archive',
+    badgeCls: 'bg-slate-100 text-slate-500 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-700',
+    dotCls: 'bg-slate-400',
   },
-];
+};
+
+const STATUS_KEYS: OrderStatus[] = ['pending', 'paid', 'shipped', 'cancelled'];
+
+// ─── Filter state ─────────────────────────────────────────────────────────────
 
 type SlipFilterMode = 'all' | 'with_slip' | 'no_slip';
 
@@ -129,6 +118,28 @@ function countActiveFilters(f: OrderFiltersState): number {
   return n;
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Stable 2-letter avatar initials from customer name */
+function initials(name: string) {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return name.slice(0, 2).toUpperCase();
+}
+
+/** Deterministic pastel colour from string */
+function avatarColor(str: string) {
+  const palette = [
+    'bg-violet-500', 'bg-blue-500', 'bg-emerald-500',
+    'bg-amber-500', 'bg-rose-500', 'bg-indigo-500', 'bg-teal-500',
+  ];
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+  return palette[h % palette.length];
+}
+
+// ─── Lightbox ─────────────────────────────────────────────────────────────────
+
 function SlipImageLightbox({
   src,
   onClose,
@@ -139,9 +150,7 @@ function SlipImageLightbox({
   t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -163,10 +172,7 @@ function SlipImageLightbox({
         type="button"
         className="absolute right-3 top-3 z-[201] grid h-11 w-11 place-items-center rounded-full bg-white/12 text-white ring-1 ring-white/35 transition hover:bg-white/22"
         aria-label={t('chat.closeMedia')}
-        onClick={(e) => {
-          e.stopPropagation();
-          onClose();
-        }}
+        onClick={(e) => { e.stopPropagation(); onClose(); }}
       >
         <I.X className="h-6 w-6" />
       </button>
@@ -181,28 +187,56 @@ function SlipImageLightbox({
   );
 }
 
+// ─── Main view ────────────────────────────────────────────────────────────────
+
 export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest) => void }) {
   const { t } = useAppPreferences();
   const list = seed;
   const [slipPreview, setSlipPreview] = useState<string | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
   const [filters, setFilters] = useState<OrderFiltersState>(DEFAULT_ORDER_FILTERS);
+  const [statusTab, setStatusTab] = useState<OrderStatus | 'all'>('all');
+  const [search, setSearch] = useState('');
   const filterWrapRef = useRef<HTMLDivElement>(null);
 
-  const filteredList = useMemo(() => list.filter((o) => orderMatchesFilters(o, filters)), [list, filters]);
+  const baseFiltered = useMemo(
+    () => list.filter((o) => orderMatchesFilters(o, filters)),
+    [list, filters],
+  );
+
+  /** Quick search on top of filters */
+  const searchFiltered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return baseFiltered;
+    return baseFiltered.filter(
+      (o) =>
+        o.customer.toLowerCase().includes(q) ||
+        o.product.toLowerCase().includes(q) ||
+        o.id.toLowerCase().includes(q),
+    );
+  }, [baseFiltered, search]);
+
+  const displayed = useMemo(
+    () => (statusTab === 'all' ? searchFiltered : searchFiltered.filter((o) => o.status === statusTab)),
+    [searchFiltered, statusTab],
+  );
+
+  const countByStatus = useMemo(() => {
+    const m: Record<OrderStatus | 'all', number> = { all: 0, pending: 0, paid: 0, shipped: 0, cancelled: 0 };
+    for (const o of searchFiltered) {
+      m[o.status]++;
+      m.all++;
+    }
+    return m;
+  }, [searchFiltered]);
+
   const activeFilterCount = useMemo(() => countActiveFilters(filters), [filters]);
   const shops = useMemo(() => [...new Set(list.map((o) => o.shop))].sort(), [list]);
-
-  const columns = useMemo(
-    () => COLUMN_KEYS.map((c) => ({ ...c, label: t(c.labelKey) })),
-    [t],
-  );
 
   useEffect(() => {
     if (!filterOpen) return;
     const close = (ev: PointerEvent) => {
-      const el = ev.target as Node;
-      if (filterWrapRef.current?.contains(el)) return;
+      if (filterWrapRef.current?.contains(ev.target as Node)) return;
       setFilterOpen(false);
     };
     document.addEventListener('pointerdown', close, true);
@@ -217,387 +251,434 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
     [onGoToChat],
   );
 
-  const clearFilters = useCallback(() => {
-    setFilters({ ...DEFAULT_ORDER_FILTERS });
-  }, []);
+  const clearFilters = useCallback(() => setFilters({ ...DEFAULT_ORDER_FILTERS }), []);
 
   return (
-    <div className="flex h-screen flex-1 flex-col bg-slate-50 dark:bg-slate-950">
-      {slipPreview && <SlipImageLightbox src={slipPreview} onClose={() => setSlipPreview(null)} t={t} />}
-      <Header
-        t={t}
-        filterOpen={filterOpen}
-        onToggleFilter={() => setFilterOpen((v) => !v)}
-        filterWrapRef={filterWrapRef}
-        filters={filters}
-        setFilters={setFilters}
-        onClearFilters={clearFilters}
-        activeFilterCount={activeFilterCount}
-        shops={shops}
-      />
-      <div className="flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto overflow-x-hidden p-5 pb-10">
-        {columns.map((col) => {
-          const items = filteredList.filter((o) => o.status === col.key);
-          const total = items.reduce((s, o) => s + o.amount, 0);
-          const focus = col.tier === 'focus';
-          return (
-            <section
-              key={col.key}
-              role="region"
-              aria-label={col.label}
-              className={
-                'flex shrink-0 flex-col overflow-hidden rounded-2xl border border-slate-200/90 bg-white ring-1 dark:border-slate-700 dark:bg-slate-900 dark:shadow-none ' +
-                (focus
-                  ? 'shadow-md ring-slate-900/[0.04] dark:ring-white/[0.06] '
-                  : 'shadow-sm ring-slate-900/[0.025] dark:ring-white/[0.04] ') +
-                col.topAccent
-              }
-            >
-              <div
-                className={
-                  'flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200/80 dark:border-slate-800 ' +
-                  (focus ? 'px-4 py-3.5 ' : 'px-3 py-2 ') +
-                  col.headTint
-                }
+    <div className="flex h-screen flex-1 flex-col overflow-hidden bg-slate-50 dark:bg-slate-950">
+      {slipPreview && (
+        <SlipImageLightbox src={slipPreview} onClose={() => setSlipPreview(null)} t={t} />
+      )}
+
+      {/* ── Top bar ── */}
+      <div className="shrink-0 border-b border-slate-200 bg-white px-6 py-4 dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">
+              {t('orders.title')}
+            </h1>
+            <p className="text-xs text-slate-500 dark:text-slate-400">{t('orders.subtitle')}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            {/* Advanced filter */}
+            <div className="relative" ref={filterWrapRef}>
+              <button
+                type="button"
+                onClick={() => setFilterOpen((v) => !v)}
+                aria-expanded={filterOpen}
+                className="btn-secondary relative text-xs"
               >
-                <div className={focus ? 'flex items-center gap-2.5' : 'flex items-center gap-2'}>
-                  <span className={focus ? 'text-xl leading-none' : 'text-base leading-none'} aria-hidden>
-                    {col.emoji}
+                <I.Filter className="h-3.5 w-3.5" />
+                {t('orders.filter')}
+                {activeFilterCount > 0 && (
+                  <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-brand-600 px-1 text-[10px] font-bold text-white dark:bg-brand-500">
+                    {activeFilterCount > 9 ? '9+' : activeFilterCount}
                   </span>
-                  <span
-                    className={
-                      focus
-                        ? 'text-[15px] font-semibold tracking-tight text-slate-900 dark:text-slate-100'
-                        : 'text-xs font-medium tracking-tight text-slate-600 dark:text-slate-400'
-                    }
-                  >
-                    {col.label}
-                  </span>
-                  <span
-                    className={
-                      focus
-                        ? 'rounded-full bg-white/90 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-slate-700 shadow-sm ring-1 ring-slate-200/80 dark:bg-slate-800/90 dark:text-slate-200 dark:ring-slate-600'
-                        : 'rounded-full bg-white/80 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-slate-500 ring-1 ring-slate-200/70 dark:bg-slate-800/70 dark:text-slate-400 dark:ring-slate-600'
-                    }
-                  >
-                    {items.length}
-                  </span>
-                </div>
-                <div
+                )}
+              </button>
+              {filterOpen && (
+                <FilterPanel
+                  t={t}
+                  filters={filters}
+                  setFilters={setFilters}
+                  onClear={clearFilters}
+                  onClose={() => setFilterOpen(false)}
+                  shops={shops}
+                />
+              )}
+            </div>
+            <button className="btn-primary text-xs">
+              <I.Plus className="h-4 w-4" />
+              {t('orders.create')}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Status tabs + search ── */}
+      <div className="shrink-0 border-b border-slate-200 bg-white px-6 dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex items-end justify-between gap-4">
+          {/* Status tabs */}
+          <div className="flex items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {/* All tab */}
+            {(
+              [
+                { key: 'all' as const, label: t('orders.tab.all') },
+                ...STATUS_KEYS.map((k) => ({
+                  key: k,
+                  label: t(STATUS_CONFIG[k].labelKey),
+                })),
+              ] as { key: OrderStatus | 'all'; label: string }[]
+            ).map(({ key, label }) => {
+              const isActive = statusTab === key;
+              const count = countByStatus[key];
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setStatusTab(key)}
                   className={
-                    focus
-                      ? 'text-xs font-semibold tabular-nums text-slate-600 dark:text-slate-300'
-                      : 'text-[10px] font-medium tabular-nums text-slate-400 dark:text-slate-500'
+                    'flex shrink-0 items-center gap-1.5 border-b-2 px-3 pb-3 pt-3 text-xs font-medium transition-colors ' +
+                    (isActive
+                      ? 'border-brand-600 text-brand-600 dark:border-brand-400 dark:text-brand-400'
+                      : 'border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200')
                   }
                 >
-                  ฿{total.toLocaleString()}
-                </div>
-              </div>
-              <div
-                className={
-                  'flex min-w-0 flex-row items-stretch gap-2 overflow-x-auto overflow-y-hidden bg-slate-50/60 pb-2 dark:bg-slate-950/50 [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 ' +
-                  (focus ? 'min-h-[8.5rem] gap-2.5 p-3.5 ' : 'min-h-[5.75rem] gap-1.5 p-2 ')
-                }
-              >
-                {items.map((o) => {
-                  const hasSlipImg = Boolean(o.slipImageUrl?.trim());
-                  return (
-                    <div
-                      key={o.id}
-                      className={
-                        'group flex shrink-0 rounded-lg border border-slate-200 transition dark:border-slate-700 ' +
-                        (focus
-                          ? 'min-h-[11rem] hover:border-brand-300 hover:shadow-md dark:hover:border-brand-500 ' +
-                            (hasSlipImg ? 'flex w-[min(100%,288px)] min-w-[268px] flex-row gap-3 p-3.5' : 'flex w-[min(100%,252px)] min-w-[236px] flex-col p-3.5')
-                          : 'min-h-[7.25rem] opacity-95 hover:border-slate-300 hover:shadow-sm dark:hover:border-slate-600 ' +
-                            (hasSlipImg ? 'flex w-[min(100%,208px)] min-w-[196px] flex-row gap-1.5 p-2' : 'flex w-[min(100%,188px)] min-w-[176px] flex-col p-2'))
-                      }
-                    >
-                      {hasSlipImg && (
-                        <button
-                          type="button"
-                          onClick={() => setSlipPreview(o.slipImageUrl!)}
-                          title={t('orders.slipImageAria')}
-                          aria-label={t('orders.slipImageAria')}
-                          className={
-                            'relative h-auto shrink-0 overflow-hidden rounded-md border border-slate-200 bg-slate-100 ring-brand-400/0 transition hover:ring-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:border-slate-600 dark:bg-slate-800 dark:hover:ring-brand-400 ' +
-                            (focus ? 'min-h-[6.25rem] w-[4.25rem]' : 'min-h-[4.5rem] w-12')
-                          }
-                        >
-                          <img src={o.slipImageUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
-                          <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/35 to-transparent opacity-0 transition group-hover:opacity-100" />
-                          <span
-                            className={
-                              'pointer-events-none absolute bottom-0.5 left-0.5 right-0.5 rounded bg-black/55 py-0.5 font-medium text-white opacity-0 transition group-hover:opacity-100 ' +
-                              (focus ? 'text-[10px]' : 'text-[8px]')
-                            }
-                          >
-                            {t('orders.slipImageAria')}
-                          </span>
-                        </button>
-                      )}
-                      <div className="flex min-w-0 flex-1 flex-col">
-                        <div className="flex items-center justify-between">
-                          <span
-                            className={
-                              focus
-                                ? 'font-mono text-[13px] font-semibold text-slate-700 dark:text-slate-200'
-                                : 'font-mono text-[11px] font-medium text-slate-500 dark:text-slate-400'
-                            }
-                          >
-                            {o.id}
-                          </span>
-                          <ChannelIcon channel={o.channel} className={focus ? 'h-4 w-4' : 'h-3 w-3'} />
-                        </div>
-                        <div
-                          className={
-                            focus
-                              ? 'mt-1 text-[15px] font-semibold leading-snug text-slate-900 dark:text-slate-100'
-                              : 'mt-0.5 text-xs font-medium leading-tight text-slate-700 dark:text-slate-300'
-                          }
-                        >
-                          {o.product}
-                        </div>
-                        <div
-                          className={
-                            focus ? 'mt-1 text-[13px] text-slate-500 dark:text-slate-400' : 'mt-0.5 text-[10px] text-slate-500 dark:text-slate-500'
-                          }
-                        >
-                          x{o.qty} • {o.customer}
-                        </div>
-                        <div className={focus ? 'mt-2.5 flex items-end justify-between gap-1' : 'mt-1.5 flex items-end justify-between gap-1'}>
-                          <div className="min-w-0">
-                            <div
-                              className={
-                                focus
-                                  ? 'text-lg font-bold tabular-nums text-slate-900 dark:text-slate-100'
-                                  : 'text-sm font-semibold tabular-nums text-slate-700 dark:text-slate-200'
-                              }
-                            >
-                              ฿{o.amount.toLocaleString()}
-                            </div>
-                            <div
-                              className={
-                                focus ? 'text-[11px] text-slate-400 dark:text-slate-500' : 'text-[9px] text-slate-400 dark:text-slate-500'
-                              }
-                            >
-                              {o.shop} • {t('orders.commission')} {o.commissionPct}%
-                            </div>
-                          </div>
-                          {o.slipStatus === 'verified' && (
-                            <span
-                              className={
-                                'chip shrink-0 bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 ' +
-                                (focus ? 'text-[11px]' : 'scale-90 text-[9px]')
-                              }
-                            >
-                              <I.Check className={focus ? 'h-3 w-3' : 'h-2.5 w-2.5'} />
-                              {t('orders.slipVerified')}
-                            </span>
-                          )}
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => goToChat(o)}
-                          className={
-                            'mt-auto w-full rounded-md border font-medium transition dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 ' +
-                            (focus
-                              ? 'border-slate-200 bg-slate-50 py-2 text-xs text-slate-700 hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700 dark:hover:border-brand-500 dark:hover:bg-brand-950/40 dark:hover:text-brand-300'
-                              : 'border-slate-200/90 bg-slate-50/80 py-1 text-[10px] text-slate-600 hover:border-slate-300 hover:bg-slate-100 dark:hover:border-slate-500 dark:hover:bg-slate-800')
-                          }
-                        >
-                          {t('orders.goToChat')}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-                {items.length === 0 && (
-                  <div
+                  {label}
+                  <span
                     className={
-                      'flex min-w-full flex-1 items-center justify-center text-center text-slate-400 dark:text-slate-500 ' +
-                      (focus ? 'min-h-[7rem] text-xs' : 'min-h-[4.5rem] text-[10px]')
+                      'rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ' +
+                      (isActive
+                        ? 'bg-brand-100 text-brand-700 dark:bg-brand-950/60 dark:text-brand-300'
+                        : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400')
                     }
                   >
-                    {t('orders.empty')}
-                  </div>
-                )}
-              </div>
-            </section>
-          );
-        })}
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Inline search */}
+          <div className="relative mb-2.5 shrink-0">
+            <I.Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={t('orders.search')}
+              className="w-52 rounded-lg border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-xs text-slate-900 outline-none focus:border-brand-400 focus:bg-white focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:bg-slate-900 dark:focus:ring-brand-900/40"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* ── Table ── */}
+      <div className="min-h-0 flex-1 overflow-auto">
+        <table className="w-full min-w-[700px] border-collapse">
+          <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-900">
+            <tr className="text-left">
+              {[
+                { key: 'id', label: t('orders.th.id'), cls: 'w-32' },
+                { key: 'customer', label: t('orders.th.customer'), cls: '' },
+                { key: 'product', label: t('orders.th.product'), cls: '' },
+                { key: 'channel', label: t('orders.th.channel'), cls: 'w-20 text-center' },
+                { key: 'date', label: t('orders.th.date'), cls: 'w-28' },
+                { key: 'amount', label: t('orders.th.amount'), cls: 'w-28 text-right' },
+                { key: 'status', label: t('orders.th.status'), cls: 'w-36' },
+                { key: 'actions', label: '', cls: 'w-24' },
+              ].map((col) => (
+                <th
+                  key={col.key}
+                  className={
+                    'border-b border-slate-200 px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:border-slate-800 dark:text-slate-500 ' +
+                    col.cls
+                  }
+                >
+                  {col.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 bg-white dark:divide-slate-800/80 dark:bg-slate-900">
+            {displayed.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={8}
+                  className="px-4 py-16 text-center text-sm text-slate-400 dark:text-slate-500"
+                >
+                  {t('orders.empty')}
+                </td>
+              </tr>
+            ) : (
+              displayed.map((o) => <OrderRow key={o.id} order={o} t={t} onGoToChat={goToChat} onSlipPreview={setSlipPreview} />)
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );
 }
 
-function Header({
+// ─── Table row ────────────────────────────────────────────────────────────────
+
+function OrderRow({
+  order: o,
   t,
-  filterOpen,
-  onToggleFilter,
-  filterWrapRef,
+  onGoToChat,
+  onSlipPreview,
+}: {
+  order: Order;
+  t: (key: string, vars?: Record<string, string | number>) => string;
+  onGoToChat: (o: Order) => void;
+  onSlipPreview: (url: string) => void;
+}) {
+  const sc = STATUS_CONFIG[o.status];
+  const hasSlipImg = Boolean(o.slipImageUrl?.trim());
+  const color = avatarColor(o.customer);
+
+  return (
+    <tr className="group transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40">
+      {/* Order ID */}
+      <td className="px-4 py-3.5">
+        <span className="font-mono text-[12px] font-semibold text-slate-700 dark:text-slate-300">
+          {o.id}
+        </span>
+      </td>
+
+      {/* Customer */}
+      <td className="px-4 py-3.5">
+        <div className="flex items-center gap-2.5">
+          <span
+            className={
+              'grid h-8 w-8 shrink-0 place-items-center rounded-full text-[11px] font-bold text-white ' +
+              color
+            }
+          >
+            {initials(o.customer)}
+          </span>
+          <div className="min-w-0">
+            <div className="truncate text-[13px] font-medium text-slate-900 dark:text-slate-100">
+              {o.customer}
+            </div>
+            <div className="truncate text-[11px] text-slate-400 dark:text-slate-500">
+              {o.shop} • {t('orders.commission')} {o.commissionPct}%
+            </div>
+          </div>
+        </div>
+      </td>
+
+      {/* Product */}
+      <td className="px-4 py-3.5">
+        <div className="text-[13px] text-slate-900 dark:text-slate-100">{o.product}</div>
+        <div className="text-[11px] text-slate-400 dark:text-slate-500">x{o.qty}</div>
+      </td>
+
+      {/* Channel */}
+      <td className="px-4 py-3.5 text-center">
+        <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800">
+          <ChannelIcon channel={o.channel} className="h-4 w-4" />
+        </span>
+      </td>
+
+      {/* Date */}
+      <td className="px-4 py-3.5">
+        <span className="text-[12px] text-slate-500 dark:text-slate-400">
+          {o.orderDate ?? o.createdAt?.slice(0, 10) ?? '—'}
+        </span>
+      </td>
+
+      {/* Amount */}
+      <td className="px-4 py-3.5 text-right">
+        <span className="text-[14px] font-semibold tabular-nums text-slate-900 dark:text-slate-100">
+          ฿{o.amount.toLocaleString()}
+        </span>
+        {hasSlipImg && (
+          <button
+            type="button"
+            onClick={() => onSlipPreview(o.slipImageUrl!)}
+            title={t('orders.slipImageAria')}
+            className="ml-1.5 inline-flex h-5 w-5 items-center justify-center rounded bg-emerald-100 text-emerald-600 transition hover:bg-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-400 dark:hover:bg-emerald-900/70"
+          >
+            <I.Image className="h-3 w-3" />
+          </button>
+        )}
+      </td>
+
+      {/* Status badge */}
+      <td className="px-4 py-3.5">
+        <span
+          className={
+            'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ' +
+            sc.badgeCls
+          }
+        >
+          <span className={'h-1.5 w-1.5 rounded-full ' + sc.dotCls} />
+          {t(sc.labelKey)}
+        </span>
+        {o.slipStatus === 'verified' && (
+          <span className="ml-1.5 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-800">
+            <I.Check className="h-2.5 w-2.5" />
+            {t('orders.slipVerified')}
+          </span>
+        )}
+      </td>
+
+      {/* Actions */}
+      <td className="px-4 py-3.5">
+        <button
+          type="button"
+          onClick={() => onGoToChat(o)}
+          className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-600 opacity-0 transition hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700 group-hover:opacity-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-brand-500 dark:hover:bg-brand-950/40 dark:hover:text-brand-300"
+        >
+          {t('orders.goToChat')}
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+// ─── Advanced filter panel ────────────────────────────────────────────────────
+
+function FilterPanel({
+  t,
   filters,
   setFilters,
-  onClearFilters,
-  activeFilterCount,
+  onClear,
+  onClose,
   shops,
 }: {
   t: (k: string, vars?: Record<string, string | number>) => string;
-  filterOpen: boolean;
-  onToggleFilter: () => void;
-  filterWrapRef: RefObject<HTMLDivElement>;
   filters: OrderFiltersState;
   setFilters: Dispatch<SetStateAction<OrderFiltersState>>;
-  onClearFilters: () => void;
-  activeFilterCount: number;
+  onClear: () => void;
+  onClose: () => void;
   shops: string[];
 }) {
+  const inputCls =
+    'w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-900 outline-none focus:border-brand-400 focus:ring-2 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100';
+
   return (
-    <div className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4 dark:border-slate-800 dark:bg-slate-900">
-      <div>
-        <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">{t('orders.title')}</h1>
-        <p className="text-xs text-slate-500 dark:text-slate-400">{t('orders.subtitle')}</p>
-      </div>
-      <div className="flex items-center gap-2">
-        <div className="relative" ref={filterWrapRef} data-order-filter="">
-          <button
-            type="button"
-            onClick={onToggleFilter}
-            aria-expanded={filterOpen}
-            className="btn-secondary relative text-xs"
+    <div
+      className="absolute right-0 z-[120] mt-2 w-[min(calc(100vw-2rem),20rem)] rounded-xl border border-slate-200 bg-white p-3 shadow-xl dark:border-slate-600 dark:bg-slate-900"
+      role="dialog"
+      aria-label={t('orders.filter')}
+    >
+      <div className="max-h-[min(70vh,28rem)] space-y-2.5 overflow-y-auto pr-0.5">
+        <label className="block">
+          <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
+            {t('orders.filter.product')}
+          </span>
+          <input
+            type="search"
+            value={filters.product}
+            onChange={(e) => setFilters((f) => ({ ...f, product: e.target.value }))}
+            className={inputCls}
+          />
+        </label>
+        <label className="block">
+          <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
+            {t('orders.filter.customer')}
+          </span>
+          <input
+            type="search"
+            value={filters.customer}
+            onChange={(e) => setFilters((f) => ({ ...f, customer: e.target.value }))}
+            className={inputCls}
+          />
+        </label>
+        <label className="block">
+          <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
+            {t('orders.filter.shop')}
+          </span>
+          <select
+            value={filters.shop}
+            onChange={(e) => setFilters((f) => ({ ...f, shop: e.target.value }))}
+            className={inputCls}
           >
-            <I.Filter className="h-3.5 w-3.5" />
-            {t('orders.filter')}
-            {activeFilterCount > 0 && (
-              <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-brand-600 px-1 text-[10px] font-bold text-white dark:bg-brand-500">
-                {activeFilterCount > 9 ? '9+' : activeFilterCount}
-              </span>
-            )}
-          </button>
-          {filterOpen && (
-            <div
-              className="absolute right-0 z-[120] mt-2 w-[min(calc(100vw-2rem),20rem)] rounded-xl border border-slate-200 bg-white p-3 shadow-xl dark:border-slate-600 dark:bg-slate-900"
-              role="dialog"
-              aria-label={t('orders.filter')}
-            >
-              <div className="max-h-[min(70vh,28rem)] space-y-2.5 overflow-y-auto pr-0.5">
-                <label className="block">
-                  <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">{t('orders.filter.product')}</span>
-                  <input
-                    type="search"
-                    value={filters.product}
-                    onChange={(e) => setFilters((f) => ({ ...f, product: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-900 outline-none ring-brand-400/0 focus:border-brand-400 focus:ring-2 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-                  />
-                </label>
-                <label className="block">
-                  <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">{t('orders.filter.customer')}</span>
-                  <input
-                    type="search"
-                    value={filters.customer}
-                    onChange={(e) => setFilters((f) => ({ ...f, customer: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-900 outline-none focus:border-brand-400 focus:ring-2 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-                  />
-                </label>
-                <label className="block">
-                  <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">{t('orders.filter.shop')}</span>
-                  <select
-                    value={filters.shop}
-                    onChange={(e) => setFilters((f) => ({ ...f, shop: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-900 outline-none focus:border-brand-400 focus:ring-2 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-                  >
-                    <option value="">{t('orders.filter.shopAll')}</option>
-                    {shops.map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="block">
-                  <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">{t('orders.filter.channel')}</span>
-                  <select
-                    value={filters.channel}
-                    onChange={(e) => setFilters((f) => ({ ...f, channel: e.target.value as 'all' | Channel }))}
-                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-900 outline-none focus:border-brand-400 focus:ring-2 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-                  >
-                    <option value="all">{t('orders.filter.channelAll')}</option>
-                    <option value="line">{t('orders.filter.chLine')}</option>
-                    <option value="facebook">{t('orders.filter.chFb')}</option>
-                    <option value="ig">{t('orders.filter.chIg')}</option>
-                  </select>
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="block">
-                    <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">{t('orders.filter.amountMin')}</span>
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      value={filters.minAmount}
-                      onChange={(e) => setFilters((f) => ({ ...f, minAmount: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs tabular-nums text-slate-900 outline-none focus:border-brand-400 focus:ring-2 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">{t('orders.filter.amountMax')}</span>
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      value={filters.maxAmount}
-                      onChange={(e) => setFilters((f) => ({ ...f, maxAmount: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs tabular-nums text-slate-900 outline-none focus:border-brand-400 focus:ring-2 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-                    />
-                  </label>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="block">
-                    <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">{t('orders.filter.dateFrom')}</span>
-                    <input
-                      type="date"
-                      value={filters.dateFrom}
-                      onChange={(e) => setFilters((f) => ({ ...f, dateFrom: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-200 bg-slate-50 px-1.5 py-1.5 text-[11px] text-slate-900 outline-none focus:border-brand-400 focus:ring-2 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">{t('orders.filter.dateTo')}</span>
-                    <input
-                      type="date"
-                      value={filters.dateTo}
-                      onChange={(e) => setFilters((f) => ({ ...f, dateTo: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-200 bg-slate-50 px-1.5 py-1.5 text-[11px] text-slate-900 outline-none focus:border-brand-400 focus:ring-2 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-                    />
-                  </label>
-                </div>
-                <label className="block">
-                  <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">{t('orders.filter.slip')}</span>
-                  <select
-                    value={filters.slip}
-                    onChange={(e) => setFilters((f) => ({ ...f, slip: e.target.value as SlipFilterMode }))}
-                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-900 outline-none focus:border-brand-400 focus:ring-2 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-                  >
-                    <option value="all">{t('orders.filter.slipAll')}</option>
-                    <option value="with_slip">{t('orders.filter.slipWith')}</option>
-                    <option value="no_slip">{t('orders.filter.slipWithout')}</option>
-                  </select>
-                </label>
-              </div>
-              <div className="mt-3 flex items-center justify-between gap-2 border-t border-slate-100 pt-2 dark:border-slate-800">
-                <button type="button" onClick={onClearFilters} className="btn-ghost text-xs text-slate-600 dark:text-slate-300">
-                  {t('orders.filter.reset')}
-                </button>
-                <button type="button" onClick={onToggleFilter} className="btn-primary text-xs">
-                  {t('orders.filter.close')}
-                </button>
-              </div>
-            </div>
-          )}
+            <option value="">{t('orders.filter.shopAll')}</option>
+            {shops.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
+            {t('orders.filter.channel')}
+          </span>
+          <select
+            value={filters.channel}
+            onChange={(e) => setFilters((f) => ({ ...f, channel: e.target.value as 'all' | Channel }))}
+            className={inputCls}
+          >
+            <option value="all">{t('orders.filter.channelAll')}</option>
+            <option value="line">{t('orders.filter.chLine')}</option>
+            <option value="facebook">{t('orders.filter.chFb')}</option>
+            <option value="ig">{t('orders.filter.chIg')}</option>
+          </select>
+        </label>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block">
+            <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
+              {t('orders.filter.amountMin')}
+            </span>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={0}
+              value={filters.minAmount}
+              onChange={(e) => setFilters((f) => ({ ...f, minAmount: e.target.value }))}
+              className={inputCls}
+            />
+          </label>
+          <label className="block">
+            <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
+              {t('orders.filter.amountMax')}
+            </span>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={0}
+              value={filters.maxAmount}
+              onChange={(e) => setFilters((f) => ({ ...f, maxAmount: e.target.value }))}
+              className={inputCls}
+            />
+          </label>
         </div>
-        <button className="btn-primary text-xs">
-          <I.Plus className="h-4 w-4" />
-          {t('orders.create')}
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block">
+            <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
+              {t('orders.filter.dateFrom')}
+            </span>
+            <input
+              type="date"
+              value={filters.dateFrom}
+              onChange={(e) => setFilters((f) => ({ ...f, dateFrom: e.target.value }))}
+              className={inputCls + ' text-[11px]'}
+            />
+          </label>
+          <label className="block">
+            <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
+              {t('orders.filter.dateTo')}
+            </span>
+            <input
+              type="date"
+              value={filters.dateTo}
+              onChange={(e) => setFilters((f) => ({ ...f, dateTo: e.target.value }))}
+              className={inputCls + ' text-[11px]'}
+            />
+          </label>
+        </div>
+        <label className="block">
+          <span className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">
+            {t('orders.filter.slip')}
+          </span>
+          <select
+            value={filters.slip}
+            onChange={(e) => setFilters((f) => ({ ...f, slip: e.target.value as SlipFilterMode }))}
+            className={inputCls}
+          >
+            <option value="all">{t('orders.filter.slipAll')}</option>
+            <option value="with_slip">{t('orders.filter.slipWith')}</option>
+            <option value="no_slip">{t('orders.filter.slipWithout')}</option>
+          </select>
+        </label>
+      </div>
+      <div className="mt-3 flex items-center justify-between gap-2 border-t border-slate-100 pt-2 dark:border-slate-800">
+        <button type="button" onClick={onClear} className="btn-ghost text-xs text-slate-600 dark:text-slate-300">
+          {t('orders.filter.reset')}
+        </button>
+        <button type="button" onClick={onClose} className="btn-primary text-xs">
+          {t('orders.filter.close')}
         </button>
       </div>
     </div>
