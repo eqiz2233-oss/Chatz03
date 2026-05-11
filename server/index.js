@@ -627,6 +627,48 @@ const inboxSubscribers = new Set();
 let inboxBroadcastTimer = null;
 let inboxVersion = 0;
 
+/**
+ * In-memory sliding-window rate limiter — keyed by (bucket, identifier).
+ * Designed for webhook endpoints where the identifier is the requester IP.
+ * We deliberately don't pull in `express-rate-limit` because we want zero new
+ * deps + transparent behaviour during incident response. For multi-instance
+ * deployments this should be replaced with Redis or a managed gateway.
+ */
+const rateLimitBuckets = new Map(); // bucket => Map<ip, number[]>
+function rateLimit({ bucket, limit, windowMs }) {
+  return (req, res, next) => {
+    // Prefer X-Forwarded-For when behind Railway/Cloudflare so real IPs are
+    // counted (not the proxy's single shared IP). Fall back to req.ip.
+    const xff = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    const ip = xff || req.ip || req.socket?.remoteAddress || 'unknown';
+    const key = `${ip}`;
+    let store = rateLimitBuckets.get(bucket);
+    if (!store) {
+      store = new Map();
+      rateLimitBuckets.set(bucket, store);
+    }
+    const now = Date.now();
+    const cutoff = now - windowMs;
+    const hits = (store.get(key) || []).filter((t) => t > cutoff);
+    if (hits.length >= limit) {
+      const oldest = hits[0];
+      const retryAfterSec = Math.max(1, Math.ceil((oldest + windowMs - now) / 1000));
+      res.set('Retry-After', String(retryAfterSec));
+      res.status(429).json({ error: 'rate_limited', retryAfter: retryAfterSec });
+      return;
+    }
+    hits.push(now);
+    store.set(key, hits);
+    // Periodic cheap GC: every ~200 calls per bucket, drop empty entries.
+    if (hits.length === 1 && store.size > 200) {
+      for (const [k, arr] of Array.from(store.entries())) {
+        if (arr.every((t) => t <= cutoff)) store.delete(k);
+      }
+    }
+    next();
+  };
+}
+
 function scheduleInboxBroadcast() {
   if (inboxBroadcastTimer) return;
   inboxBroadcastTimer = setTimeout(() => {
@@ -1060,6 +1102,7 @@ app.post('/api/line/send', express.json({ limit: '50kb' }), async (req, res) => 
 
 app.post(
   '/api/line/webhook',
+  rateLimit({ bucket: 'line-webhook', limit: 120, windowMs: 60_000 }),
   hasSecret ? line.middleware({ channelSecret: lineConfig.channelSecret }) : (_req, _res, next) => next(),
   async (req, res) => {
     if (!hasSecret) {
@@ -1276,6 +1319,7 @@ app.get('/api/fb/webhook', (req, res) => {
 // Webhook events — raw body so we can verify X-Hub-Signature-256
 app.post(
   '/api/fb/webhook',
+  rateLimit({ bucket: 'fb-webhook', limit: 120, windowMs: 60_000 }),
   express.raw({ type: '*/*', limit: '1mb' }),
   async (req, res) => {
     syncFbConfigFromEnv();
@@ -1449,6 +1493,41 @@ app.post(
   },
 );
 
+/**
+ * Retry an upstream API call with exponential backoff. Used by the LINE and
+ * Meta send paths so a transient 5xx from upstream doesn't drop the message
+ * on first try. Only retries when `shouldRetry(err)` returns true — 4xx-style
+ * errors (bad token, bad recipient) are returned immediately so the user sees
+ * them in the UI and can fix them, instead of waiting through pointless retries.
+ *
+ *   attempt 0 → immediate
+ *   attempt 1 → 500ms delay
+ *   attempt 2 → 1500ms delay
+ */
+async function retryWithBackoff(fn, { tries = 3, shouldRetry = () => true, label = 'op' } = {}) {
+  let lastErr;
+  for (let i = 0; i < tries; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastErr = e;
+      if (i === tries - 1 || !shouldRetry(e)) throw e;
+      const delay = 500 * Math.pow(3, i); // 500, 1500ms
+      console.warn(`[retry] ${label} attempt ${i + 1}/${tries} failed (${e?.message || e}); waiting ${delay}ms`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastErr;
+}
+
+/** LINE SDK throws errors with `.statusCode`. 4xx = client error (don't retry).
+ *  5xx + network errors = upstream wobble, worth a retry. */
+function isLineRetryable(e) {
+  const code = e?.statusCode ?? e?.status;
+  if (typeof code === 'number') return code >= 500;
+  return true; // network error, no status — retry
+}
+
 async function sendLineMessage({ conversationId, text, asAi }) {
   if (!lineClient) {
     return { status: 503, error: 'LINE_CHANNEL_ACCESS_TOKEN is missing (push disabled)' };
@@ -1464,7 +1543,10 @@ async function sendLineMessage({ conversationId, text, asAi }) {
   }
   const sender = asAi ? 'ai' : 'agent';
   try {
-    await lineClient.pushMessage({ to: targetId, messages: [{ type: 'text', text: body }] });
+    await retryWithBackoff(
+      () => lineClient.pushMessage({ to: targetId, messages: [{ type: 'text', text: body }] }),
+      { tries: 3, shouldRetry: isLineRetryable, label: `LINE push ${targetId.slice(-6)}` },
+    );
     const thread = getOrCreateThread(kind, targetId);
     const now = new Date().toISOString();
     thread.messages.push({ id: crypto.randomUUID(), receivedAt: now, sender, text: body });
@@ -1473,7 +1555,7 @@ async function sendLineMessage({ conversationId, text, asAi }) {
     void logChatEvent({ channel: 'line', convId: `line:${kind}:${targetId}`, direction: 'out' });
     return { status: 200, ok: true };
   } catch (e) {
-    console.error('LINE pushMessage failed:', e?.message || e);
+    console.error('LINE pushMessage failed after retries:', e?.message || e);
     return { status: 502, error: String(e?.message || e) };
   }
 }
@@ -1494,8 +1576,10 @@ async function sendMetaMessage({ conversationId, text, asAi }) {
     return { status: 409, error: 'Bot is turned off for this conversation' };
   }
   const sender = asAi ? 'ai' : 'agent';
-  try {
-    const url = `https://graph.facebook.com/${fbConfig.apiVersion}/me/messages?access_token=${encodeURIComponent(pageToken)}`;
+  const url = `https://graph.facebook.com/${fbConfig.apiVersion}/me/messages?access_token=${encodeURIComponent(pageToken)}`;
+  // Wrap fetch in retry: throw on non-OK so retryWithBackoff sees it as failure;
+  // attach the raw HTTP status onto the thrown error so shouldRetry can decide.
+  async function doCall() {
     const r = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1504,9 +1588,24 @@ async function sendMetaMessage({ conversationId, text, asAi }) {
     const data = await r.json().catch(() => ({}));
     if (!r.ok || data?.error) {
       const msg = data?.error?.message || `HTTP ${r.status}`;
-      console.error(`${channel.toUpperCase()} send failed:`, msg);
-      return { status: 502, error: msg };
+      const err = new Error(msg);
+      err.statusCode = r.status;
+      throw err;
     }
+    return data;
+  }
+  try {
+    const data = await retryWithBackoff(doCall, {
+      tries: 3,
+      shouldRetry: (e) => {
+        const code = e?.statusCode;
+        // Retry 5xx + network errors. Don't retry 4xx (bad token, expired
+        // session, recipient outside 24h window) — those won't get better
+        // with another try and would just block the request thread.
+        return typeof code === 'number' ? code >= 500 : true;
+      },
+      label: `${channel.toUpperCase()} send ${String(targetId).slice(-6)}`,
+    });
     const thread = getOrCreateFbThread(targetId, channel);
     const now = new Date().toISOString();
     thread.messages.push({ id: data?.message_id || crypto.randomUUID(), receivedAt: now, sender, text: body });
@@ -1519,7 +1618,7 @@ async function sendMetaMessage({ conversationId, text, asAi }) {
     });
     return { status: 200, ok: true };
   } catch (e) {
-    console.error('FB/IG send exception:', e?.message || e);
+    console.error(`${channel.toUpperCase()} send failed after retries:`, e?.message || e);
     return { status: 502, error: String(e?.message || e) };
   }
 }
@@ -1537,10 +1636,55 @@ async function sendMetaMessage({ conversationId, text, asAi }) {
 // On success, we push the reply through the same send path the human agent
 // uses, tagged sender='ai' so it shows up with the AI badge in the inbox.
 // ──────────────────────────────────────────────────────────────────────────
+/**
+ * Keyword auto-reply: matched BEFORE the AI path so simple FAQs (price,
+ * shipping, return) don't burn API tokens. Each rule has 1+ keywords and a
+ * fixed reply. Matching is case-insensitive substring, first match wins.
+ * Returns true if a reply was sent so the caller can skip the AI step.
+ */
+async function tryKeywordReply({ channel, conversationId, customerText }) {
+  if (!customerText || !String(customerText).trim()) return false;
+  if (!isBotEnabled(conversationId)) return false;
+  let rules;
+  try {
+    rules = await kvGet('bot.keywordRules.v1', []);
+  } catch {
+    rules = [];
+  }
+  if (!Array.isArray(rules) || rules.length === 0) return false;
+  const hay = String(customerText).toLowerCase();
+  const match = rules.find(
+    (r) =>
+      r &&
+      r.enabled !== false &&
+      typeof r.reply === 'string' &&
+      r.reply.trim() &&
+      Array.isArray(r.keywords) &&
+      r.keywords.some((k) => typeof k === 'string' && k.trim() && hay.includes(k.toLowerCase().trim())),
+  );
+  if (!match) return false;
+  try {
+    if (channel === 'line') {
+      await sendLineMessage({ conversationId, text: match.reply, asAi: true });
+    } else {
+      await sendMetaMessage({ conversationId, text: match.reply, asAi: true });
+    }
+    return true;
+  } catch (e) {
+    console.warn('[keyword] reply failed:', e?.message || e);
+    return false;
+  }
+}
+
 async function tryAutoReply({ channel, conversationId, thread, customerText }) {
-  if (!isAiEnabled()) return;
   if (!customerText || !String(customerText).trim()) return;
   if (!isBotEnabled(conversationId)) return;
+
+  // Keyword rules first — they're cheap, deterministic, and don't need an AI key.
+  if (await tryKeywordReply({ channel, conversationId, customerText })) return;
+
+  // Fall through to AI for everything not covered by an explicit rule.
+  if (!isAiEnabled()) return;
   let settings;
   try {
     settings = await kvGet('bot.settings.v1', {});
@@ -2076,7 +2220,7 @@ app.post('/api/fb/integration/disconnect', async (_req, res) => {
 // Auth: login / logout / current user
 // =====================================================================
 
-app.post('/api/auth/login', express.json({ limit: '4kb' }), async (req, res) => {
+app.post('/api/auth/login', rateLimit({ bucket: 'auth-login', limit: 10, windowMs: 60_000 }), express.json({ limit: '4kb' }), async (req, res) => {
   const username = String(req.body?.username || '').trim();
   const password = String(req.body?.password || '');
   if (!username || !password) {
@@ -2304,6 +2448,57 @@ app.put('/api/bot/settings', express.json({ limit: '32kb' }), async (req, res) =
     const merged = { ...DEFAULT_BOT_SETTINGS, ...current, ...incoming };
     await kvSet(BOT_SETTINGS_KEY, merged);
     res.json({ settings: merged });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+// Keyword auto-reply rules — fast, deterministic FAQ responses.
+// Stored as an ordered array; first matching rule wins. Each rule:
+//   { id, keywords: string[], reply: string, enabled: boolean }
+const KEYWORD_RULES_KEY = 'bot.keywordRules.v1';
+const MAX_KEYWORD_RULES = 100;
+const MAX_KEYWORDS_PER_RULE = 20;
+const MAX_KEYWORD_LEN = 80;
+const MAX_REPLY_LEN = 800;
+
+function sanitizeKeywordRules(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const r of raw.slice(0, MAX_KEYWORD_RULES)) {
+    if (!r || typeof r !== 'object') continue;
+    const keywords = Array.isArray(r.keywords)
+      ? r.keywords
+          .map((k) => String(k || '').trim().slice(0, MAX_KEYWORD_LEN))
+          .filter(Boolean)
+          .slice(0, MAX_KEYWORDS_PER_RULE)
+      : [];
+    const reply = String(r.reply || '').trim().slice(0, MAX_REPLY_LEN);
+    if (keywords.length === 0 || !reply) continue;
+    out.push({
+      id: typeof r.id === 'string' && r.id ? r.id : `kr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      keywords,
+      reply,
+      enabled: r.enabled !== false,
+    });
+  }
+  return out;
+}
+
+app.get('/api/bot/keyword-rules', async (_req, res) => {
+  try {
+    const rules = await kvGet(KEYWORD_RULES_KEY, []);
+    res.json({ rules: Array.isArray(rules) ? rules : [] });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+app.put('/api/bot/keyword-rules', express.json({ limit: '128kb' }), async (req, res) => {
+  try {
+    const clean = sanitizeKeywordRules(req.body?.rules);
+    await kvSet(KEYWORD_RULES_KEY, clean);
+    res.json({ rules: clean });
   } catch (e) {
     res.status(500).json({ error: String(e?.message || e) });
   }

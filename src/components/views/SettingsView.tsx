@@ -391,6 +391,9 @@ function BotTab({ t }: { t: (k: string) => string }) {
         />
       </SectionCard>
 
+      <KeywordRulesCard />
+
+
       <SectionCard emoji="📄" title={t('settings.payment')} desc={null}>
         <div className="mb-3 grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/60">
           <label className="block">
@@ -758,6 +761,211 @@ function EasySlipIntegrationCard({ t: _t }: { t: (k: string) => string }) {
           </a>
         }
       />
+    </div>
+  );
+}
+
+
+interface KeywordRule {
+  id: string;
+  keywords: string[];
+  reply: string;
+  enabled: boolean;
+}
+
+/**
+ * Manage keyword-based auto-replies. The bot matches the customer's text
+ * against each rule's keywords (case-insensitive substring); first match wins
+ * and short-circuits the AI path, so simple FAQs don't burn API tokens.
+ */
+function KeywordRulesCard() {
+  const { t, locale } = useAppPreferences();
+  const [rules, setRules] = useState<KeywordRule[] | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const r = await fetch('/api/bot/keyword-rules', { credentials: 'include' });
+        if (!r.ok) throw new Error(String(r.status));
+        const j = (await r.json()) as { rules: KeywordRule[] };
+        if (!cancelled) setRules(Array.isArray(j.rules) ? j.rules : []);
+      } catch {
+        if (!cancelled) setRules([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const save = useCallback(
+    async (next: KeywordRule[]) => {
+      setRules(next);
+      setSaving(true);
+      try {
+        await fetch('/api/bot/keyword-rules', {
+          method: 'PUT',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rules: next }),
+        });
+      } catch {
+        /* surfaced via the saving=false dot toggle; nothing destructive here */
+      } finally {
+        setSaving(false);
+      }
+    },
+    [],
+  );
+
+  const addRule = () => {
+    if (!rules) return;
+    const fresh: KeywordRule = {
+      id: `kr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      keywords: [],
+      reply: '',
+      enabled: true,
+    };
+    void save([...rules, fresh]);
+  };
+
+  const updateRule = (id: string, patch: Partial<KeywordRule>) => {
+    if (!rules) return;
+    void save(rules.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  };
+
+  const removeRule = (id: string) => {
+    if (!rules) return;
+    void save(rules.filter((r) => r.id !== id));
+  };
+
+  return (
+    <SectionCard
+      emoji="💡"
+      title={locale === 'th' ? 'ตอบอัตโนมัติด้วย Keyword' : 'Keyword auto-reply'}
+      desc={
+        locale === 'th'
+          ? 'ถ้าข้อความลูกค้าตรงกับ keyword ที่ตั้งไว้ ระบบจะตอบให้ทันที (ไม่ใช้ AI)'
+          : 'When a customer message contains any keyword, the bot replies instantly (no AI tokens used).'
+      }
+    >
+      <div className="space-y-3">
+        {rules === null && (
+          <div className="text-xs text-slate-400 dark:text-slate-500">
+            {locale === 'th' ? 'กำลังโหลด…' : 'Loading…'}
+          </div>
+        )}
+        {rules && rules.length === 0 && (
+          <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-center text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-400">
+            {locale === 'th'
+              ? 'ยังไม่มีกฎ — ลองเพิ่มกฎแรก เช่น keyword: "ราคา" → ตอบ: "ราคา 250 บาทค่ะ"'
+              : 'No rules yet — try one like keyword: "price" → reply: "It's 250 THB"'}
+          </div>
+        )}
+        {rules?.map((rule) => (
+          <KeywordRuleRow
+            key={rule.id}
+            rule={rule}
+            onChange={(patch) => updateRule(rule.id, patch)}
+            onRemove={() => removeRule(rule.id)}
+            locale={locale}
+          />
+        ))}
+        <div className="flex items-center justify-between">
+          <button type="button" onClick={addRule} className="btn-secondary text-xs">
+            <I.Plus className="h-3.5 w-3.5" />
+            {locale === 'th' ? 'เพิ่มกฎ' : 'Add rule'}
+          </button>
+          {saving && (
+            <span className="text-[11px] text-slate-400 dark:text-slate-500">
+              {locale === 'th' ? 'กำลังบันทึก…' : 'Saving…'}
+            </span>
+          )}
+        </div>
+      </div>
+    </SectionCard>
+  );
+}
+
+function KeywordRuleRow({
+  rule,
+  onChange,
+  onRemove,
+  locale,
+}: {
+  rule: KeywordRule;
+  onChange: (patch: Partial<KeywordRule>) => void;
+  onRemove: () => void;
+  locale: Locale;
+}) {
+  // Comma-separated input is the simplest UX; we split on save.
+  const kwInput = rule.keywords.join(', ');
+
+  return (
+    <div
+      className={
+        'rounded-xl border bg-white p-3 transition dark:bg-slate-900 ' +
+        (rule.enabled
+          ? 'border-slate-200 dark:border-slate-700'
+          : 'border-slate-200/60 opacity-60 dark:border-slate-800')
+      }
+    >
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
+          <input
+            type="checkbox"
+            checked={rule.enabled}
+            onChange={(e) => onChange({ enabled: e.target.checked })}
+            className="h-3.5 w-3.5 rounded accent-brand-600"
+          />
+          {locale === 'th' ? 'ใช้งาน' : 'Enabled'}
+        </label>
+        <button
+          type="button"
+          onClick={onRemove}
+          className="rounded-md p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40 dark:hover:text-rose-300"
+          aria-label={locale === 'th' ? 'ลบกฎ' : 'Remove rule'}
+        >
+          <I.X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <label className="mb-2 block">
+        <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
+          {locale === 'th' ? 'คีย์เวิร์ด (คั่นด้วย , )' : 'Keywords (comma-separated)'}
+        </div>
+        <input
+          type="text"
+          value={kwInput}
+          onChange={(e) =>
+            onChange({
+              keywords: e.target.value
+                .split(',')
+                .map((s) => s.trim())
+                .filter(Boolean),
+            })
+          }
+          placeholder={locale === 'th' ? 'ราคา, เท่าไหร่, ค่าส่ง' : 'price, how much, shipping'}
+          className="input text-sm"
+        />
+      </label>
+      <label className="block">
+        <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
+          {locale === 'th' ? 'ข้อความตอบกลับ' : 'Reply'}
+        </div>
+        <textarea
+          rows={2}
+          value={rule.reply}
+          onChange={(e) => onChange({ reply: e.target.value })}
+          placeholder={
+            locale === 'th'
+              ? 'ราคา 250 บาทค่ะ ส่งฟรีถ้าซื้อ 2 ชิ้นขึ้นไป'
+              : "It's 250 THB. Free shipping when you order 2+."
+          }
+          className="input resize-y text-sm"
+        />
+      </label>
     </div>
   );
 }
