@@ -266,13 +266,10 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
     return list.find((c) => c.id === activeId) ?? list[0];
   }, [list, activeId]);
 
-  /** Sum unread across the visible list — drives the tab-title badge and the
-   * soft "ding" when new messages arrive while the user is on another tab. */
-  const totalUnread = useMemo(
-    () => list.reduce((acc, c) => acc + (c.unread > 0 ? c.unread : 0), 0),
-    [list],
-  );
-  useInboxNotifications(totalUnread);
+  /** Drives the (N) prefix on the tab title and the soft ding when a new
+   * customer message lands. Detection is based on per-conversation message
+   * counts, so it works even before the server starts tracking `unread`. */
+  useInboxNotifications(list, activeId);
 
   const conversationForThread = useMemo(() => {
     if (!active) return null;

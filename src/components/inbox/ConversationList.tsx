@@ -2,6 +2,7 @@ import type { Channel, Conversation } from '../../types';
 import { ChannelIcon, I } from '../Icons';
 import { useAppPreferences } from '../../context/AppPreferencesContext';
 import { ConversationRowSkeleton } from '../Skeleton';
+import { playNotification, useMutedState } from '../../lib/inboxNotifications';
 import { useMemo, useState } from 'react';
 
 interface Props {
@@ -16,6 +17,7 @@ type ToggleFilterKey = 'unread' | Channel;
 
 export function ConversationList({ conversations, activeId, onSelect, loading = false }: Props) {
   const { t } = useAppPreferences();
+  const [muted, setMuted] = useMutedState();
   const FILTERS = useMemo(
     () =>
       [
@@ -161,6 +163,24 @@ export function ConversationList({ conversations, activeId, onSelect, loading = 
             )}
           </div>
           <div className="flex shrink-0 items-center gap-0.5">
+            <button
+              type="button"
+              onClick={() => {
+                if (muted) {
+                  setMuted(false);
+                  playNotification();
+                } else {
+                  // Single click on an un-muted bell = quick "test"; double-click mutes.
+                  playNotification();
+                }
+              }}
+              onDoubleClick={() => setMuted(true)}
+              aria-pressed={!muted}
+              title={muted ? t('inbox.soundUnmute') : t('inbox.soundTest')}
+              className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+            >
+              {muted ? <I.BellOff className="h-4 w-4" /> : <I.Bell className="h-4 w-4" />}
+            </button>
             <button type="button" className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200">
               <I.Filter className="h-4 w-4" />
             </button>
