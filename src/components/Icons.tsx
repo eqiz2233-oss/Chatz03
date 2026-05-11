@@ -73,6 +73,9 @@ export const I = {
       <line x1="1" y1="1" x2="23" y2="23" />
     </svg>
   ),
+  ChevronLeft: (p: SVGProps<SVGSVGElement>) => (
+    <svg {...base} {...p}><polyline points="15 18 9 12 15 6" /></svg>
+  ),
   Filter: (p: SVGProps<SVGSVGElement>) => (
     <svg {...base} {...p}><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
   ),

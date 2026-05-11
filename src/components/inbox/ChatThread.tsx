@@ -4,12 +4,30 @@ import type { Conversation, Message } from '../../types';
 import { ChannelIcon, I } from '../Icons';
 import { SlipCard } from './SlipCard';
 import { useAppPreferences } from '../../context/AppPreferencesContext';
+import {
+  addQuickReply,
+  getQuickReplies,
+  removeQuickReply,
+  QUICK_REPLY_MAX_LENGTH,
+  type QuickReply,
+} from '../../lib/quickReplies';
+import {
+  addTag,
+  getCustomerMeta,
+  removeTag,
+  setNote,
+  TAG_MAX_LEN,
+  NOTE_MAX_LEN,
+  type CustomerMeta,
+} from '../../lib/customerNotes';
 
 interface Props {
   conversation: Conversation;
   onSend: (text: string, sender: 'agent' | 'ai') => void | Promise<void>;
   onPinMessage: (messageId: string | null) => void;
   onToggleBot?: (enabled: boolean) => void | Promise<void>;
+  /** Mobile-only back action — when set, a chevron appears in the header. */
+  onBack?: () => void;
 }
 
 type ChatMediaPreview = { type: 'image' | 'video'; src: string; poster?: string };
@@ -78,7 +96,7 @@ function ChatMediaLightbox({
   );
 }
 
-export function ChatThread({ conversation, onSend, onPinMessage, onToggleBot }: Props) {
+export function ChatThread({ conversation, onSend, onPinMessage, onToggleBot, onBack }: Props) {
   const { t } = useAppPreferences();
   const [text, setText] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -86,7 +104,15 @@ export function ChatThread({ conversation, onSend, onPinMessage, onToggleBot }: 
   const [mediaLightbox, setMediaLightbox] = useState<ChatMediaPreview | null>(null);
   const botEnabled = conversation.botEnabled !== false;
 
-  const quickReplies = useMemo(() => [t('chat.q1'), t('chat.q2'), t('chat.q3'), t('chat.q4')], [t]);
+  // Default replies stay as locked pills (you can't break the inbox by deleting
+  // every preset). Custom ones come from localStorage and can be removed.
+  const defaultReplies = useMemo(
+    () => [t('chat.q1'), t('chat.q2'), t('chat.q3'), t('chat.q4')],
+    [t],
+  );
+  const [customReplies, setCustomReplies] = useState<QuickReply[]>(() => getQuickReplies());
+  const [qrEditing, setQrEditing] = useState(false);
+  const [qrDraft, setQrDraft] = useState('');
 
   const pinnedMessage = useMemo(() => {
     const id = conversation.pinnedMessageId;
@@ -131,7 +157,17 @@ export function ChatThread({ conversation, onSend, onPinMessage, onToggleBot }: 
     <>
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-white dark:bg-slate-900">
       <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-200/90 px-4 py-3 dark:border-slate-800 sm:gap-3 sm:px-5 sm:py-3.5">
-        <div className="flex min-w-0 flex-1 items-center gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              aria-label={t('chat.back')}
+              className="-ml-1 grid h-9 w-9 shrink-0 place-items-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200 md:hidden"
+            >
+              <I.ChevronLeft className="h-5 w-5" />
+            </button>
+          )}
           <img src={conversation.avatar} className="h-11 w-11 shrink-0 rounded-full bg-slate-100 ring-2 ring-slate-100 dark:bg-slate-800 dark:ring-slate-800" alt="" />
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
@@ -171,6 +207,8 @@ export function ChatThread({ conversation, onSend, onPinMessage, onToggleBot }: 
           {t('chat.botOffBanner')}
         </div>
       )}
+
+      <CustomerTagsBar conversationId={conversation.id} t={t} />
 
       {pinnedMessage && (
         <div className="w-full shrink-0 border-b border-slate-300/90 dark:border-slate-700/90">
@@ -218,8 +256,8 @@ export function ChatThread({ conversation, onSend, onPinMessage, onToggleBot }: 
 
       <footer className="shrink-0 border-t border-slate-200/90 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900 sm:px-6">
         <div className="mx-auto max-w-3xl">
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            {quickReplies.map((q) => (
+          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+            {defaultReplies.map((q) => (
               <button
                 key={q}
                 type="button"
@@ -229,6 +267,78 @@ export function ChatThread({ conversation, onSend, onPinMessage, onToggleBot }: 
                 {q}
               </button>
             ))}
+            {customReplies.map((q) => (
+              <span
+                key={q.id}
+                className="group relative inline-flex items-stretch"
+              >
+                <button
+                  type="button"
+                  onClick={() => setText(q.text)}
+                  className="rounded-full border border-brand-200 bg-brand-50/60 px-3 py-1 pr-7 text-xs font-medium text-brand-700 transition hover:border-brand-300 hover:bg-white dark:border-brand-700/60 dark:bg-brand-950/40 dark:text-brand-200 dark:hover:border-brand-500"
+                  title={q.text}
+                >
+                  {q.text.length > 28 ? q.text.slice(0, 28) + '…' : q.text}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCustomReplies(removeQuickReply(q.id))}
+                  aria-label={t('chat.qrRemove')}
+                  className="absolute right-1.5 top-1/2 grid h-4 w-4 -translate-y-1/2 place-items-center rounded-full text-brand-600/50 opacity-0 transition hover:bg-brand-100 hover:text-brand-700 group-hover:opacity-100 dark:text-brand-300/60 dark:hover:bg-brand-900/60 dark:hover:text-brand-100"
+                >
+                  <I.X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+            {qrEditing ? (
+              <span className="inline-flex items-center gap-1 rounded-full border border-brand-300 bg-white px-2 py-0.5 shadow-sm dark:border-brand-500 dark:bg-slate-900">
+                <input
+                  autoFocus
+                  type="text"
+                  value={qrDraft}
+                  maxLength={QUICK_REPLY_MAX_LENGTH}
+                  onChange={(e) => setQrDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      const text = qrDraft.trim();
+                      if (text) setCustomReplies(addQuickReply(text));
+                      setQrDraft('');
+                      setQrEditing(false);
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault();
+                      setQrDraft('');
+                      setQrEditing(false);
+                    }
+                  }}
+                  placeholder={t('chat.qrAddPlaceholder')}
+                  className="w-44 bg-transparent text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none dark:text-slate-100"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const text = qrDraft.trim();
+                    if (text) setCustomReplies(addQuickReply(text));
+                    setQrDraft('');
+                    setQrEditing(false);
+                  }}
+                  className="rounded-full bg-brand-600 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-brand-700 dark:bg-brand-500 dark:hover:bg-brand-400"
+                >
+                  {t('chat.qrAddSave')}
+                </button>
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setQrEditing(true)}
+                title={t('chat.qrAddTitle')}
+                aria-label={t('chat.qrAddTitle')}
+                className="inline-flex items-center gap-0.5 rounded-full border border-dashed border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-500 transition hover:border-brand-400 hover:text-brand-600 dark:border-slate-600 dark:text-slate-400 dark:hover:border-brand-500 dark:hover:text-brand-300"
+              >
+                <I.Plus className="h-3 w-3" />
+                {t('chat.qrAdd')}
+              </button>
+            )}
           </div>
           <div className="flex items-end gap-2 rounded-2xl border border-slate-200/90 bg-slate-50/90 p-1.5 shadow-sm focus-within:border-brand-400 focus-within:bg-white focus-within:ring-2 focus-within:ring-brand-100 dark:border-slate-600 dark:bg-slate-800/80 dark:focus-within:border-brand-500 dark:focus-within:bg-slate-900 dark:focus-within:ring-brand-900/30">
             <button type="button" className="shrink-0 rounded-xl p-2 text-slate-500 transition hover:bg-white hover:text-slate-800 dark:hover:bg-slate-700 dark:hover:text-slate-200" aria-label="Attach">
@@ -584,6 +694,126 @@ function MessageBubble({
             {isAI ? 'AI' : 'A'}
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Compact tags + optional note for the active conversation.
+ *  - Tags render as small pills inline; click "+" to add, hover to remove.
+ *  - The note is hidden behind a toggle so it doesn't clutter the chat for
+ *    customers without notes; click the pencil to expand a small textarea.
+ *  - All data lives in localStorage (see lib/customerNotes.ts).
+ */
+function CustomerTagsBar({ conversationId, t }: { conversationId: string; t: TFn }) {
+  const [meta, setMeta] = useState<CustomerMeta>(() => getCustomerMeta(conversationId));
+  const [tagDraft, setTagDraft] = useState('');
+  const [tagEditing, setTagEditing] = useState(false);
+  const [noteOpen, setNoteOpen] = useState(false);
+
+  // Re-load when the active conversation changes.
+  useEffect(() => {
+    setMeta(getCustomerMeta(conversationId));
+    setTagDraft('');
+    setTagEditing(false);
+    setNoteOpen(false);
+  }, [conversationId]);
+
+  const commitTag = () => {
+    const v = tagDraft.trim();
+    if (v) setMeta(addTag(conversationId, v));
+    setTagDraft('');
+    setTagEditing(false);
+  };
+
+  const hasNote = Boolean(meta.note.trim());
+
+  return (
+    <div className="w-full shrink-0 border-b border-slate-200/90 bg-slate-50/70 px-4 py-2 dark:border-slate-800 dark:bg-slate-900/40">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {meta.tags.map((tag) => (
+          <span
+            key={tag}
+            className="group inline-flex items-stretch overflow-hidden rounded-full bg-slate-200/70 text-[11px] font-medium text-slate-700 dark:bg-slate-700/70 dark:text-slate-200"
+          >
+            <span className="py-0.5 pl-2 pr-1.5">{tag}</span>
+            <button
+              type="button"
+              onClick={() => setMeta(removeTag(conversationId, tag))}
+              aria-label={t('chat.tagRemove')}
+              className="grid place-items-center px-1 text-slate-500 transition hover:bg-slate-300/70 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-600 dark:hover:text-white"
+            >
+              <I.X className="h-2.5 w-2.5" />
+            </button>
+          </span>
+        ))}
+        {tagEditing ? (
+          <span className="inline-flex items-center gap-1 rounded-full border border-brand-300 bg-white px-2 py-0.5 shadow-sm dark:border-brand-500 dark:bg-slate-900">
+            <input
+              autoFocus
+              type="text"
+              value={tagDraft}
+              maxLength={TAG_MAX_LEN}
+              onChange={(e) => setTagDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  commitTag();
+                } else if (e.key === 'Escape') {
+                  e.preventDefault();
+                  setTagDraft('');
+                  setTagEditing(false);
+                }
+              }}
+              onBlur={commitTag}
+              placeholder={t('chat.tagAddPlaceholder')}
+              className="w-28 bg-transparent text-[11px] text-slate-900 placeholder:text-slate-400 focus:outline-none dark:text-slate-100"
+            />
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setTagEditing(true)}
+            title={t('chat.tagAddTitle')}
+            className="inline-flex items-center gap-0.5 rounded-full border border-dashed border-slate-300 px-2 py-0.5 text-[11px] font-medium text-slate-500 transition hover:border-brand-400 hover:text-brand-600 dark:border-slate-600 dark:text-slate-400 dark:hover:border-brand-500 dark:hover:text-brand-300"
+          >
+            <I.Tag className="h-3 w-3" />
+            {meta.tags.length === 0 ? t('chat.tagAddFirst') : t('chat.tagAdd')}
+          </button>
+        )}
+        <span className="ml-auto inline-flex items-center">
+          <button
+            type="button"
+            onClick={() => setNoteOpen((v) => !v)}
+            className={
+              'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium transition ' +
+              (hasNote
+                ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-900/40'
+                : 'text-slate-500 hover:bg-slate-200/70 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white')
+            }
+            title={t('chat.noteTitle')}
+          >
+            <I.Pencil className="h-3 w-3" />
+            {hasNote ? t('chat.noteSaved') : t('chat.noteAdd')}
+          </button>
+        </span>
+      </div>
+      {noteOpen && (
+        <div className="mt-2">
+          <textarea
+            value={meta.note}
+            maxLength={NOTE_MAX_LEN}
+            onChange={(e) => setMeta(setNote(conversationId, e.target.value))}
+            rows={2}
+            placeholder={t('chat.notePlaceholder')}
+            className="w-full resize-y rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:ring-brand-900/30"
+          />
+          <div className="mt-0.5 flex items-center justify-between text-[10px] text-slate-400 dark:text-slate-500">
+            <span>{t('chat.noteHint')}</span>
+            <span className="tabular-nums">{meta.note.length}/{NOTE_MAX_LEN}</span>
+          </div>
+        </div>
       )}
     </div>
   );

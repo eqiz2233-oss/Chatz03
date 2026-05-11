@@ -170,14 +170,12 @@ export function useInboxNotifications(conversations: Conversation[], activeId: s
     const isFirstPass = !primedRef.current;
 
     let newArrival = false;
-    let arrivedInActive = false;
 
     for (const c of conversations) {
       const n = customerMessageCount(c);
       const prev = lastCounts.get(c.id);
       if (!isFirstPass && prev !== undefined && n > prev) {
         newArrival = true;
-        if (c.id === activeId) arrivedInActive = true;
       }
       lastCounts.set(c.id, n);
     }
@@ -190,10 +188,9 @@ export function useInboxNotifications(conversations: Conversation[], activeId: s
     primedRef.current = true;
     if (!newArrival) return;
 
-    // Only suppress when the user is *actively* reading the same chat.
-    const focused = document.hasFocus() && document.visibilityState === 'visible';
-    if (arrivedInActive && focused) return;
-
+    // Messenger-style: ding on EVERY incoming customer message, including the
+    // one in the chat you're currently looking at. Mute via the bell icon if
+    // it gets annoying for very active chats.
     playNotification();
   }, [conversations, activeId]);
 }

@@ -66,6 +66,9 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
   const [activeId, setActiveId] = useState(() => seed[0]?.id ?? '');
   /** ปักหมุดแชทต่อห้อง (ร้านเท่านั้น) — override ค่า pinnedMessageId จาก seed/API */
   const [pinOverrides, setPinOverrides] = useState<Record<string, string | null>>({});
+  /** Tracks whether the user has drilled into a chat on mobile (< md). On
+   *  desktop both panels are always visible so this flag is ignored. */
+  const [mobileView, setMobileView] = useState<'list' | 'chat'>('list');
 
   const lineBackend = health.loaded && health.lineConfigured && !health.fetchFailed;
   const fbBackend = health.loaded && health.fbConfigured && !health.fetchFailed;
@@ -243,6 +246,9 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
 
     if (nextId) {
       setActiveId(nextId);
+      // When coming in from Orders → "ไปที่แชท", drill into the chat panel on
+      // mobile too so the user doesn't have to tap a second time.
+      setMobileView('chat');
       onFocusConsumedRef.current?.();
       return undefined;
     }
@@ -270,6 +276,33 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
    * customer message lands. Detection is based on per-conversation message
    * counts, so it works even before the server starts tracking `unread`. */
   useInboxNotifications(list, activeId);
+
+  /**
+   * J/K keyboard navigation — like Gmail/Linear. Ignored while the user is
+   * typing in an input/textarea/contenteditable so it never eats keystrokes
+   * inside the chat reply box or the search field.
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const tag = (e.target as HTMLElement | null)?.tagName?.toLowerCase() || '';
+      const editable = (e.target as HTMLElement | null)?.isContentEditable;
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || editable) return;
+      if (list.length === 0) return;
+      const i = list.findIndex((c) => c.id === activeId);
+      if (e.key === 'j' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        const next = list[(i === -1 ? 0 : i + 1) % list.length];
+        if (next) setActiveId(next.id);
+      } else if (e.key === 'k' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const prev = list[(i <= 0 ? list.length : i) - 1];
+        if (prev) setActiveId(prev.id);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [list, activeId]);
 
   const conversationForThread = useMemo(() => {
     if (!active) return null;
@@ -367,7 +400,10 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
         <ConversationList
           conversations={list}
           activeId={activeId}
-          onSelect={setActiveId}
+          onSelect={(id) => {
+            setActiveId(id);
+            setMobileView('chat');
+          }}
           loading={
             // Either backend is configured + we haven't received first payload yet,
             // and we have no items to show — that's the only moment the user
@@ -375,11 +411,20 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
             (lineBackend && !lineInboxFetched) ||
             (fbBackend && !fbInboxFetched)
           }
+          hiddenOnMobile={mobileView === 'chat'}
         />
         {conversationForThread ? (
-          <ChatThread conversation={conversationForThread} onSend={handleSend} onPinMessage={handlePinMessage} onToggleBot={handleToggleBot} />
+          <div className={'flex min-h-0 min-w-0 flex-1 ' + (mobileView === 'chat' ? 'flex' : 'hidden md:flex')}>
+            <ChatThread
+              conversation={conversationForThread}
+              onSend={handleSend}
+              onPinMessage={handlePinMessage}
+              onToggleBot={handleToggleBot}
+              onBack={() => setMobileView('list')}
+            />
+          </div>
         ) : (
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center bg-[#f5f4fa] px-6 text-center text-sm text-slate-500 dark:bg-slate-950/80 dark:text-slate-400">
+          <div className="hidden min-h-0 min-w-0 flex-1 flex-col items-center justify-center bg-[#f5f4fa] px-6 text-center text-sm text-slate-500 dark:bg-slate-950/80 dark:text-slate-400 md:flex">
             {t('inbox.empty')}
           </div>
         )}

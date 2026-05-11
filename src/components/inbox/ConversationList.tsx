@@ -11,11 +11,13 @@ interface Props {
   onSelect: (id: string) => void;
   /** True on first fetch before any conversation arrives — render skeleton rows. */
   loading?: boolean;
+  /** Hide on phones when the user has drilled into a conversation. */
+  hiddenOnMobile?: boolean;
 }
 
 type ToggleFilterKey = 'unread' | Channel;
 
-export function ConversationList({ conversations, activeId, onSelect, loading = false }: Props) {
+export function ConversationList({ conversations, activeId, onSelect, loading = false, hiddenOnMobile = false }: Props) {
   const { t } = useAppPreferences();
   const [muted, setMuted] = useMutedState();
   const FILTERS = useMemo(
@@ -151,7 +153,12 @@ export function ConversationList({ conversations, activeId, onSelect, loading = 
   };
 
   return (
-    <div className="flex h-full min-h-0 w-[360px] shrink-0 flex-col border-r border-slate-200/90 bg-white dark:border-slate-800 dark:bg-slate-900">
+    <div
+      className={
+        'flex h-full min-h-0 w-full shrink-0 flex-col border-r border-slate-200/90 bg-white dark:border-slate-800 dark:bg-slate-900 md:w-[360px] ' +
+        (hiddenOnMobile ? 'hidden md:flex' : 'flex')
+      }
+    >
       <div className="border-b border-slate-200/90 px-4 pb-4 pt-6 dark:border-slate-800">
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-baseline gap-2">
