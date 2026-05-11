@@ -1,17 +1,20 @@
 import type { Channel, Conversation } from '../../types';
 import { ChannelIcon, I } from '../Icons';
 import { useAppPreferences } from '../../context/AppPreferencesContext';
+import { ConversationRowSkeleton } from '../Skeleton';
 import { useMemo, useState } from 'react';
 
 interface Props {
   conversations: Conversation[];
   activeId: string;
   onSelect: (id: string) => void;
+  /** True on first fetch before any conversation arrives — render skeleton rows. */
+  loading?: boolean;
 }
 
 type ToggleFilterKey = 'unread' | Channel;
 
-export function ConversationList({ conversations, activeId, onSelect }: Props) {
+export function ConversationList({ conversations, activeId, onSelect, loading = false }: Props) {
   const { t } = useAppPreferences();
   const FILTERS = useMemo(
     () =>
@@ -205,6 +208,13 @@ export function ConversationList({ conversations, activeId, onSelect }: Props) {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
+        {loading && conversations.length === 0 && (
+          <div>
+            {Array.from({ length: 6 }).map((_, i) => (
+              <ConversationRowSkeleton key={i} />
+            ))}
+          </div>
+        )}
         {pinnedRows.length > 0 && (
           <div>
             <div className="sticky top-0 z-[1] bg-white px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:bg-slate-900 dark:text-slate-500">

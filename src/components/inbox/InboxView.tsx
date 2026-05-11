@@ -2,10 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { conversations as seed } from '../../data/mockData';
 import type { Conversation, InboxFocusRequest, Message } from '../../types';
 import { useAppPreferences } from '../../context/AppPreferencesContext';
+import { useToast } from '../../context/ToastContext';
 import { ConversationList } from './ConversationList';
 import { ChatThread } from './ChatThread';
 import { formatRelativeListTime, mapLineConversationDto, type LineConversationDto } from '../../lib/lineInbox';
 import { mapFbConversationDto, type FbConversationDto } from '../../lib/fbInbox';
+import { useInboxNotifications } from '../../lib/inboxNotifications';
 
 interface LineWebhookInfo {
   lastSuccessAt: string | null;
@@ -33,6 +35,7 @@ interface InboxViewProps {
 
 export function InboxView({ focusRequest = null, onFocusRequestConsumed }: InboxViewProps) {
   const { t, locale } = useAppPreferences();
+  const toast = useToast();
   const onFocusConsumedRef = useRef(onFocusRequestConsumed);
   onFocusConsumedRef.current = onFocusRequestConsumed;
   const [health, setHealth] = useState<{
@@ -247,21 +250,29 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
     const hasRemoteLine = list.some((c) => c.id.startsWith('line:'));
     if (channel === 'line' && lineBackend && !hasRemoteLine) {
       const tid = window.setTimeout(() => {
-        window.alert(t('orders.chatNotFound'));
+        toast.error(t('orders.chatNotFound'));
         onFocusConsumedRef.current?.();
       }, 12000);
       return () => clearTimeout(tid);
     }
 
-    window.alert(t('orders.chatNotFound'));
+    toast.error(t('orders.chatNotFound'));
     onFocusConsumedRef.current?.();
     return undefined;
-  }, [focusRequest, list, lineBackend, t]);
+  }, [focusRequest, list, lineBackend, t, toast]);
 
   const active = useMemo(() => {
     if (!list.length) return null;
     return list.find((c) => c.id === activeId) ?? list[0];
   }, [list, activeId]);
+
+  /** Sum unread across the visible list — drives the tab-title badge and the
+   * soft "ding" when new messages arrive while the user is on another tab. */
+  const totalUnread = useMemo(
+    () => list.reduce((acc, c) => acc + (c.unread > 0 ? c.unread : 0), 0),
+    [list],
+  );
+  useInboxNotifications(totalUnread);
 
   const conversationForThread = useMemo(() => {
     if (!active) return null;
@@ -293,10 +304,10 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
       } catch {
         // Roll back on failure.
         setList((prev) => prev.map((c) => (c.id === id ? { ...c, botEnabled: !next } : c)));
-        window.alert(t('chat.botToggleFailed'));
+        toast.error(t('chat.botToggleFailed'));
       }
     },
-    [active, t],
+    [active, t, toast],
   );
 
   const notice = useMemo(() => {
@@ -327,7 +338,7 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
         if (!res.ok) errMsg = res.statusText;
       }
       if (!res.ok) {
-        window.alert(errMsg || (isLine ? t('chat.sendFailed') : t('chat.fbSendFailed')));
+        toast.error(errMsg || (isLine ? t('chat.sendFailed') : t('chat.fbSendFailed')));
         throw new Error(errMsg || 'send failed');
       }
       if (isLine) await refetchLine();
@@ -356,7 +367,18 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
         </div>
       )}
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-        <ConversationList conversations={list} activeId={activeId} onSelect={setActiveId} />
+        <ConversationList
+          conversations={list}
+          activeId={activeId}
+          onSelect={setActiveId}
+          loading={
+            // Either backend is configured + we haven't received first payload yet,
+            // and we have no items to show — that's the only moment the user
+            // actually waits. After first paint, polling/SSE updates are silent.
+            (lineBackend && !lineInboxFetched) ||
+            (fbBackend && !fbInboxFetched)
+          }
+        />
         {conversationForThread ? (
           <ChatThread conversation={conversationForThread} onSend={handleSend} onPinMessage={handlePinMessage} onToggleBot={handleToggleBot} />
         ) : (
