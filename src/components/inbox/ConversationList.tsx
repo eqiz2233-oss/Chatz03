@@ -188,12 +188,13 @@ export function ConversationList({ conversations, activeId, onSelect, loading = 
             >
               {muted ? <I.BellOff className="h-4 w-4" /> : <I.Bell className="h-4 w-4" />}
             </button>
-            <button type="button" className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200">
-              <I.Filter className="h-4 w-4" />
-            </button>
-            <button type="button" className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200">
-              <I.Plus className="h-4 w-4" />
-            </button>
+            {/*
+              The Filter pill row below already filters the list; the icon
+              button was a duplicate placeholder. The "+" was a placeholder
+              for "create new conversation," which doesn't make sense for an
+              inbox seeded from real LINE/Meta threads. Removed both for now;
+              add back if/when we add manual conversation creation.
+            */}
           </div>
         </div>
         <div className="relative mt-4">

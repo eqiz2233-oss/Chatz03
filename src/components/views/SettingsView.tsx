@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Locale } from '../../i18n/messages';
 import type { Theme } from '../../context/AppPreferencesContext';
 import { useAppPreferences } from '../../context/AppPreferencesContext';
@@ -782,6 +782,8 @@ function KeywordRulesCard() {
   const { t, locale } = useAppPreferences();
   const [rules, setRules] = useState<KeywordRule[] | null>(null);
   const [saving, setSaving] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingRef = useRef<KeywordRule[] | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -800,24 +802,72 @@ function KeywordRulesCard() {
     };
   }, []);
 
-  const save = useCallback(
-    async (next: KeywordRule[]) => {
-      setRules(next);
-      setSaving(true);
-      try {
-        await fetch('/api/bot/keyword-rules', {
+  // Flush the last pending edit synchronously when the card unmounts (tab
+  // switch, navigation) so unsaved keystrokes don't get lost.
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      const payload = pendingRef.current;
+      if (payload) {
+        // Best-effort flush; we can't await on unmount, just fire and forget.
+        void fetch('/api/bot/keyword-rules', {
           method: 'PUT',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ rules: next }),
+          body: JSON.stringify({ rules: payload }),
+          keepalive: true,
         });
-      } catch {
-        /* surfaced via the saving=false dot toggle; nothing destructive here */
-      } finally {
-        setSaving(false);
       }
+    };
+  }, []);
+
+  const writeServer = useCallback(async (payload: KeywordRule[]) => {
+    setSaving(true);
+    try {
+      await fetch('/api/bot/keyword-rules', {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rules: payload }),
+      });
+    } catch {
+      /* network blip — local state already shows the latest; user can retry */
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
+  /** Immediate writes — used for add/remove/enable. Cancels any pending
+   *  debounced write so the in-flight payload doesn't overwrite us. */
+  const saveImmediate = useCallback(
+    (next: KeywordRule[]) => {
+      setRules(next);
+      pendingRef.current = null;
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+      void writeServer(next);
     },
-    [],
+    [writeServer],
+  );
+
+  /** Debounced write — used for keystrokes inside keyword/reply fields so
+   *  the user doesn't fire a network request per character typed. */
+  const saveDebounced = useCallback(
+    (next: KeywordRule[]) => {
+      setRules(next);
+      pendingRef.current = next;
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        debounceRef.current = null;
+        const payload = pendingRef.current;
+        if (!payload) return;
+        pendingRef.current = null;
+        void writeServer(payload);
+      }, 600);
+    },
+    [writeServer],
   );
 
   const addRule = () => {
@@ -828,17 +878,21 @@ function KeywordRulesCard() {
       reply: '',
       enabled: true,
     };
-    void save([...rules, fresh]);
+    saveImmediate([...rules, fresh]);
   };
 
-  const updateRule = (id: string, patch: Partial<KeywordRule>) => {
+  /** Text-field edits debounce (600ms idle); structural changes (enable
+   *  toggle, removal) skip the debounce so the user sees them stick. */
+  const updateRule = (id: string, patch: Partial<KeywordRule>, immediate = false) => {
     if (!rules) return;
-    void save(rules.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+    const next = rules.map((r) => (r.id === id ? { ...r, ...patch } : r));
+    if (immediate) saveImmediate(next);
+    else saveDebounced(next);
   };
 
   const removeRule = (id: string) => {
     if (!rules) return;
-    void save(rules.filter((r) => r.id !== id));
+    saveImmediate(rules.filter((r) => r.id !== id));
   };
 
   return (
@@ -868,7 +922,7 @@ function KeywordRulesCard() {
           <KeywordRuleRow
             key={rule.id}
             rule={rule}
-            onChange={(patch) => updateRule(rule.id, patch)}
+            onChange={(patch, immediate) => updateRule(rule.id, patch, immediate)}
             onRemove={() => removeRule(rule.id)}
             locale={locale}
           />
@@ -896,7 +950,8 @@ function KeywordRuleRow({
   locale,
 }: {
   rule: KeywordRule;
-  onChange: (patch: Partial<KeywordRule>) => void;
+  /** `immediate` skips the 600ms keystroke debounce (use for enable toggle). */
+  onChange: (patch: Partial<KeywordRule>, immediate?: boolean) => void;
   onRemove: () => void;
   locale: Locale;
 }) {
@@ -917,7 +972,7 @@ function KeywordRuleRow({
           <input
             type="checkbox"
             checked={rule.enabled}
-            onChange={(e) => onChange({ enabled: e.target.checked })}
+            onChange={(e) => onChange({ enabled: e.target.checked }, true)}
             className="h-3.5 w-3.5 rounded accent-brand-600"
           />
           {locale === 'th' ? 'ใช้งาน' : 'Enabled'}

@@ -1,28 +1,36 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Conversation } from '../types';
 
 /**
- * Tab-title + audible notifications driven by inbox state.
+ * Tab-title + audible notifications for the inbox.
  *
- *  - title: when there's at least one new customer message since you last
- *    looked, prepend `(N) ` to document.title (and restore on cleanup).
- *  - sound: a soft 880Hz "tick" plays whenever a NEW customer message
- *    arrives in any conversation. Skipped only when (the message landed in
- *    the conversation you're already viewing) AND (the tab is focused) —
- *    that's the one case where the user is already aware. Anything else
- *    plays the ding (background tab, other conversation, etc).
+ * State lives at MODULE level, not in a useRef, so it survives navigating
+ * away from <InboxView /> and back. (Earlier version reset the seen-counts
+ * on every remount, which made the first customer message after switching
+ * tabs silent.)
  *
- * The detection compares the per-conversation customer-message count
- * across renders, so it doesn't depend on a server-side `unread` field
- * being maintained (ours isn't yet).
+ * Approach:
+ *   - `lastSeen`: per-conversation customer-message count from the previous
+ *     render. Used to detect "a new message arrived" (dings).
+ *   - `acked`: customer-message count at the moment the user last had that
+ *     conversation open (activeId === c.id). Drives the title badge —
+ *     anything past this count is "unread."
+ *   - On the very first hook fire (per browser tab), every existing
+ *     conversation is treated as already-read so the badge doesn't open
+ *     with a huge count for chats the user already looked at before.
  *
- * Web Audio requires a user gesture before the first sound, so we install
- * a one-time pointer/key listener that creates and unlocks an
- * AudioContext on the very first click/tap/keypress.
+ * Web Audio requires a user gesture before audio plays. We keep the
+ * pointer/key/touch listeners armed for the lifetime of the tab and
+ * call `ctx.resume()` on every gesture — that way long-idle tabs whose
+ * audio context drifted back to "suspended" wake up before the next ding.
  */
 
 const BASE_TITLE_KEY = '__chatzBaseTitle__';
 const MUTE_KEY = 'chatz-mute-sound';
+
+const lastSeen = new Map<string, number>();
+const acked = new Map<string, number>();
+let initialAckDone = false;
 
 function getBaseTitle(): string {
   const w = window as unknown as Record<string, string>;
@@ -52,7 +60,7 @@ export function setMuted(muted: boolean) {
 // ─── Audio plumbing ───────────────────────────────────────────────────────────
 
 let sharedCtx: AudioContext | null = null;
-let unlocked = false;
+let unlockInstalled = false;
 
 function getCtx(): AudioContext | null {
   const AC =
@@ -69,34 +77,29 @@ function getCtx(): AudioContext | null {
   return sharedCtx;
 }
 
-/** Browsers refuse to start audio without a user gesture; arm the context the
- *  first time the user interacts with the page so the first real ding plays. */
+/**
+ * Keep audio armed for the lifetime of the tab. Every pointerdown / keydown /
+ * touchstart resumes the context if it has drifted to "suspended" (some
+ * browsers do this aggressively to save battery on idle tabs). We do NOT
+ * remove the listeners after the first hit; the cost is one no-op call per
+ * gesture, which is negligible.
+ */
 function installAudioUnlock() {
-  if (unlocked) return;
-  const unlock = () => {
-    if (unlocked) return;
+  if (unlockInstalled) return;
+  unlockInstalled = true;
+  const wake = () => {
     const ctx = getCtx();
     if (!ctx) return;
     if (ctx.state === 'suspended') void ctx.resume();
-    // Play a near-silent tone to fully wake the audio graph on iOS/Safari.
-    try {
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      g.gain.value = 0.0001;
-      o.connect(g).connect(ctx.destination);
-      o.start();
-      o.stop(ctx.currentTime + 0.01);
-    } catch {
-      /* ignore */
-    }
-    unlocked = true;
-    window.removeEventListener('pointerdown', unlock, true);
-    window.removeEventListener('keydown', unlock, true);
-    window.removeEventListener('touchstart', unlock, true);
   };
-  window.addEventListener('pointerdown', unlock, true);
-  window.addEventListener('keydown', unlock, true);
-  window.addEventListener('touchstart', unlock, true);
+  window.addEventListener('pointerdown', wake, true);
+  window.addEventListener('keydown', wake, true);
+  window.addEventListener('touchstart', wake, true);
+  // Also wake when the tab regains visibility — common case for "I was in
+  // another tab, came back, expected the next ding to work."
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') wake();
+  });
 }
 
 /** Public: play the standard ding once. Used by the auto-trigger and the
@@ -135,64 +138,70 @@ function customerMessageCount(c: Conversation): number {
   return n;
 }
 
+function ensureInitialAck(conversations: Conversation[]) {
+  if (initialAckDone) return;
+  // Wait for the first non-empty payload — otherwise we'd flip the "initial"
+  // flag while still empty, and the first conv that arrives later would be
+  // treated as a "new arrival" and ding on app load.
+  if (conversations.length === 0) return;
+  for (const c of conversations) {
+    const n = customerMessageCount(c);
+    acked.set(c.id, n);
+    lastSeen.set(c.id, n);
+  }
+  initialAckDone = true;
+}
+
 export function useInboxNotifications(conversations: Conversation[], activeId: string) {
-  /** Per-conversation customer message count from the previous render. */
-  const lastCountsRef = useRef<Map<string, number>>(new Map());
-  /** Skip sound on the very first paint — we don't want a ding when the
-   *  initial fetch lands. */
-  const primedRef = useRef(false);
-
-  // Sum unread badges (where available) + fallback to "new messages we
-  // haven't acknowledged yet" so the title badge still increments on shops
-  // whose server hasn't started tracking unread.
-  const titleCount = useMemo(() => {
-    let total = 0;
-    for (const c of conversations) {
-      total += Math.max(0, c.unread || 0);
-    }
-    return total;
-  }, [conversations]);
-
-  // Title prefix
-  useEffect(() => {
-    const base = getBaseTitle();
-    document.title = titleCount > 0 ? `(${titleCount}) ${base}` : base;
-  }, [titleCount]);
-
-  // Install the gesture-unlock listener once.
+  // Compute unread for the title badge from per-conversation acks. Recompute
+  // here (not in a useMemo) so the title stays in sync when conversations
+  // OR activeId changes.
   useEffect(() => {
     installAudioUnlock();
-  }, []);
-
-  // Sound on new customer message arrival.
-  useEffect(() => {
-    const lastCounts = lastCountsRef.current;
-    const isFirstPass = !primedRef.current;
+    ensureInitialAck(conversations);
 
     let newArrival = false;
 
     for (const c of conversations) {
-      const n = customerMessageCount(c);
-      const prev = lastCounts.get(c.id);
-      if (!isFirstPass && prev !== undefined && n > prev) {
-        newArrival = true;
+      const cur = customerMessageCount(c);
+      const prev = lastSeen.get(c.id);
+      if (initialAckDone) {
+        // New conversation (never seen) with at least one customer message,
+        // or an existing conversation whose count went up.
+        if (prev === undefined && cur > 0) newArrival = true;
+        else if (prev !== undefined && cur > prev) newArrival = true;
       }
-      lastCounts.set(c.id, n);
+      lastSeen.set(c.id, cur);
+      // Looking at this chat right now → instantly ack any new arrivals
+      // so the badge doesn't flash up only to immediately drop back.
+      if (c.id === activeId) acked.set(c.id, cur);
     }
 
-    // Drop ids that disappeared so the map doesn't grow forever.
-    for (const id of Array.from(lastCounts.keys())) {
-      if (!conversations.some((c) => c.id === id)) lastCounts.delete(id);
+    // Drop ids that disappeared so the maps don't grow without bound.
+    for (const id of Array.from(lastSeen.keys())) {
+      if (!conversations.some((c) => c.id === id)) {
+        lastSeen.delete(id);
+        acked.delete(id);
+      }
     }
 
-    primedRef.current = true;
-    if (!newArrival) return;
+    if (newArrival) playNotification();
 
-    // Messenger-style: ding on EVERY incoming customer message, including the
-    // one in the chat you're currently looking at. Mute via the bell icon if
-    // it gets annoying for very active chats.
-    playNotification();
+    // Recompute total "unseen" for the title prefix.
+    let totalUnseen = 0;
+    for (const c of conversations) {
+      const cur = customerMessageCount(c);
+      const ack = acked.get(c.id) ?? cur; // unknown → already-seen
+      const diff = cur - ack;
+      if (diff > 0) totalUnseen += diff;
+    }
+    const base = getBaseTitle();
+    document.title = totalUnseen > 0 ? `(${totalUnseen}) ${base}` : base;
   }, [conversations, activeId]);
+
+  // On unmount of the very last consumer, reset the title. We can't tell
+  // "last consumer" cheaply, so just leave the prefix — when the user signs
+  // back in, ensureInitialAck flips counts back to zero anyway.
 }
 
 /** External React hook for the mute toggle UI. */

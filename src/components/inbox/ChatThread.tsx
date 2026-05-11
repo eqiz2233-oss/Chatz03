@@ -189,15 +189,11 @@ export function ChatThread({ conversation, onSend, onPinMessage, onToggleBot, on
               t={t}
             />
           )}
-          <button type="button" className="rounded-xl p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200" aria-label="Phone">
-            <I.Phone className="h-[18px] w-[18px]" />
-          </button>
-          <button type="button" className="rounded-xl p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200" aria-label="Video">
-            <I.VideoCam className="h-[18px] w-[18px]" />
-          </button>
-          <button type="button" className="rounded-xl p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200" aria-label="More">
-            <I.MoreVertical className="h-[18px] w-[18px]" />
-          </button>
+          {/*
+            Phone / Video / "more" buttons removed for now — they were
+            placeholders with no handlers, which read as broken on first use.
+            Bring them back when voice/video infra is in place.
+          */}
         </div>
       </header>
 
@@ -306,10 +302,21 @@ export function ChatThread({ conversation, onSend, onPinMessage, onToggleBot, on
                       setQrDraft('');
                       setQrEditing(false);
                     } else if (e.key === 'Escape') {
+                      // Bail without saving — match Esc semantics elsewhere
+                      // in the app (filters, modals).
                       e.preventDefault();
                       setQrDraft('');
                       setQrEditing(false);
                     }
+                  }}
+                  onBlur={() => {
+                    // Click-outside should commit, not discard. The user
+                    // already typed a phrase; throwing it away on a stray
+                    // click is the kind of papercut that erodes trust.
+                    const text = qrDraft.trim();
+                    if (text) setCustomReplies(addQuickReply(text));
+                    setQrDraft('');
+                    setQrEditing(false);
                   }}
                   placeholder={t('chat.qrAddPlaceholder')}
                   className="w-44 bg-transparent text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none dark:text-slate-100"
@@ -340,10 +347,12 @@ export function ChatThread({ conversation, onSend, onPinMessage, onToggleBot, on
               </button>
             )}
           </div>
-          <div className="flex items-end gap-2 rounded-2xl border border-slate-200/90 bg-slate-50/90 p-1.5 shadow-sm focus-within:border-brand-400 focus-within:bg-white focus-within:ring-2 focus-within:ring-brand-100 dark:border-slate-600 dark:bg-slate-800/80 dark:focus-within:border-brand-500 dark:focus-within:bg-slate-900 dark:focus-within:ring-brand-900/30">
-            <button type="button" className="shrink-0 rounded-xl p-2 text-slate-500 transition hover:bg-white hover:text-slate-800 dark:hover:bg-slate-700 dark:hover:text-slate-200" aria-label="Attach">
-              <I.Paperclip className="h-[18px] w-[18px]" />
-            </button>
+          <div className="flex items-end gap-2 rounded-2xl border border-slate-200/90 bg-slate-50/90 px-3 py-1.5 shadow-sm focus-within:border-brand-400 focus-within:bg-white focus-within:ring-2 focus-within:ring-brand-100 dark:border-slate-600 dark:bg-slate-800/80 dark:focus-within:border-brand-500 dark:focus-within:bg-slate-900 dark:focus-within:ring-brand-900/30">
+            {/*
+              Attach / Emoji / Voice buttons were placeholders with no
+              handlers. Removed for now; bring them back as a unit when the
+              file upload + emoji picker + voice message infra is in place.
+            */}
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
@@ -358,16 +367,11 @@ export function ChatThread({ conversation, onSend, onPinMessage, onToggleBot, on
               className="max-h-32 min-h-[40px] min-w-0 flex-1 resize-none bg-transparent px-1 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none dark:text-slate-100"
             />
             <div className="flex shrink-0 items-center gap-0.5 pb-0.5">
-              <button type="button" className="rounded-xl p-2 text-slate-500 transition hover:bg-white dark:hover:bg-slate-700" aria-label="Emoji">
-                <I.Smile className="h-[18px] w-[18px]" />
-              </button>
-              <button type="button" className="rounded-xl p-2 text-slate-500 transition hover:bg-white dark:hover:bg-slate-700" aria-label="Voice">
-                <I.Mic className="h-[18px] w-[18px]" />
-              </button>
               <button
                 type="button"
                 onClick={() => void send()}
-                className="ml-1 grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-600 text-white shadow-sm transition hover:bg-brand-700 active:scale-[0.97] dark:bg-brand-500 dark:hover:bg-brand-400"
+                disabled={!text.trim()}
+                className="ml-1 grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-600 text-white shadow-sm transition hover:bg-brand-700 active:scale-[0.97] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:hover:bg-slate-300 dark:bg-brand-500 dark:hover:bg-brand-400 dark:disabled:bg-slate-700"
                 aria-label={t('chat.send')}
               >
                 <I.Send className="h-4 w-4" />
