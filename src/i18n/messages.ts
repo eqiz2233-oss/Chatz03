@@ -87,6 +87,10 @@ const enFlat: Record<string, string> = {
   'chat.noteTitle': 'Private note about this customer',
   'chat.notePlaceholder': 'Private notes for your team (not visible to the customer)',
   'chat.noteHint': 'Saved locally on this device',
+  'chat.customerInfo': 'Customer info',
+  'chat.quickReplies': 'Quick replies',
+  'chat.tagsSection': 'Tags',
+  'chat.noteSection': 'Note',
   'chat.s1tag': 'Close',
   'chat.s1':
     'Can I hold this for you for 10 minutes? Only 4 bottles left—transfer to Kbank 123-4-56789-0 ✨',
@@ -458,6 +462,10 @@ const thFlat: Record<string, string> = {
   'chat.noteTitle': 'โน้ตส่วนตัวเกี่ยวกับลูกค้าคนนี้',
   'chat.notePlaceholder': 'โน้ตส่วนตัวให้ทีมเห็น (ลูกค้าไม่เห็น)',
   'chat.noteHint': 'บันทึกในเครื่องนี้เท่านั้น',
+  'chat.customerInfo': 'ข้อมูลลูกค้า',
+  'chat.quickReplies': 'ข้อความตอบเร็ว',
+  'chat.tagsSection': 'แท็ก',
+  'chat.noteSection': 'โน้ต',
   'chat.s1tag': 'ปิดการขาย',
   'chat.s1':
     'พี่จองให้สั้นๆ 10 นาทีนะคะ ตอนนี้สต็อกเหลือ 4 ขวดสุดท้ายค่ะ พี่โอนตามเลขนี้ได้เลย ✨ Kbank 123-4-56789-0',

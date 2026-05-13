@@ -164,6 +164,15 @@ export const I = {
       <line x1="14" y1="11" x2="14" y2="17" />
     </svg>
   ),
+  User: (p: SVGProps<SVGSVGElement>) => (
+    <svg {...base} {...p}>
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+      <circle cx="12" cy="7" r="4" />
+    </svg>
+  ),
+  ChevronRight: (p: SVGProps<SVGSVGElement>) => (
+    <svg {...base} {...p}><polyline points="9 18 15 12 9 6" /></svg>
+  ),
 };
 
 export function ChannelIcon({ channel, className = 'h-4 w-4' }: { channel: 'line' | 'ig' | 'facebook'; className?: string }) {

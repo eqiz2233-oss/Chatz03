@@ -102,10 +102,12 @@ export function ChatThread({ conversation, onSend, onPinMessage, onToggleBot, on
   const scrollRef = useRef<HTMLDivElement>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [mediaLightbox, setMediaLightbox] = useState<ChatMediaPreview | null>(null);
+  /** Customer info side panel (tags / notes). Hidden by default — clean chat-first UX. */
+  const [infoOpen, setInfoOpen] = useState(false);
+  /** Quick-reply strip. Hidden by default; ⚡ button reveals it above the input. */
+  const [qrPanelOpen, setQrPanelOpen] = useState(false);
   const botEnabled = conversation.botEnabled !== false;
 
-  // Default replies stay as locked pills (you can't break the inbox by deleting
-  // every preset). Custom ones come from localStorage and can be removed.
   const defaultReplies = useMemo(
     () => [t('chat.q1'), t('chat.q2'), t('chat.q3'), t('chat.q4')],
     [t],
@@ -142,6 +144,11 @@ export function ChatThread({ conversation, onSend, onPinMessage, onToggleBot, on
     return () => document.removeEventListener('pointerdown', close, true);
   }, [openMenuId]);
 
+  // Close info panel when conversation changes so it doesn't bleed between chats.
+  useEffect(() => {
+    setInfoOpen(false);
+  }, [conversation.id]);
+
   const send = async () => {
     if (!text.trim()) return;
     const payload = text;
@@ -149,244 +156,480 @@ export function ChatThread({ conversation, onSend, onPinMessage, onToggleBot, on
       await Promise.resolve(onSend(payload, 'agent'));
       setText('');
     } catch {
-      /* keep draft; LINE send errors surface via alert in parent */
+      /* keep draft; send errors surface via toast in parent */
     }
   };
 
+  const channelLabel = conversation.channel === 'line' ? 'LINE'
+    : conversation.channel === 'ig' ? 'Instagram'
+    : 'Facebook';
+
   return (
     <>
-    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-white dark:bg-slate-900">
-      <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-200/90 px-4 py-3 dark:border-slate-800 sm:gap-3 sm:px-5 sm:py-3.5">
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          {onBack && (
-            <button
-              type="button"
-              onClick={onBack}
-              aria-label={t('chat.back')}
-              className="-ml-1 grid h-9 w-9 shrink-0 place-items-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200 md:hidden"
-            >
-              <I.ChevronLeft className="h-5 w-5" />
-            </button>
-          )}
-          <img src={conversation.avatar} className="h-11 w-11 shrink-0 rounded-full bg-slate-100 ring-2 ring-slate-100 dark:bg-slate-800 dark:ring-slate-800" alt="" />
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="truncate text-[16px] font-semibold text-slate-900 dark:text-slate-50">{conversation.customerName}</h1>
-              <ChannelIcon channel={conversation.channel} className="h-4 w-4 shrink-0" />
+    {/* Outermost container is `relative` so the info panel can overlay it. */}
+    <div className="relative flex h-full min-h-0 min-w-0 flex-1 overflow-hidden">
+
+      {/* ── Main chat column ─────────────────────────────────────── */}
+      <div className="flex h-full min-h-0 flex-1 flex-col bg-white dark:bg-slate-900">
+
+        {/* Header */}
+        <header className="flex shrink-0 items-center gap-2 border-b border-slate-200/90 px-4 py-3 dark:border-slate-800 sm:px-5">
+          {/* Left: back (mobile) + avatar + name */}
+          <div className="flex min-w-0 flex-1 items-center gap-2.5">
+            {onBack && (
+              <button
+                type="button"
+                onClick={onBack}
+                aria-label={t('chat.back')}
+                className="-ml-1 grid h-9 w-9 shrink-0 place-items-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200 md:hidden"
+              >
+                <I.ChevronLeft className="h-5 w-5" />
+              </button>
+            )}
+            <div className="relative shrink-0">
+              <img
+                src={conversation.avatar}
+                className="h-10 w-10 rounded-full bg-slate-100 ring-2 ring-white dark:bg-slate-800 dark:ring-slate-900"
+                alt=""
+              />
               {conversation.online && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> {t('chat.online')}
-                </span>
+                <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white bg-emerald-500 dark:border-slate-900" />
               )}
             </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <h1 className="truncate text-[15px] font-semibold leading-tight text-slate-900 dark:text-slate-50">
+                  {conversation.customerName}
+                </h1>
+                <ChannelIcon channel={conversation.channel} className="h-3.5 w-3.5 shrink-0 opacity-75" />
+              </div>
+              <p className="truncate text-[11px] leading-tight text-slate-400 dark:text-slate-500">
+                {conversation.online ? (
+                  <span className="font-medium text-emerald-600 dark:text-emerald-400">{t('chat.online')}</span>
+                ) : (
+                  channelLabel
+                )}
+              </p>
+            </div>
           </div>
-        </div>
-        <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-1 sm:w-auto sm:justify-end">
-          {onToggleBot && (
-            <BotToggle
-              enabled={botEnabled}
-              onChange={(next) => void onToggleBot(next)}
-              t={t}
-            />
-          )}
-          {/*
-            Phone / Video / "more" buttons removed for now — they were
-            placeholders with no handlers, which read as broken on first use.
-            Bring them back when voice/video infra is in place.
-          */}
-        </div>
-      </header>
 
-      {!botEnabled && (
-        <div className="w-full shrink-0 border-b border-amber-200/80 bg-amber-50 px-4 py-2 text-[12px] text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
-          <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-amber-500" />
-          {t('chat.botOffBanner')}
-        </div>
-      )}
-
-      <CustomerTagsBar conversationId={conversation.id} t={t} />
-
-      {pinnedMessage && (
-        <div className="w-full shrink-0 border-b border-slate-300/90 dark:border-slate-700/90">
-          <PinnedBanner
-            message={pinnedMessage}
-            onJump={() => scrollToMessageAnchor(pinnedMessage.id)}
-            onUnpin={() => {
-              onPinMessage(null);
-              setOpenMenuId(null);
-            }}
-            t={t}
-          />
-        </div>
-      )}
-
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto bg-[#f5f4fa] px-4 py-5 dark:bg-slate-950/80 sm:px-6">
-        <div className="mx-auto max-w-3xl space-y-3">
-          <div className="flex justify-center py-1">
-            <span className="rounded-full bg-white/90 px-3 py-1 text-[11px] font-medium text-slate-500 shadow-sm dark:bg-slate-800/90 dark:text-slate-400">
-              {t('chat.today')}
-            </span>
+          {/* Right: bot toggle + info button */}
+          <div className="flex shrink-0 items-center gap-1">
+            {onToggleBot && (
+              <BotToggle
+                enabled={botEnabled}
+                onChange={(next) => void onToggleBot(next)}
+                t={t}
+              />
+            )}
+            <button
+              type="button"
+              onClick={() => setInfoOpen((v) => !v)}
+              aria-pressed={infoOpen}
+              title={t('chat.customerInfo')}
+              className={
+                'grid h-9 w-9 place-items-center rounded-full transition ' +
+                (infoOpen
+                  ? 'bg-brand-100 text-brand-700 dark:bg-brand-900/50 dark:text-brand-300'
+                  : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200')
+              }
+            >
+              <I.User className="h-4 w-4" />
+            </button>
           </div>
-          {conversation.messages.map((m) => (
-            <MessageBubble
-              key={m.id}
-              message={m}
-              avatar={conversation.avatar}
-              isPinned={m.id === conversation.pinnedMessageId}
-              onPin={() => {
-                onPinMessage(m.id);
-                setOpenMenuId(null);
-              }}
+        </header>
+
+        {/* Bot-off banner */}
+        {!botEnabled && (
+          <div className="w-full shrink-0 border-b border-amber-200/80 bg-amber-50 px-4 py-2 text-[12px] text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
+            <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-amber-500" />
+            {t('chat.botOffBanner')}
+          </div>
+        )}
+
+        {/* Pinned message banner */}
+        {pinnedMessage && (
+          <div className="w-full shrink-0 border-b border-slate-300/90 dark:border-slate-700/90">
+            <PinnedBanner
+              message={pinnedMessage}
+              onJump={() => scrollToMessageAnchor(pinnedMessage.id)}
               onUnpin={() => {
                 onPinMessage(null);
                 setOpenMenuId(null);
               }}
-              openMenuId={openMenuId}
-              setOpenMenuId={setOpenMenuId}
-              onOpenMedia={setMediaLightbox}
               t={t}
             />
-          ))}
-        </div>
-      </div>
-
-      <footer className="shrink-0 border-t border-slate-200/90 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900 sm:px-6">
-        <div className="mx-auto max-w-3xl">
-          <div className="mb-2 flex flex-wrap items-center gap-1.5">
-            {defaultReplies.map((q) => (
-              <button
-                key={q}
-                type="button"
-                onClick={() => setText(q)}
-                className="rounded-full border border-slate-200/90 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600 transition hover:border-brand-300 hover:bg-white hover:text-brand-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-brand-500"
-              >
-                {q}
-              </button>
-            ))}
-            {customReplies.map((q) => (
-              <span
-                key={q.id}
-                className="group relative inline-flex items-stretch"
-              >
-                <button
-                  type="button"
-                  onClick={() => setText(q.text)}
-                  className="rounded-full border border-brand-200 bg-brand-50/60 px-3 py-1 pr-7 text-xs font-medium text-brand-700 transition hover:border-brand-300 hover:bg-white dark:border-brand-700/60 dark:bg-brand-950/40 dark:text-brand-200 dark:hover:border-brand-500"
-                  title={q.text}
-                >
-                  {q.text.length > 28 ? q.text.slice(0, 28) + '…' : q.text}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCustomReplies(removeQuickReply(q.id))}
-                  aria-label={t('chat.qrRemove')}
-                  className="absolute right-1.5 top-1/2 grid h-4 w-4 -translate-y-1/2 place-items-center rounded-full text-brand-600/50 opacity-0 transition hover:bg-brand-100 hover:text-brand-700 group-hover:opacity-100 dark:text-brand-300/60 dark:hover:bg-brand-900/60 dark:hover:text-brand-100"
-                >
-                  <I.X className="h-3 w-3" />
-                </button>
-              </span>
-            ))}
-            {qrEditing ? (
-              <span className="inline-flex items-center gap-1 rounded-full border border-brand-300 bg-white px-2 py-0.5 shadow-sm dark:border-brand-500 dark:bg-slate-900">
-                <input
-                  autoFocus
-                  type="text"
-                  value={qrDraft}
-                  maxLength={QUICK_REPLY_MAX_LENGTH}
-                  onChange={(e) => setQrDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      const text = qrDraft.trim();
-                      if (text) setCustomReplies(addQuickReply(text));
-                      setQrDraft('');
-                      setQrEditing(false);
-                    } else if (e.key === 'Escape') {
-                      // Bail without saving — match Esc semantics elsewhere
-                      // in the app (filters, modals).
-                      e.preventDefault();
-                      setQrDraft('');
-                      setQrEditing(false);
-                    }
-                  }}
-                  onBlur={() => {
-                    // Click-outside should commit, not discard. The user
-                    // already typed a phrase; throwing it away on a stray
-                    // click is the kind of papercut that erodes trust.
-                    const text = qrDraft.trim();
-                    if (text) setCustomReplies(addQuickReply(text));
-                    setQrDraft('');
-                    setQrEditing(false);
-                  }}
-                  placeholder={t('chat.qrAddPlaceholder')}
-                  className="w-44 bg-transparent text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none dark:text-slate-100"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    const text = qrDraft.trim();
-                    if (text) setCustomReplies(addQuickReply(text));
-                    setQrDraft('');
-                    setQrEditing(false);
-                  }}
-                  className="rounded-full bg-brand-600 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-brand-700 dark:bg-brand-500 dark:hover:bg-brand-400"
-                >
-                  {t('chat.qrAddSave')}
-                </button>
-              </span>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setQrEditing(true)}
-                title={t('chat.qrAddTitle')}
-                aria-label={t('chat.qrAddTitle')}
-                className="inline-flex items-center gap-0.5 rounded-full border border-dashed border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-500 transition hover:border-brand-400 hover:text-brand-600 dark:border-slate-600 dark:text-slate-400 dark:hover:border-brand-500 dark:hover:text-brand-300"
-              >
-                <I.Plus className="h-3 w-3" />
-                {t('chat.qrAdd')}
-              </button>
-            )}
           </div>
-          <div className="flex items-end gap-2 rounded-2xl border border-slate-200/90 bg-slate-50/90 px-3 py-1.5 shadow-sm focus-within:border-brand-400 focus-within:bg-white focus-within:ring-2 focus-within:ring-brand-100 dark:border-slate-600 dark:bg-slate-800/80 dark:focus-within:border-brand-500 dark:focus-within:bg-slate-900 dark:focus-within:ring-brand-900/30">
-            {/*
-              Attach / Emoji / Voice buttons were placeholders with no
-              handlers. Removed for now; bring them back as a unit when the
-              file upload + emoji picker + voice message infra is in place.
-            */}
-            <textarea
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  void send();
-                }
-              }}
-              placeholder={t('chat.writeMessage')}
-              rows={1}
-              className="max-h-32 min-h-[40px] min-w-0 flex-1 resize-none bg-transparent px-1 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none dark:text-slate-100"
-            />
-            <div className="flex shrink-0 items-center gap-0.5 pb-0.5">
+        )}
+
+        {/* ── Message list ── */}
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto bg-[#f5f4fa] px-4 py-5 dark:bg-slate-950/80 sm:px-6">
+          <div className="mx-auto max-w-3xl space-y-3">
+            <div className="flex justify-center py-1">
+              <span className="rounded-full bg-white/90 px-3 py-1 text-[11px] font-medium text-slate-500 shadow-sm dark:bg-slate-800/90 dark:text-slate-400">
+                {t('chat.today')}
+              </span>
+            </div>
+            {conversation.messages.map((m) => (
+              <MessageBubble
+                key={m.id}
+                message={m}
+                avatar={conversation.avatar}
+                isPinned={m.id === conversation.pinnedMessageId}
+                onPin={() => {
+                  onPinMessage(m.id);
+                  setOpenMenuId(null);
+                }}
+                onUnpin={() => {
+                  onPinMessage(null);
+                  setOpenMenuId(null);
+                }}
+                openMenuId={openMenuId}
+                setOpenMenuId={setOpenMenuId}
+                onOpenMedia={setMediaLightbox}
+                t={t}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* ── Footer / composer ── */}
+        <footer className="shrink-0 border-t border-slate-200/90 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900 sm:px-5">
+          <div className="mx-auto max-w-3xl">
+
+            {/* Quick-reply strip — only when ⚡ is active */}
+            {qrPanelOpen && (
+              <div className="mb-2.5 flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-100 bg-slate-50 p-2 dark:border-slate-800 dark:bg-slate-800/50">
+                {defaultReplies.map((q) => (
+                  <button
+                    key={q}
+                    type="button"
+                    onClick={() => {
+                      setText(q);
+                      setQrPanelOpen(false);
+                    }}
+                    className="rounded-full border border-slate-200/90 bg-white px-3 py-1 text-xs font-medium text-slate-600 transition hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300 dark:hover:border-brand-500"
+                  >
+                    {q}
+                  </button>
+                ))}
+                {customReplies.map((q) => (
+                  <span key={q.id} className="group relative inline-flex items-stretch">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setText(q.text);
+                        setQrPanelOpen(false);
+                      }}
+                      className="rounded-full border border-brand-200 bg-brand-50/60 px-3 py-1 pr-7 text-xs font-medium text-brand-700 transition hover:border-brand-300 hover:bg-white dark:border-brand-700/60 dark:bg-brand-950/40 dark:text-brand-200 dark:hover:border-brand-500"
+                      title={q.text}
+                    >
+                      {q.text.length > 28 ? q.text.slice(0, 28) + '…' : q.text}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCustomReplies(removeQuickReply(q.id))}
+                      aria-label={t('chat.qrRemove')}
+                      className="absolute right-1.5 top-1/2 grid h-4 w-4 -translate-y-1/2 place-items-center rounded-full text-brand-600/50 opacity-0 transition hover:bg-brand-100 hover:text-brand-700 group-hover:opacity-100 dark:text-brand-300/60 dark:hover:bg-brand-900/60 dark:hover:text-brand-100"
+                    >
+                      <I.X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+                {qrEditing ? (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-brand-300 bg-white px-2 py-0.5 shadow-sm dark:border-brand-500 dark:bg-slate-900">
+                    <input
+                      autoFocus
+                      type="text"
+                      value={qrDraft}
+                      maxLength={QUICK_REPLY_MAX_LENGTH}
+                      onChange={(e) => setQrDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const txt = qrDraft.trim();
+                          if (txt) setCustomReplies(addQuickReply(txt));
+                          setQrDraft('');
+                          setQrEditing(false);
+                        } else if (e.key === 'Escape') {
+                          e.preventDefault();
+                          setQrDraft('');
+                          setQrEditing(false);
+                        }
+                      }}
+                      onBlur={() => {
+                        const txt = qrDraft.trim();
+                        if (txt) setCustomReplies(addQuickReply(txt));
+                        setQrDraft('');
+                        setQrEditing(false);
+                      }}
+                      placeholder={t('chat.qrAddPlaceholder')}
+                      className="w-44 bg-transparent text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none dark:text-slate-100"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const txt = qrDraft.trim();
+                        if (txt) setCustomReplies(addQuickReply(txt));
+                        setQrDraft('');
+                        setQrEditing(false);
+                      }}
+                      className="rounded-full bg-brand-600 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-brand-700 dark:bg-brand-500 dark:hover:bg-brand-400"
+                    >
+                      {t('chat.qrAddSave')}
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setQrEditing(true)}
+                    title={t('chat.qrAddTitle')}
+                    aria-label={t('chat.qrAddTitle')}
+                    className="inline-flex items-center gap-0.5 rounded-full border border-dashed border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-500 transition hover:border-brand-400 hover:text-brand-600 dark:border-slate-600 dark:text-slate-400 dark:hover:border-brand-500 dark:hover:text-brand-300"
+                  >
+                    <I.Plus className="h-3 w-3" />
+                    {t('chat.qrAdd')}
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Composer row */}
+            <div className="flex items-end gap-2 rounded-2xl border border-slate-200/90 bg-slate-50/90 px-3 py-1.5 shadow-sm focus-within:border-brand-400 focus-within:bg-white focus-within:ring-2 focus-within:ring-brand-100 dark:border-slate-600 dark:bg-slate-800/80 dark:focus-within:border-brand-500 dark:focus-within:bg-slate-900 dark:focus-within:ring-brand-900/30">
+              {/* ⚡ Quick-reply toggle */}
               <button
                 type="button"
-                onClick={() => void send()}
-                disabled={!text.trim()}
-                className="ml-1 grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-600 text-white shadow-sm transition hover:bg-brand-700 active:scale-[0.97] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:hover:bg-slate-300 dark:bg-brand-500 dark:hover:bg-brand-400 dark:disabled:bg-slate-700"
-                aria-label={t('chat.send')}
+                onClick={() => setQrPanelOpen((v) => !v)}
+                title={t('chat.quickReplies')}
+                aria-pressed={qrPanelOpen}
+                className={
+                  'mb-[3px] grid h-8 w-8 shrink-0 place-items-center rounded-full transition ' +
+                  (qrPanelOpen
+                    ? 'bg-brand-100 text-brand-600 dark:bg-brand-900/50 dark:text-brand-300'
+                    : 'text-slate-400 hover:bg-slate-200 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-300')
+                }
               >
-                <I.Send className="h-4 w-4" />
+                <I.Zap className="h-4 w-4" />
               </button>
+
+              <textarea
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    void send();
+                  }
+                }}
+                placeholder={t('chat.writeMessage')}
+                rows={1}
+                className="max-h-32 min-h-[40px] min-w-0 flex-1 resize-none bg-transparent px-1 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none dark:text-slate-100"
+              />
+
+              <div className="flex shrink-0 items-center gap-0.5 pb-0.5">
+                <button
+                  type="button"
+                  onClick={() => void send()}
+                  disabled={!text.trim()}
+                  className="ml-1 grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-600 text-white shadow-sm transition hover:bg-brand-700 active:scale-[0.97] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:hover:bg-slate-300 dark:bg-brand-500 dark:hover:bg-brand-400 dark:disabled:bg-slate-700"
+                  aria-label={t('chat.send')}
+                >
+                  <I.Send className="h-4 w-4" />
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      </footer>
+        </footer>
+      </div>
+
+      {/* ── Customer info panel (slide-in overlay) ──────────────── */}
+      {infoOpen && (
+        <>
+          {/* Backdrop — click to close (mainly for mobile / tablet) */}
+          <div
+            className="absolute inset-0 z-20 bg-black/20 backdrop-blur-[1px] md:bg-transparent md:backdrop-blur-none"
+            onClick={() => setInfoOpen(false)}
+          />
+          <aside className="absolute bottom-0 right-0 top-0 z-30 flex w-72 flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <CustomerInfoPanel
+              conversation={conversation}
+              onClose={() => setInfoOpen(false)}
+              t={t}
+            />
+          </aside>
+        </>
+      )}
     </div>
-    {mediaLightbox && <ChatMediaLightbox item={mediaLightbox} onClose={() => setMediaLightbox(null)} t={t} />}
+
+    {mediaLightbox && (
+      <ChatMediaLightbox item={mediaLightbox} onClose={() => setMediaLightbox(null)} t={t} />
+    )}
     </>
   );
 }
 
+// ─── Sub-components ────────────────────────────────────────────────────────────
+
 type TFn = (key: string, vars?: Record<string, string | number>) => string;
+
+/**
+ * Slide-in customer info panel.
+ * Contains the avatar/name block + tags + private note (previously the
+ * always-visible CustomerTagsBar that cluttered the main chat area).
+ */
+function CustomerInfoPanel({
+  conversation,
+  onClose,
+  t,
+}: {
+  conversation: Conversation;
+  onClose: () => void;
+  t: TFn;
+}) {
+  const [meta, setMeta] = useState<CustomerMeta>(() => getCustomerMeta(conversation.id));
+  const [tagDraft, setTagDraft] = useState('');
+  const [tagEditing, setTagEditing] = useState(false);
+
+  useEffect(() => {
+    setMeta(getCustomerMeta(conversation.id));
+    setTagDraft('');
+    setTagEditing(false);
+  }, [conversation.id]);
+
+  const commitTag = () => {
+    const v = tagDraft.trim();
+    if (v) setMeta(addTag(conversation.id, v));
+    setTagDraft('');
+    setTagEditing(false);
+  };
+
+  const channelName =
+    conversation.channel === 'line' ? 'LINE'
+    : conversation.channel === 'ig' ? 'Instagram'
+    : 'Facebook';
+
+  return (
+    <div className="flex h-full flex-col">
+      {/* Panel header */}
+      <div className="flex shrink-0 items-center justify-between border-b border-slate-200/90 px-4 py-3 dark:border-slate-800">
+        <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-50">
+          {t('chat.customerInfo')}
+        </h2>
+        <button
+          type="button"
+          onClick={onClose}
+          className="grid h-8 w-8 place-items-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+        >
+          <I.X className="h-4 w-4" />
+        </button>
+      </div>
+
+      {/* Scrollable body */}
+      <div className="flex-1 overflow-y-auto">
+        {/* Avatar + name block */}
+        <div className="flex flex-col items-center gap-3 px-4 py-6 text-center">
+          <div className="relative">
+            <img
+              src={conversation.avatar}
+              className="h-[72px] w-[72px] rounded-full shadow-md ring-4 ring-white dark:ring-slate-900"
+              alt=""
+            />
+            <span className="absolute -bottom-1 -right-1 rounded-full bg-white p-0.5 shadow-sm dark:bg-slate-900">
+              <ChannelIcon channel={conversation.channel} className="h-4 w-4" />
+            </span>
+          </div>
+          <div>
+            <p className="text-[15px] font-semibold text-slate-900 dark:text-slate-50">
+              {conversation.customerName}
+            </p>
+            <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
+              {channelName}
+              {conversation.online && (
+                <span className="ml-1.5 inline-flex items-center gap-1 font-medium text-emerald-600 dark:text-emerald-400">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  {t('chat.online')}
+                </span>
+              )}
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-5 px-4 pb-6">
+          {/* Tags */}
+          <div>
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+              {t('chat.tagsSection')}
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {meta.tags.map((tag) => (
+                <span
+                  key={tag}
+                  className="group inline-flex items-stretch overflow-hidden rounded-full bg-slate-100 text-[11px] font-medium text-slate-700 dark:bg-slate-700/80 dark:text-slate-200"
+                >
+                  <span className="py-0.5 pl-2.5 pr-1.5">{tag}</span>
+                  <button
+                    type="button"
+                    onClick={() => setMeta(removeTag(conversation.id, tag))}
+                    aria-label={t('chat.tagRemove')}
+                    className="grid place-items-center px-1.5 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-600 dark:hover:text-white"
+                  >
+                    <I.X className="h-2.5 w-2.5" />
+                  </button>
+                </span>
+              ))}
+              {tagEditing ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-brand-300 bg-white px-2 py-0.5 shadow-sm dark:border-brand-500 dark:bg-slate-900">
+                  <input
+                    autoFocus
+                    type="text"
+                    value={tagDraft}
+                    maxLength={TAG_MAX_LEN}
+                    onChange={(e) => setTagDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { e.preventDefault(); commitTag(); }
+                      else if (e.key === 'Escape') { e.preventDefault(); setTagDraft(''); setTagEditing(false); }
+                    }}
+                    onBlur={commitTag}
+                    placeholder={t('chat.tagAddPlaceholder')}
+                    className="w-24 bg-transparent text-[11px] text-slate-900 placeholder:text-slate-400 focus:outline-none dark:text-slate-100"
+                  />
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setTagEditing(true)}
+                  className="inline-flex items-center gap-0.5 rounded-full border border-dashed border-slate-300 px-2 py-0.5 text-[11px] font-medium text-slate-500 transition hover:border-brand-400 hover:text-brand-600 dark:border-slate-600 dark:text-slate-400 dark:hover:border-brand-500 dark:hover:text-brand-300"
+                >
+                  <I.Plus className="h-3 w-3" />
+                  {meta.tags.length === 0 ? t('chat.tagAddFirst') : t('chat.tagAdd')}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Note */}
+          <div>
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+              {t('chat.noteSection')}
+            </p>
+            <textarea
+              value={meta.note}
+              maxLength={NOTE_MAX_LEN}
+              onChange={(e) => setMeta(setNote(conversation.id, e.target.value))}
+              rows={4}
+              placeholder={t('chat.notePlaceholder')}
+              className="w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-800 placeholder:text-slate-400 focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:ring-brand-900/30"
+            />
+            <div className="mt-1 flex items-center justify-between text-[10px] text-slate-400 dark:text-slate-500">
+              <span>{t('chat.noteHint')}</span>
+              <span className="tabular-nums">{meta.note.length}/{NOTE_MAX_LEN}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function PinnedBanner({
   message,
@@ -683,7 +926,13 @@ function MessageBubble({
       data-message-anchor={message.id}
       className={'group/message flex animate-fade-in items-end gap-2 ' + (isCustomer ? 'justify-start' : 'justify-end')}
     >
-      {isCustomer && <img src={avatar} className="order-1 h-7 w-7 shrink-0 rounded-full bg-slate-200 ring-2 ring-white dark:bg-slate-700 dark:ring-slate-900" alt="" />}
+      {isCustomer && (
+        <img
+          src={avatar}
+          className="order-1 h-7 w-7 shrink-0 rounded-full bg-slate-200 ring-2 ring-white dark:bg-slate-700 dark:ring-slate-900"
+          alt=""
+        />
+      )}
       {isCustomer ? (
         <>{bubbleColumn}</>
       ) : (
@@ -698,126 +947,6 @@ function MessageBubble({
             {isAI ? 'AI' : 'A'}
           </div>
         </>
-      )}
-    </div>
-  );
-}
-
-/**
- * Compact tags + optional note for the active conversation.
- *  - Tags render as small pills inline; click "+" to add, hover to remove.
- *  - The note is hidden behind a toggle so it doesn't clutter the chat for
- *    customers without notes; click the pencil to expand a small textarea.
- *  - All data lives in localStorage (see lib/customerNotes.ts).
- */
-function CustomerTagsBar({ conversationId, t }: { conversationId: string; t: TFn }) {
-  const [meta, setMeta] = useState<CustomerMeta>(() => getCustomerMeta(conversationId));
-  const [tagDraft, setTagDraft] = useState('');
-  const [tagEditing, setTagEditing] = useState(false);
-  const [noteOpen, setNoteOpen] = useState(false);
-
-  // Re-load when the active conversation changes.
-  useEffect(() => {
-    setMeta(getCustomerMeta(conversationId));
-    setTagDraft('');
-    setTagEditing(false);
-    setNoteOpen(false);
-  }, [conversationId]);
-
-  const commitTag = () => {
-    const v = tagDraft.trim();
-    if (v) setMeta(addTag(conversationId, v));
-    setTagDraft('');
-    setTagEditing(false);
-  };
-
-  const hasNote = Boolean(meta.note.trim());
-
-  return (
-    <div className="w-full shrink-0 border-b border-slate-200/90 bg-slate-50/70 px-4 py-2 dark:border-slate-800 dark:bg-slate-900/40">
-      <div className="flex flex-wrap items-center gap-1.5">
-        {meta.tags.map((tag) => (
-          <span
-            key={tag}
-            className="group inline-flex items-stretch overflow-hidden rounded-full bg-slate-200/70 text-[11px] font-medium text-slate-700 dark:bg-slate-700/70 dark:text-slate-200"
-          >
-            <span className="py-0.5 pl-2 pr-1.5">{tag}</span>
-            <button
-              type="button"
-              onClick={() => setMeta(removeTag(conversationId, tag))}
-              aria-label={t('chat.tagRemove')}
-              className="grid place-items-center px-1 text-slate-500 transition hover:bg-slate-300/70 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-600 dark:hover:text-white"
-            >
-              <I.X className="h-2.5 w-2.5" />
-            </button>
-          </span>
-        ))}
-        {tagEditing ? (
-          <span className="inline-flex items-center gap-1 rounded-full border border-brand-300 bg-white px-2 py-0.5 shadow-sm dark:border-brand-500 dark:bg-slate-900">
-            <input
-              autoFocus
-              type="text"
-              value={tagDraft}
-              maxLength={TAG_MAX_LEN}
-              onChange={(e) => setTagDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  commitTag();
-                } else if (e.key === 'Escape') {
-                  e.preventDefault();
-                  setTagDraft('');
-                  setTagEditing(false);
-                }
-              }}
-              onBlur={commitTag}
-              placeholder={t('chat.tagAddPlaceholder')}
-              className="w-28 bg-transparent text-[11px] text-slate-900 placeholder:text-slate-400 focus:outline-none dark:text-slate-100"
-            />
-          </span>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setTagEditing(true)}
-            title={t('chat.tagAddTitle')}
-            className="inline-flex items-center gap-0.5 rounded-full border border-dashed border-slate-300 px-2 py-0.5 text-[11px] font-medium text-slate-500 transition hover:border-brand-400 hover:text-brand-600 dark:border-slate-600 dark:text-slate-400 dark:hover:border-brand-500 dark:hover:text-brand-300"
-          >
-            <I.Tag className="h-3 w-3" />
-            {meta.tags.length === 0 ? t('chat.tagAddFirst') : t('chat.tagAdd')}
-          </button>
-        )}
-        <span className="ml-auto inline-flex items-center">
-          <button
-            type="button"
-            onClick={() => setNoteOpen((v) => !v)}
-            className={
-              'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium transition ' +
-              (hasNote
-                ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-900/40'
-                : 'text-slate-500 hover:bg-slate-200/70 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white')
-            }
-            title={t('chat.noteTitle')}
-          >
-            <I.Pencil className="h-3 w-3" />
-            {hasNote ? t('chat.noteSaved') : t('chat.noteAdd')}
-          </button>
-        </span>
-      </div>
-      {noteOpen && (
-        <div className="mt-2">
-          <textarea
-            value={meta.note}
-            maxLength={NOTE_MAX_LEN}
-            onChange={(e) => setMeta(setNote(conversationId, e.target.value))}
-            rows={2}
-            placeholder={t('chat.notePlaceholder')}
-            className="w-full resize-y rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:ring-brand-900/30"
-          />
-          <div className="mt-0.5 flex items-center justify-between text-[10px] text-slate-400 dark:text-slate-500">
-            <span>{t('chat.noteHint')}</span>
-            <span className="tabular-nums">{meta.note.length}/{NOTE_MAX_LEN}</span>
-          </div>
-        </div>
       )}
     </div>
   );
