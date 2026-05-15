@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { View } from '../types';
 import { useAppPreferences } from '../context/AppPreferencesContext';
 import { useAuth } from '../context/AuthContext';
@@ -66,51 +66,15 @@ export function Sidebar({ active, onChange }: Props) {
   const { t } = useAppPreferences();
   const { user, logout } = useAuth();
   const isMobile = useIsMobile();
-  const [hoverOpen, setHoverOpen] = useState(false);
-  const [lockedOpen, setLockedOpen] = useState(false);
+  const [open, setOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const clearClose = useCallback(() => {
-    if (closeTimer.current != null) {
-      clearTimeout(closeTimer.current);
-      closeTimer.current = null;
-    }
-  }, []);
-
-  const expanded = isMobile ? mobileOpen : lockedOpen || hoverOpen;
-
-  const handleOpen = useCallback(() => {
-    if (isMobile) {
-      clearClose();
-      setMobileOpen(true);
-      return;
-    }
-    if (lockedOpen) return;
-    clearClose();
-    setHoverOpen(true);
-  }, [clearClose, isMobile, lockedOpen]);
-
-  const handleClose = useCallback(
-    (delay = 200) => {
-      if (isMobile) {
-        clearClose();
-        closeTimer.current = setTimeout(() => setMobileOpen(false), delay);
-        return;
-      }
-      if (lockedOpen) return;
-      clearClose();
-      closeTimer.current = setTimeout(() => setHoverOpen(false), delay);
-    },
-    [clearClose, isMobile, lockedOpen],
-  );
+  const expanded = isMobile ? mobileOpen : open;
 
   useEffect(() => {
-    setHoverOpen(false);
-    setLockedOpen(false);
+    setOpen(false);
     setMobileOpen(false);
-    clearClose();
-  }, [isMobile, clearClose]);
+  }, [isMobile]);
 
   const lbl = labelStyle(expanded);
 
@@ -121,19 +85,13 @@ export function Sidebar({ active, onChange }: Props) {
         setMobileOpen((v) => !v);
         return;
       }
-      setLockedOpen((v) => {
-        const next = !v;
-        if (!next) setHoverOpen(false);
-        return next;
-      });
+      setOpen((v) => !v);
     },
     [isMobile],
   );
 
   const aside = (
     <aside
-      onMouseEnter={handleOpen}
-      onMouseLeave={() => handleClose(180)}
       style={!isMobile ? { width: expanded ? W_EXPANDED : W_COLLAPSED } : undefined}
       className={[
         'flex h-screen shrink-0 flex-col overflow-hidden border-r border-slate-200/90 bg-white select-none',
@@ -172,10 +130,7 @@ export function Sidebar({ active, onChange }: Props) {
               type="button"
               onClick={() => {
                 onChange(it.key);
-                if (isMobile) {
-                  clearClose();
-                  setMobileOpen(false);
-                }
+                if (isMobile) setMobileOpen(false);
               }}
               title={!expanded ? t(it.labelKey) : undefined}
               className={[
@@ -301,10 +256,7 @@ export function Sidebar({ active, onChange }: Props) {
               title={t('nav.settings')}
               onClick={() => {
                 onChange('settings');
-                if (isMobile) {
-                  clearClose();
-                  setMobileOpen(false);
-                }
+                if (isMobile) setMobileOpen(false);
               }}
             >
               <I.Settings className="h-4 w-4" />
@@ -324,18 +276,7 @@ export function Sidebar({ active, onChange }: Props) {
           type="button"
           aria-label="ปิดเมนู"
           className="fixed inset-0 z-[40] bg-slate-900/35 backdrop-blur-[1px]"
-          onClick={() => {
-            clearClose();
-            setMobileOpen(false);
-          }}
-        />
-      )}
-      {!expanded && (
-        <div
-          role="presentation"
-          className="pointer-events-auto fixed left-0 top-0 z-[50] h-full w-3 bg-gradient-to-r from-slate-200/80 to-transparent dark:from-slate-700/80"
-          onMouseEnter={handleOpen}
-          onTouchStart={handleOpen}
+          onClick={() => setMobileOpen(false)}
         />
       )}
       {aside}
