@@ -208,6 +208,42 @@ const BLANK: FormState = {
   imageUrl: '',
 };
 
+/** Extensions often seen from iOS / Android / desktop (MIME may be empty on some devices). */
+const PRODUCT_IMAGE_EXTENSIONS = new Set([
+  'png',
+  'jpg',
+  'jpeg',
+  'jfif',
+  'pjpeg',
+  'webp',
+  'gif',
+  'bmp',
+  'avif',
+  'heic',
+  'heif',
+  'tif',
+  'tiff',
+  'svg',
+]);
+
+const PRODUCT_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+
+function productImageFileExtension(name: string): string {
+  const base = name.split(/[/\\]/).pop() ?? name;
+  const dot = base.lastIndexOf('.');
+  return dot >= 0 ? base.slice(dot + 1).toLowerCase() : '';
+}
+
+/** True for common image uploads across web / iOS / Android. */
+function isAcceptedProductImageFile(file: File): boolean {
+  const type = file.type.trim().toLowerCase();
+  if (type.startsWith('image/')) return true;
+  if (type === '' || type === 'application/octet-stream') {
+    return PRODUCT_IMAGE_EXTENSIONS.has(productImageFileExtension(file.name));
+  }
+  return false;
+}
+
 function formatOptionSummary(groups: ProductOptionGroup[]): string {
   return groups.map((g) => `${g.label}: ${g.values.join(' ')}`).join(' · ');
 }
@@ -455,6 +491,11 @@ function ShopListCard({
   onDelete: () => void;
 }) {
   const optLine = formatOptionSummary(p.optionGroups);
+  const [thumbOk, setThumbOk] = useState(true);
+
+  useEffect(() => {
+    setThumbOk(true);
+  }, [p.imageUrl, p.id]);
 
   return (
     <div
@@ -475,8 +516,13 @@ function ShopListCard({
       }
     >
       <div className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-50 text-xl ring-1 ring-slate-100 dark:bg-slate-800 dark:ring-slate-700">
-        {p.imageUrl ? (
-          <img src={p.imageUrl} alt="" className="h-full w-full object-cover" />
+        {p.imageUrl && thumbOk ? (
+          <img
+            src={p.imageUrl}
+            alt=""
+            className="h-full w-full object-cover"
+            onError={() => setThumbOk(false)}
+          />
         ) : (
           p.imageEmoji
         )}
@@ -558,18 +604,20 @@ function AddForm({
   const imageInputId = useId();
   const imageInputRef = useRef<HTMLInputElement>(null);
   const [imageError, setImageError] = useState<string | null>(null);
+  const [previewOk, setPreviewOk] = useState(true);
+
+  useEffect(() => {
+    setPreviewOk(true);
+  }, [form.imageUrl]);
 
   const applyImageFile = (file: File | undefined) => {
     if (!file) return;
-    const mimeOk = file.type === 'image/png' || file.type === 'image/jpeg';
-    const extOk = /\.(jpe?g|png)$/i.test(file.name);
-    if (!mimeOk && !extOk) {
-      setImageError('รองรับเฉพาะไฟล์ .png, .jpg, .jpeg');
+    if (!isAcceptedProductImageFile(file)) {
+      setImageError('รองรับเฉพาะไฟล์รูป (เช่น JPEG, PNG, WebP, GIF, HEIC, AVIF, SVG …)');
       return;
     }
-    const maxBytes = 2 * 1024 * 1024;
-    if (file.size > maxBytes) {
-      setImageError('ไฟล์ใหญ่เกิน 2 MB');
+    if (file.size > PRODUCT_IMAGE_MAX_BYTES) {
+      setImageError('ไฟล์ใหญ่เกิน 8 MB');
       return;
     }
     setImageError(null);
@@ -681,7 +729,7 @@ function AddForm({
               ref={imageInputRef}
               id={imageInputId}
               type="file"
-              accept="image/png,image/jpeg,.png,.jpg,.jpeg"
+              accept="image/*"
               className="sr-only"
               onChange={(e) => {
                 applyImageFile(e.target.files?.[0]);
@@ -711,7 +759,21 @@ function AddForm({
               className="flex h-32 w-full cursor-pointer flex-col items-center justify-center gap-2 overflow-hidden rounded-xl border-2 border-dashed border-slate-200 bg-white px-2 text-slate-400 transition hover:border-brand-300 hover:bg-brand-50/40 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-brand-500 dark:hover:bg-brand-950/30 dark:hover:text-brand-300"
             >
               {form.imageUrl ? (
-                <img src={form.imageUrl} alt="" className="max-h-28 max-w-full rounded-lg object-contain" />
+                previewOk ? (
+                  <img
+                    src={form.imageUrl}
+                    alt=""
+                    className="max-h-28 max-w-full rounded-lg object-contain"
+                    onError={() => setPreviewOk(false)}
+                  />
+                ) : (
+                  <div className="flex max-w-full flex-col items-center gap-2 px-3 text-center">
+                    <I.Image className="h-8 w-8 shrink-0 opacity-60" />
+                    <span className="text-xs font-medium leading-snug text-slate-600 dark:text-slate-300">
+                      บันทึกรูปได้ แต่เบราว์เซอร์นี้ไม่แสดงตัวอย่าง (เช่น HEIC บน Chrome บน Windows)
+                    </span>
+                  </div>
+                )
               ) : (
                 <>
                   <I.Image className="h-6 w-6 opacity-80" />
@@ -735,7 +797,9 @@ function AddForm({
               <p className="mt-1.5 text-[11px] text-rose-600 dark:text-rose-400">{imageError}</p>
             ) : (
               <p className="mt-1.5 text-[11px] text-slate-400 dark:text-slate-500">
-                {form.imageUrl ? 'คลิกหรือลากไฟล์ใหม่เพื่อเปลี่ยนรูป' : 'รองรับ .png, .jpg, .jpeg · สูงสุด 2 MB'}
+                {form.imageUrl
+                  ? 'คลิกหรือลากไฟล์ใหม่เพื่อเปลี่ยนรูป'
+                  : 'รูปจากเว็บ / iOS / Android: JPEG, PNG, WebP, GIF, HEIC, AVIF, SVG … · สูงสุด 8 MB · มือถือกดเลือกจากแกลเลอรีหรือกล้องได้ตามระบบ'}
               </p>
             )}
           </section>
