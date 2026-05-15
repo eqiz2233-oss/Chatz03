@@ -319,7 +319,7 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
   }, []);
 
   // Stat counts
-  const paidShippedCount = useMemo(() => searchFiltered.filter((o) => o.status === 'paid' || o.status === 'shipped').length, [searchFiltered]);
+  const paidShippedCount = useMemo(() => searchFiltered.filter((o) => o.status === 'shipped').length, [searchFiltered]);
   const pendingCount = countByStatus.pending;
   const cancelledCount = countByStatus.cancelled;
 
@@ -378,11 +378,11 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
           <StatCard
             icon={<I.Truck className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />}
             iconBg="bg-emerald-50 ring-emerald-200/80 dark:bg-emerald-950/40 dark:ring-emerald-800"
-            label="ชำระแล้ว + ส่งแล้ว"
+            label="จัดส่งแล้ว"
             value={paidShippedCount}
             valueClass="text-emerald-600 dark:text-emerald-400"
-            isActive={statusTab === 'paid' || statusTab === 'shipped'}
-            onClick={() => setStatusTab('paid')}
+            isActive={statusTab === 'shipped'}
+            onClick={() => setStatusTab('shipped')}
           />
           <StatCard
             icon={<I.Bell className="h-5 w-5 text-amber-600 dark:text-amber-400" />}
