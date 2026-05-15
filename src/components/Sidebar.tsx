@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { View } from '../types';
 import { useAppPreferences } from '../context/AppPreferencesContext';
+import { useAuth } from '../context/AuthContext';
 import { I } from './Icons';
 
 const MD_MIN = 768;
@@ -41,8 +42,16 @@ interface Props {
   onChange: (view: View) => void;
 }
 
+/** Two-letter initials from a display name or username. */
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return name.slice(0, 2).toUpperCase();
+}
+
 export function Sidebar({ active, onChange }: Props) {
   const { t } = useAppPreferences();
+  const { user, logout } = useAuth();
   const narrow = useIsNarrow();
   const [peeled, setPeeled] = useState(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -85,11 +94,11 @@ export function Sidebar({ active, onChange }: Props) {
     >
       <div className="shrink-0 px-5 pt-6 pb-2">
         <div className="flex items-center gap-2.5">
-          <div className="grid h-10 w-10 place-items-center rounded-2xl bg-brand-600 text-white shadow-sm dark:bg-brand-500">
+          <div className="grid h-10 w-10 place-items-center rounded-2xl bg-brand-600 text-white shadow-sm ring-4 ring-brand-100 dark:bg-brand-500 dark:ring-brand-900/40">
             <I.Zap className="h-[18px] w-[18px]" />
           </div>
           <div>
-            <div className="text-[16px] font-bold leading-none tracking-tight text-slate-900 dark:text-white">Chatz</div>
+            <div className="text-[17px] font-extrabold leading-none tracking-tight text-slate-900 dark:text-white">Chatz</div>
             <div className="mt-0.5 text-[11px] font-medium text-slate-400 dark:text-slate-500">{t('sidebar.workspace')}</div>
           </div>
         </div>
@@ -107,7 +116,7 @@ export function Sidebar({ active, onChange }: Props) {
                 if (narrow) scheduleClose();
               }}
               className={
-                'group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ' +
+                'group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition ' +
                 (isActive
                   ? 'bg-brand-600 text-white shadow-sm dark:bg-brand-500'
                   : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white')
@@ -142,18 +151,25 @@ export function Sidebar({ active, onChange }: Props) {
         })}
       </nav>
 
-      <div className="flex shrink-0 items-center gap-2 border-t border-slate-200 px-4 py-3 dark:border-slate-800">
+      <div className="flex shrink-0 items-center gap-2.5 border-t border-slate-200 px-4 py-3 dark:border-slate-800">
+        {/* Initials avatar — no hardcoded name, uses real auth user */}
         <div
-          className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-slate-200 text-slate-600 ring-2 ring-white dark:bg-slate-700 dark:text-slate-200 dark:ring-slate-900"
+          className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-brand-600 text-[11px] font-bold text-white ring-2 ring-white dark:bg-brand-500 dark:ring-slate-900"
           aria-hidden
         >
-          <I.Bot className="h-4 w-4" />
+          {user ? initials(user.displayName || user.username) : '??'}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">คุณเอก (Owner)</div>
-          <div className="flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> {t('sidebar.online')}
+          <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
+            {user?.displayName || user?.username || '—'}
           </div>
+          <button
+            type="button"
+            onClick={() => void logout()}
+            className="text-[11px] text-slate-400 transition hover:text-rose-500 dark:text-slate-500 dark:hover:text-rose-400"
+          >
+            ออกจากระบบ
+          </button>
         </div>
         <button
           type="button"

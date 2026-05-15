@@ -164,7 +164,7 @@ export function ConversationList({ conversations, activeId, onSelect, loading = 
           <div className="flex min-w-0 items-baseline gap-2">
             <h2 className="text-lg font-bold tracking-tight text-slate-900 dark:text-white">{t('inbox.title')}</h2>
             {totalUnread > 0 && (
-              <span className="shrink-0 rounded-full bg-fuchsia-100 px-2 py-0.5 text-[11px] font-semibold text-fuchsia-700 dark:bg-fuchsia-950/60 dark:text-fuchsia-200">
+              <span className="shrink-0 rounded-full bg-brand-100 px-2 py-0.5 text-[11px] font-semibold text-brand-700 dark:bg-brand-900/50 dark:text-brand-200">
                 {t('inbox.newCount', { n: totalUnread })}
               </span>
             )}
@@ -259,6 +259,19 @@ export function ConversationList({ conversations, activeId, onSelect, loading = 
           )}
           {otherRows.map((c) => renderRow(c))}
         </div>
+
+        {/* No-results state — search/filter returned nothing */}
+        {!loading && filtered.length === 0 && conversations.length > 0 && (
+          <div className="flex flex-col items-center gap-2 px-6 py-12 text-center">
+            <I.Search className="h-7 w-7 text-slate-300 dark:text-slate-600" />
+            <p className="text-sm font-medium text-slate-500 dark:text-slate-400">
+              ไม่พบแชทที่ตรงกัน
+            </p>
+            <p className="text-xs text-slate-400 dark:text-slate-500">
+              ลองเปลี่ยนคำค้นหาหรือล้างตัวกรอง
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

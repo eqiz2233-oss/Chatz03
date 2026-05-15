@@ -5,6 +5,7 @@ import { useAppPreferences } from '../../context/AppPreferencesContext';
 import { useToast } from '../../context/ToastContext';
 import { ConversationList } from './ConversationList';
 import { ChatThread } from './ChatThread';
+import { ChannelIcon, I } from '../Icons';
 import { formatRelativeListTime, mapLineConversationDto, type LineConversationDto } from '../../lib/lineInbox';
 import { mapFbConversationDto, type FbConversationDto } from '../../lib/fbInbox';
 import { useInboxNotifications } from '../../lib/inboxNotifications';
@@ -424,10 +425,90 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
             />
           </div>
         ) : (
-          <div className="hidden min-h-0 min-w-0 flex-1 flex-col items-center justify-center bg-[#f5f4fa] px-6 text-center text-sm text-slate-500 dark:bg-slate-950/80 dark:text-slate-400 md:flex">
-            {t('inbox.empty')}
-          </div>
+          <InboxEmptyPanel
+            configured={health.lineConfigured || health.fbConfigured}
+            loaded={health.loaded}
+          />
         )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Empty state panel ────────────────────────────────────────────────────────
+
+/**
+ * Shown on the right side of the inbox when no conversation is active.
+ * Two modes:
+ *   - Not configured: guide the seller to connect their first channel.
+ *   - Configured, 0 conversations: quiet "waiting for messages" state.
+ */
+function InboxEmptyPanel({ configured, loaded }: { configured: boolean; loaded: boolean }) {
+  if (!loaded) {
+    // Still fetching health — show nothing to avoid flicker.
+    return (
+      <div className="hidden min-h-0 min-w-0 flex-1 bg-[#f5f4fa] dark:bg-slate-950/80 md:block" />
+    );
+  }
+
+  if (!configured) {
+    // No channel connected yet — actionable guidance.
+    return (
+      <div className="hidden min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-8 bg-[#f5f4fa] px-10 text-center dark:bg-slate-950/80 md:flex">
+        {/* Channel icons */}
+        <div className="flex items-center gap-3">
+          {(['line', 'facebook', 'ig'] as const).map((ch) => (
+            <div
+              key={ch}
+              className="grid h-14 w-14 place-items-center rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/80 dark:bg-slate-800 dark:ring-slate-700"
+            >
+              <ChannelIcon channel={ch} className="h-8 w-8" />
+            </div>
+          ))}
+        </div>
+
+        {/* Heading */}
+        <div className="max-w-xs space-y-2">
+          <h2 className="text-xl font-bold text-slate-900 dark:text-slate-50">
+            เชื่อมต่อช่องทางแรกของคุณ
+          </h2>
+          <p className="text-sm leading-relaxed text-slate-500 dark:text-slate-400">
+            เพิ่ม LINE OA, Facebook Page หรือ Instagram DM ใน{' '}
+            <strong className="font-semibold text-slate-700 dark:text-slate-300">⚙ Settings</strong>{' '}
+            แชทจากทุกช่องทางจะรวมอยู่ที่นี่
+          </p>
+        </div>
+
+        {/* Hint steps */}
+        <ol className="w-full max-w-[260px] space-y-2 text-left">
+          {[
+            'กด ⚙ Settings ในแถบเมนูซ้าย',
+            'ใส่ LINE Channel Secret & Token',
+            'ตั้ง Webhook URL ใน LINE Developers',
+          ].map((step, i) => (
+            <li key={i} className="flex items-start gap-3 text-sm text-slate-500 dark:text-slate-400">
+              <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-brand-100 text-[11px] font-bold text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
+                {i + 1}
+              </span>
+              {step}
+            </li>
+          ))}
+        </ol>
+      </div>
+    );
+  }
+
+  // Configured but no conversation selected / list is empty.
+  return (
+    <div className="hidden min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-[#f5f4fa] px-8 text-center dark:bg-slate-950/80 md:flex">
+      <div className="grid h-16 w-16 place-items-center rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/80 dark:bg-slate-800 dark:ring-slate-700">
+        <I.Inbox className="h-8 w-8 text-slate-300 dark:text-slate-600" />
+      </div>
+      <div className="space-y-1">
+        <p className="font-semibold text-slate-700 dark:text-slate-300">รอรับแชท…</p>
+        <p className="text-sm text-slate-400 dark:text-slate-500">
+          เมื่อมีข้อความใหม่จะปรากฏที่นี่ทันที
+        </p>
       </div>
     </div>
   );

@@ -5,7 +5,9 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Inter', 'Noto Sans Thai', 'system-ui', 'sans-serif'],
+        // Sarabun: unified Thai + Latin. No more font-stack mixing
+        // between Inter (Latin) and Noto Sans Thai (Thai).
+        sans: ['Sarabun', 'system-ui', 'sans-serif'],
       },
       colors: {
         brand: {

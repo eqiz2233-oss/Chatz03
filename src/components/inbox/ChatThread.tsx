@@ -913,7 +913,7 @@ function MessageBubble({
         </div>
         {menu}
       </div>
-      <div className={'mt-1 flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400 ' + (isCustomer ? '' : 'justify-end')}>
+      <div className={'mt-1 flex items-center gap-1.5 text-xs text-slate-400 dark:text-slate-500 ' + (isCustomer ? '' : 'justify-end')}>
         {isPinned && <span title={t('chat.pinnedBanner')}>📌</span>}
         {isAI && <span className="chip bg-brand-100 text-brand-800 dark:bg-brand-900/50 dark:text-brand-200">AI</span>}
         <span>{message.at}</span>
