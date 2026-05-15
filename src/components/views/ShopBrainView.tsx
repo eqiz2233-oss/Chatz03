@@ -922,37 +922,15 @@ function AddForm({
               )}
             </FormCard>
 
-            {/* Status card — AI readiness, mirrors reference's "Status" with the green dot */}
-            <FormCard
-              title="สถานะ"
-              accessory={
-                <span
-                  className={
-                    'h-2.5 w-2.5 rounded-full ' +
-                    (hasValidCore
-                      ? 'bg-emerald-500 ring-2 ring-emerald-100 dark:ring-emerald-950'
-                      : 'bg-amber-400 ring-2 ring-amber-100 dark:ring-amber-950')
-                  }
-                  aria-label={hasValidCore ? 'พร้อมใช้งาน' : 'ข้อมูลยังไม่ครบ'}
-                />
-              }
-            >
-              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">ความพร้อมของ AI</label>
-              <div
-                className={
-                  'rounded-lg border px-3 py-2 text-sm font-medium ' +
-                  (hasValidCore
-                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300'
-                    : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200')
-                }
-              >
-                {hasValidCore ? 'พร้อมตอบลูกค้า' : 'ขาดข้อมูล'}
-              </div>
-              <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">
-                {hasValidCore
-                  ? 'AI จะใช้ข้อมูลนี้ตอบลูกค้าหลังบันทึก'
-                  : 'กรอก ชื่อ + ราคา + ตัวเลือก ให้ครบ'}
-              </p>
+            <FormCard title="ราคา">
+              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">ราคาขาย (บาท)</label>
+              <input
+                type="number"
+                value={form.price}
+                onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
+                placeholder="350"
+                className={inputClass}
+              />
             </FormCard>
 
             {/* Stock card — single field, mirrors reference's "Product Details > Categories" */}
@@ -968,9 +946,6 @@ function AddForm({
                 placeholder="เช่น 120"
                 className={inputClass}
               />
-              <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">
-                ปล่อยว่างได้ ถ้าไม่จำกัดจำนวน
-              </p>
             </FormCard>
           </aside>
 
@@ -988,9 +963,6 @@ function AddForm({
                     placeholder="เช่น เสื้อ Oversize Cotton"
                     className={inputClass}
                   />
-                  <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">
-                    ใช้ชื่อที่ลูกค้าค้นหาเจอ และไม่ซ้ำกับสินค้าอื่น
-                  </p>
                 </div>
                 <div>
                   <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">รายละเอียด</label>
@@ -1001,27 +973,7 @@ function AddForm({
                     rows={4}
                     className={'resize-none ' + inputClass}
                   />
-                  <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">
-                    อธิบายสินค้าให้ลูกค้าเข้าใจ AI จะหยิบไปใช้ตอบ
-                  </p>
                 </div>
-              </div>
-            </FormCard>
-
-            {/* Pricing */}
-            <FormCard title="ราคา" padding="lg">
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">ราคาขาย (บาท)</label>
-                <input
-                  type="number"
-                  value={form.price}
-                  onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
-                  placeholder="350"
-                  className={inputClass}
-                />
-                <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">
-                  ราคาที่ลูกค้าเห็น AI จะใช้ราคานี้ตอบ
-                </p>
               </div>
             </FormCard>
 
@@ -1044,9 +996,6 @@ function AddForm({
                 </button>
               }
             >
-              <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">
-                เช่น สี · ขนาด · รสชาติ (เว้นได้ถ้าไม่มี)
-              </p>
               <div className="space-y-3">
                 {form.optionGroups.map((g, i) => (
                   <div key={g.id} className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 dark:border-slate-700 dark:bg-slate-800/30">
@@ -1153,9 +1102,6 @@ function AddForm({
                 rows={3}
                 className={'resize-none ' + inputClass}
               />
-              <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">
-                คั่นด้วยจุลภาค AI จะใช้ปิดการขายตอนลูกค้าลังเล
-              </p>
             </FormCard>
           </div>
         </div>

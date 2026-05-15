@@ -407,9 +407,30 @@ function AccountCard({ t, locale }: { t: (k: string) => string; locale: Locale }
 }
 
 function ChannelsSection({ t }: { t: (k: string) => string }) {
+  const { locale } = useAppPreferences();
+  const title = locale === 'th' ? 'การเชื่อมต่อ' : 'Integrations';
+  const [metaHeader, setMetaHeader] = useState<{
+    isConnected: boolean;
+    busy: boolean;
+    refresh: () => void;
+  } | null>(null);
+
   return (
     <div className="space-y-6">
-      <MetaIntegrationSection t={t} />
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{title}</h2>
+        {metaHeader?.isConnected && (
+          <button
+            type="button"
+            onClick={() => metaHeader.refresh()}
+            disabled={metaHeader.busy}
+            className="shrink-0 text-xs text-slate-400 hover:text-slate-600 disabled:opacity-50 dark:hover:text-slate-200"
+          >
+            {t('settings.refresh')}
+          </button>
+        )}
+      </div>
+      <MetaIntegrationSection t={t} onHeaderState={setMetaHeader} />
       <LineIntegrationCard t={t} />
     </div>
   );
@@ -733,7 +754,13 @@ function Segmented<T extends string>({
 
 // ─── Shared Meta (FB+IG) state ──────────────────────────────────────────────
 
-function MetaIntegrationSection({ t }: { t: (k: string) => string }) {
+function MetaIntegrationSection({
+  t,
+  onHeaderState,
+}: {
+  t: (k: string) => string;
+  onHeaderState?: (state: { isConnected: boolean; busy: boolean; refresh: () => void }) => void;
+}) {
   const [status, setStatus] = useState<FbIntegrationStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -766,9 +793,16 @@ function MetaIntegrationSection({ t }: { t: (k: string) => string }) {
   const isConnected = Boolean(status && (status.replyEnabled || status.page));
   const igAccount = status?.page?.instagram ?? null;
 
+  useEffect(() => {
+    onHeaderState?.({
+      isConnected,
+      busy,
+      refresh: () => void refresh(),
+    });
+  }, [isConnected, busy, refresh, onHeaderState]);
+
   return (
     <div className="space-y-3">
-      <p className="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Meta (Facebook &amp; Instagram)</p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {/* ── Facebook Messenger card ── */}
         <IntegrationCard
@@ -799,14 +833,6 @@ function MetaIntegrationSection({ t }: { t: (k: string) => string }) {
         />
       </div>
 
-      {/* ── Shared action row ── */}
-      {isConnected && (
-        <div className="flex flex-wrap items-center gap-2">
-          <button type="button" onClick={() => void refresh()} disabled={busy} className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
-            รีเฟรช
-          </button>
-        </div>
-      )}
       {err && (
         <div className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-600 dark:bg-rose-950/30 dark:text-rose-300">{err}</div>
       )}
@@ -961,8 +987,6 @@ function LineIntegrationCard(_props: { t: (k: string) => string }) {
 
   return (
     <div className="space-y-3">
-      <p className="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">LINE</p>
-
       <IntegrationCard
         icon={<ChannelIcon channel="line" className="h-7 w-7" />}
         iconBg="bg-green-50 dark:bg-green-950/30"
