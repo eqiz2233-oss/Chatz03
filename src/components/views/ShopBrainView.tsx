@@ -208,6 +208,86 @@ const BLANK: FormState = {
   imageUrl: '',
 };
 
+/** ตัวอย่างสำหรับดู mockup หน้าร้าน — ไม่ sync ขึ้น server จนกว่าจะกดบันทึก */
+const SEED_DEMO_PRODUCTS: Product[] = [
+  {
+    id: 'demo-p1',
+    name: 'เสื้อ Oversize Cotton',
+    price: 350,
+    imageEmoji: '👕',
+    imageUrl: 'https://picsum.photos/seed/chatz-shop-1/400/400',
+    description: 'ผ้าฝ้าย 100% นุ่ม ระบายอากาศดี ใส่สบายทุกวัน',
+    sellingPoints: 'ไม่ย้ว ไม่หด · ซักเครื่องได้ · คละสีได้',
+    stock: 48,
+    optionGroups: [
+      { label: 'สี', values: ['ดำ', 'ขาว', 'เทา', 'กรม'] },
+      { label: 'ไซส์', values: ['S', 'M', 'L', 'XL'] },
+    ],
+    aiReady: true,
+  },
+  {
+    id: 'demo-p2',
+    name: 'กางเกงขายาว Unisex',
+    price: 590,
+    imageEmoji: '👖',
+    imageUrl: 'https://picsum.photos/seed/chatz-shop-2/400/400',
+    description: 'ทรงสบาย เอวยางยืด ใส่ได้ทั้งชายหญิง',
+    sellingPoints: 'ผ้าแห้งเร็ว · มีกระเป๋า 2 ข้าง',
+    stock: 22,
+    optionGroups: [{ label: 'ไซส์', values: ['28', '30', '32', '34'] }],
+    aiReady: true,
+  },
+  {
+    id: 'demo-p3',
+    name: 'รองเท้าผ้าใบ Everyday',
+    price: 1290,
+    imageEmoji: '👟',
+    imageUrl: 'https://picsum.photos/seed/chatz-shop-3/400/400',
+    description: 'น้ำหนักเบา พื้นกันลื่น เดินสบาย',
+    sellingPoints: 'รองรับแรงกระแทก · ใส่ทำงานได้',
+    stock: 15,
+    optionGroups: [{ label: 'ไซส์', values: ['38', '39', '40', '41', '42'] }],
+    aiReady: true,
+  },
+  {
+    id: 'demo-p4',
+    name: 'กระเป๋าสะพาย Canvas',
+    price: 450,
+    imageEmoji: '👜',
+    imageUrl: 'https://picsum.photos/seed/chatz-shop-4/400/400',
+    description: 'ผ้าแคนวาส ทนทาน สายสะพายปรับได้',
+    sellingPoints: 'ใส่โน้ตบุ๊ก 13 นิ้วได้ · มีซิปภายใน',
+    stock: 12,
+    optionGroups: [{ label: 'สี', values: ['ครีม', 'น้ำตาล', 'ดำ'] }],
+    aiReady: false,
+  },
+  {
+    id: 'demo-p5',
+    name: 'หมวกแก๊ป Minimal',
+    price: 290,
+    imageEmoji: '🧢',
+    imageUrl: 'https://picsum.photos/seed/chatz-shop-5/400/400',
+    description: 'ทรงเรียบ ปีกหมวกโค้ง ปรับขนาดได้',
+    sellingPoints: 'ปักโลโก้ได้ · ของขวัญได้',
+    stock: 30,
+    optionGroups: [],
+    aiReady: false,
+  },
+];
+
+const DEMO_NEW_PRODUCT_FORM: FormState = {
+  name: 'เสื้อ Oversize Cotton',
+  price: '350',
+  optionGroups: [
+    { id: 'demo-og-1', label: 'สี', valuesInput: 'ดำ, ขาว, เทา, กรม' },
+    { id: 'demo-og-2', label: 'ไซส์', valuesInput: 'S, M, L, XL' },
+  ],
+  description: 'ผ้าฝ้าย 100% นุ่ม ระบายอากาศดี ใส่สบายทุกวัน',
+  sellingPoints: 'ไม่ย้ว ไม่หด · ซักเครื่องได้ · คละสีได้',
+  stock: '48',
+  imageUrl: 'https://picsum.photos/seed/chatz-shop-demo-form/400/400',
+};
+
 /** Extensions often seen from iOS / Android / desktop (MIME may be empty on some devices). */
 const PRODUCT_IMAGE_EXTENSIONS = new Set([
   'png',
@@ -311,6 +391,16 @@ export function ShopBrainView() {
   const resetForm = () => {
     setForm(BLANK);
     setEditingId(null);
+  };
+
+  const loadDemoMockup = () => {
+    setProducts(SEED_DEMO_PRODUCTS);
+    setEditingId(null);
+    setForm({
+      ...DEMO_NEW_PRODUCT_FORM,
+      optionGroups: DEMO_NEW_PRODUCT_FORM.optionGroups.map((g) => ({ ...g, id: newId('og') })),
+    });
+    setSearch('');
   };
 
   const handleSave = () => {
@@ -444,7 +534,18 @@ export function ShopBrainView() {
                     {search ? 'ไม่พบสินค้าที่ค้นหา' : 'ยังไม่มีสินค้า'}
                   </p>
                   {!search && (
-                    <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">เพิ่มสินค้าชิ้นแรกที่ฟอร์มทางขวา</p>
+                    <>
+                      <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
+                        เพิ่มสินค้าชิ้นแรกที่ฟอร์มทางขวา หรือโหลดตัวอย่างเพื่อดู mockup
+                      </p>
+                      <button
+                        type="button"
+                        onClick={loadDemoMockup}
+                        className="mt-4 rounded-full bg-brand-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-brand-700 dark:bg-brand-500 dark:hover:bg-brand-400"
+                      >
+                        โหลดตัวอย่าง (mockup)
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
@@ -473,6 +574,7 @@ export function ShopBrainView() {
             onCancel={resetForm}
             slotsRemaining={slotsRemaining}
             onSaveAsTemplate={saveCurrentAsTemplate}
+            onLoadDemo={products.length === 0 ? loadDemoMockup : undefined}
           />
         </main>
       </div>
@@ -593,6 +695,7 @@ function AddForm({
   onCancel,
   slotsRemaining,
   onSaveAsTemplate,
+  onLoadDemo,
 }: {
   form: FormState;
   setForm: React.Dispatch<React.SetStateAction<FormState>>;
@@ -601,6 +704,7 @@ function AddForm({
   onCancel: () => void;
   slotsRemaining: number;
   onSaveAsTemplate: (name: string, emoji: string) => void;
+  onLoadDemo?: () => void;
 }) {
   const imageInputId = useId();
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -692,11 +796,20 @@ function AddForm({
           <h2 className="text-base font-bold text-slate-900 dark:text-white">
             {isEdit ? 'แก้ไขสินค้า' : 'เพิ่มสินค้าใหม่'}
           </h2>
-          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-            {isEdit
-              ? 'แก้แล้วกดบันทึก ข้อมูลจะอัปเดตให้ AI ทันที'
-              : 'กรอกข้อมูลให้ครบ AI จะได้ตอบลูกค้าได้แม่นยำขึ้น'}
-          </p>
+          {isEdit && (
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+              แก้แล้วกดบันทึก ข้อมูลจะอัปเดตให้ AI ทันที
+            </p>
+          )}
+          {onLoadDemo && !hasAnyContent && (
+            <button
+              type="button"
+              onClick={onLoadDemo}
+              className="mt-2 text-xs font-semibold text-brand-600 underline-offset-2 hover:underline dark:text-brand-400"
+            >
+              โหลดตัวอย่าง (mockup)
+            </button>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <button
@@ -944,7 +1057,7 @@ function AddForm({
           {/* Selling points + stock */}
           <section className="grid grid-cols-3 gap-3">
             <div className="col-span-3 sm:col-span-2">
-              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">จุดเด่น</label>
+              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">จุดเด่นของสินค้า</label>
               <textarea
                 value={form.sellingPoints}
                 onChange={(e) => setForm((f) => ({ ...f, sellingPoints: e.target.value }))}
