@@ -179,6 +179,23 @@ export const I = {
   LogOut: (p: SVGProps<SVGSVGElement>) => (
     <svg {...base} {...p}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
   ),
+  Plug: (p: SVGProps<SVGSVGElement>) => (
+    <svg {...base} {...p}>
+      <path d="M12 22v-5" />
+      <path d="M9 7V2" />
+      <path d="M15 7V2" />
+      <path d="M6 13V8h12v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4z" />
+    </svg>
+  ),
+  Palette: (p: SVGProps<SVGSVGElement>) => (
+    <svg {...base} {...p}>
+      <circle cx="13.5" cy="6.5" r="0.5" fill="currentColor" stroke="none" />
+      <circle cx="17.5" cy="10.5" r="0.5" fill="currentColor" stroke="none" />
+      <circle cx="8.5" cy="7.5" r="0.5" fill="currentColor" stroke="none" />
+      <circle cx="6.5" cy="12.5" r="0.5" fill="currentColor" stroke="none" />
+      <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z" />
+    </svg>
+  ),
 };
 
 export function ChannelIcon({ channel, className = 'h-4 w-4' }: { channel: 'line' | 'ig' | 'facebook'; className?: string }) {

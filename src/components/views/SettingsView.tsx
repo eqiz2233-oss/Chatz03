@@ -9,53 +9,169 @@ import {
   openFbConnectPopup,
   type FbIntegrationStatus,
 } from '../../lib/fbIntegration';
+import { useMutedState, playNotification } from '../../lib/inboxNotifications';
 
-type Tab = 'general' | 'connect' | 'bot';
+/**
+ * The Settings page uses a vertical sidebar (left) + active section content
+ * (right), matching the pattern of Linear/Notion/Slack. Scales better than
+ * horizontal tabs and reads as a "real settings page" instead of a small
+ * tab strip on a content area.
+ *
+ * Section ordering is by frequency of access for a small Thai seller:
+ *   channels   → first thing to do (connect LINE/FB/IG)
+ *   ai-bot     → second priority: teach the bot what to say
+ *   notifications, appearance, account → infrequent / one-time
+ */
+type SettingsSection = 'channels' | 'ai-bot' | 'notifications' | 'appearance' | 'account';
+
+interface NavItem {
+  key: SettingsSection;
+  label: string;
+  desc: string;
+  icon: React.ReactNode;
+}
 
 export function SettingsView() {
   const { t, theme, setTheme, locale, setLocale } = useAppPreferences();
-  const [tab, setTab] = useState<Tab>('general');
+  const [section, setSection] = useState<SettingsSection>('channels');
 
-  const tabs: { key: Tab; label: string; emoji: string }[] = [
-    { key: 'general', label: t('settings.tabGeneral'), emoji: '🎨' },
-    { key: 'connect', label: t('settings.tabConnect'), emoji: '🔗' },
-    { key: 'bot', label: t('settings.tabBot'), emoji: '🤖' },
+  const nav: NavItem[] = [
+    {
+      key: 'channels',
+      label: locale === 'th' ? 'เชื่อมต่อแชท' : 'Channels',
+      desc: locale === 'th' ? 'LINE · Facebook · Instagram · ตรวจสลิป' : 'LINE · Facebook · Instagram · Slip Check',
+      icon: <I.Plug className="h-4 w-4" />,
+    },
+    {
+      key: 'ai-bot',
+      label: locale === 'th' ? 'AI ตอบลูกค้า' : 'AI Bot',
+      desc: locale === 'th' ? 'ข้อมูลร้าน · ตอบอัตโนมัติ · คีย์เวิร์ด' : 'Brand · Auto-reply · Keywords',
+      icon: <I.Bot className="h-4 w-4" />,
+    },
+    {
+      key: 'notifications',
+      label: locale === 'th' ? 'การแจ้งเตือน' : 'Notifications',
+      desc: locale === 'th' ? 'เสียง · ป้ายแจ้งเตือน' : 'Sound · Tab badge',
+      icon: <I.Bell className="h-4 w-4" />,
+    },
+    {
+      key: 'appearance',
+      label: locale === 'th' ? 'หน้าตา & ภาษา' : 'Appearance',
+      desc: locale === 'th' ? 'สว่าง / มืด · ไทย / English' : 'Light / Dark · TH / EN',
+      icon: <I.Palette className="h-4 w-4" />,
+    },
+    {
+      key: 'account',
+      label: locale === 'th' ? 'บัญชีของฉัน' : 'My Account',
+      desc: locale === 'th' ? 'รหัสผ่าน · ออกจากระบบ' : 'Password · Sign out',
+      icon: <I.User className="h-4 w-4" />,
+    },
   ];
+
+  const active = nav.find((n) => n.key === section) ?? nav[0];
 
   return (
     <div className="flex h-screen flex-1 flex-col bg-slate-50 dark:bg-slate-950">
-      <div className="border-b border-slate-200 bg-white px-6 pt-5 pb-0 dark:border-slate-800 dark:bg-slate-900">
-        <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">{t('settings.title')}</h1>
-        <div className="mt-4 flex gap-1">
-          {tabs.map((tb) => (
-            <button
-              key={tb.key}
-              type="button"
-              onClick={() => setTab(tb.key)}
-              className={
-                'flex items-center gap-1.5 rounded-t-xl px-4 py-2.5 text-sm font-semibold transition ' +
-                (tab === tb.key
-                  ? 'bg-slate-50 text-brand-700 shadow-[0_-1px_0_0_inset] shadow-brand-300 dark:bg-slate-950 dark:text-brand-300 dark:shadow-brand-600'
-                  : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200')
-              }
-            >
-              <span>{tb.emoji}</span>
-              {tb.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      {/* Page header */}
+      <header className="shrink-0 border-b border-slate-200 bg-white px-6 py-5 dark:border-slate-800 dark:bg-slate-900 md:px-8">
+        <h1 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
+          {locale === 'th' ? 'ตั้งค่า' : 'Settings'}
+        </h1>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+          {locale === 'th' ? 'ทุกอย่างที่ต้องการ — แยกเป็นหมวดเพื่อหาง่าย' : 'Everything in one place — grouped by topic'}
+        </p>
+      </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-5">
-        {tab === 'general' && <GeneralTab t={t} theme={theme} setTheme={setTheme} locale={locale} setLocale={setLocale} />}
-        {tab === 'connect' && <ConnectTab t={t} />}
-        {tab === 'bot' && <BotTab t={t} />}
+      {/* Body: sidebar + content */}
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+
+        {/* ── Left nav ───────────────────────────────────────────── */}
+        <aside className="hidden w-[240px] shrink-0 overflow-y-auto border-r border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900 md:block">
+          <nav className="space-y-1">
+            {nav.map((it) => {
+              const isActive = it.key === section;
+              return (
+                <button
+                  key={it.key}
+                  type="button"
+                  onClick={() => setSection(it.key)}
+                  className={
+                    'flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left transition ' +
+                    (isActive
+                      ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-200'
+                      : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800')
+                  }
+                >
+                  <span
+                    className={
+                      'mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg ' +
+                      (isActive
+                        ? 'bg-brand-600 text-white dark:bg-brand-500'
+                        : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400')
+                    }
+                  >
+                    {it.icon}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-semibold leading-tight">{it.label}</span>
+                    <span className={'mt-0.5 block truncate text-[11px] ' + (isActive ? 'text-brand-600/80 dark:text-brand-300/80' : 'text-slate-400 dark:text-slate-500')}>
+                      {it.desc}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </nav>
+        </aside>
+
+        {/* ── Mobile: horizontal scroll nav pills ─────────────── */}
+        <div className="md:hidden border-b border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex gap-1.5 overflow-x-auto">
+            {nav.map((it) => {
+              const isActive = it.key === section;
+              return (
+                <button
+                  key={it.key}
+                  type="button"
+                  onClick={() => setSection(it.key)}
+                  className={
+                    'inline-flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ' +
+                    (isActive
+                      ? 'bg-brand-600 text-white dark:bg-brand-500'
+                      : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300')
+                  }
+                >
+                  {it.icon}
+                  {it.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* ── Active section content ────────────────────────────── */}
+        <main className="min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto max-w-3xl px-6 py-6 md:px-8 md:py-8">
+            {/* Section heading (on the content side, mirrors active nav item) */}
+            <div className="mb-6">
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white">{active.label}</h2>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{active.desc}</p>
+            </div>
+
+            {section === 'channels' && <ChannelsSection t={t} />}
+            {section === 'ai-bot' && <AiBotSection t={t} />}
+            {section === 'notifications' && <NotificationsSection locale={locale} />}
+            {section === 'appearance' && <AppearanceSection t={t} theme={theme} setTheme={setTheme} locale={locale} setLocale={setLocale} />}
+            {section === 'account' && <AccountSection t={t} locale={locale} />}
+          </div>
+        </main>
       </div>
     </div>
   );
 }
 
-function GeneralTab({
+/** Theme + Language — purely client-side preferences. */
+function AppearanceSection({
   t, theme, setTheme, locale, setLocale,
 }: {
   t: (k: string) => string;
@@ -65,11 +181,11 @@ function GeneralTab({
   setLocale: (v: Locale) => void;
 }) {
   return (
-    <div className="mx-auto max-w-lg space-y-4">
+    <div className="space-y-4">
       <SectionCard
         emoji="🌗"
         title={t('settings.theme')}
-        desc={t('settings.appearanceSub')}
+        desc={locale === 'th' ? 'เปลี่ยนระหว่างโหมดสว่างกับโหมดมืด' : 'Switch between light and dark mode'}
       >
         <Segmented<Theme>
           value={theme}
@@ -95,8 +211,87 @@ function GeneralTab({
           ]}
         />
       </SectionCard>
+    </div>
+  );
+}
 
+/** Account section — just wraps the existing AccountCard. */
+function AccountSection({ t, locale }: { t: (k: string) => string; locale: Locale }) {
+  return (
+    <div className="space-y-4">
       <AccountCard t={t} locale={locale} />
+    </div>
+  );
+}
+
+/**
+ * Notifications: sound toggle (uses the shared mute state from
+ * inboxNotifications so it stays in sync with the bell button in the inbox
+ * header). Also explains the tab-title badge so the seller knows what
+ * "(3) Chatz" in the browser tab means.
+ */
+function NotificationsSection({ locale }: { locale: Locale }) {
+  const [muted, setMuted] = useMutedState();
+  const th = locale === 'th';
+
+  return (
+    <div className="space-y-4">
+      <SectionCard
+        emoji="🔔"
+        title={th ? 'เสียงแจ้งเตือน' : 'Notification sound'}
+        desc={th
+          ? 'ดิ๊งแบบเบาๆ เมื่อมีลูกค้าทักเข้ามา'
+          : 'A soft ding when a customer messages in'}
+      >
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-sm text-slate-700 dark:text-slate-200">
+            {muted
+              ? (th ? '🔕 ปิดเสียงแล้ว' : '🔕 Muted')
+              : (th ? '🔔 เปิดเสียงอยู่' : '🔔 Sound on')}
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => playNotification()}
+              disabled={muted}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              {th ? '▶ ทดสอบเสียง' : '▶ Test sound'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setMuted(!muted)}
+              className={
+                'rounded-lg px-4 py-1.5 text-xs font-semibold transition ' +
+                (muted
+                  ? 'bg-brand-600 text-white hover:bg-brand-700 dark:bg-brand-500 dark:hover:bg-brand-400'
+                  : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800')
+              }
+            >
+              {muted
+                ? (th ? 'เปิดเสียง' : 'Unmute')
+                : (th ? 'ปิดเสียง' : 'Mute')}
+            </button>
+          </div>
+        </div>
+      </SectionCard>
+
+      <SectionCard
+        emoji="🏷️"
+        title={th ? 'ป้ายแจ้งเตือนบนแท็บ' : 'Tab title badge'}
+        desc={th
+          ? 'ตัวเลขในวงเล็บข้างชื่อแท็บเบราว์เซอร์ — เปิดอยู่ตลอด'
+          : 'The number in the browser tab title — always on'}
+      >
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 font-mono text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200">
+          (3) Chatz · Unified Chat
+        </div>
+        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+          {th
+            ? 'ตัวเลขจะหายเมื่อเปิดแชทนั้นๆ เห็นจากแท็บอื่นได้แม้ Chatz ไม่ใช่แท็บที่กำลังดู'
+            : 'The count clears when you open the chat. Visible from other tabs while Chatz runs in the background.'}
+        </p>
+      </SectionCard>
     </div>
   );
 }
@@ -211,9 +406,9 @@ function AccountCard({ t, locale }: { t: (k: string) => string; locale: Locale }
   );
 }
 
-function ConnectTab({ t }: { t: (k: string) => string }) {
+function ChannelsSection({ t }: { t: (k: string) => string }) {
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
+    <div className="space-y-6">
       <MetaIntegrationSection t={t} />
       <LineIntegrationCard t={t} />
       <EasySlipIntegrationCard t={t} />
@@ -254,7 +449,7 @@ interface AiStatus {
   model: string | null;
 }
 
-function BotTab({ t }: { t: (k: string) => string }) {
+function AiBotSection({ t }: { t: (k: string) => string }) {
   const [settings, setSettings] = useState<BotSettings>(DEFAULT_BOT_SETTINGS);
   const [loaded, setLoaded] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -331,7 +526,7 @@ function BotTab({ t }: { t: (k: string) => string }) {
     setSettings((s) => ({ ...s, paymentInfo: { ...s.paymentInfo, ...patch } }));
 
   return (
-    <div className="mx-auto max-w-lg space-y-4">
+    <div className="space-y-4">
       <div className="-mb-1 flex items-center justify-end gap-2 text-[11px] text-slate-400 dark:text-slate-500">
         {saveStatus === 'saving' && <span>กำลังบันทึก…</span>}
         {saveStatus === 'saved' && <span className="text-emerald-600 dark:text-emerald-400">บันทึกแล้ว ✓</span>}
@@ -428,7 +623,7 @@ function BotTab({ t }: { t: (k: string) => string }) {
   );
 }
 
-// Needed for BotTab's desc where locale isn't available as a prop — just pick from the t() calls
+// Read the current locale from the document for places that don't have it via prop.
 const locale = (typeof window !== 'undefined' && document.documentElement.lang === 'en') ? 'en' : 'th';
 
 function SectionCard({
