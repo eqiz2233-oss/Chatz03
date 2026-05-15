@@ -17,6 +17,7 @@ export const orders: Order[] = [
     shop: 'BeautyShop',
     commissionPct: 0,
     slipStatus: 'verified',
+    productImageUrl: 'https://picsum.photos/seed/chatz-ord-0001/88/88',
   },
   {
     id: 'ORD-0002',
@@ -30,6 +31,7 @@ export const orders: Order[] = [
     orderDate: '2026-05-11',
     shop: 'FashionHub',
     commissionPct: 0,
+    productImageUrl: 'https://picsum.photos/seed/chatz-ord-0002/88/88',
   },
   {
     id: 'ORD-0003',
@@ -43,6 +45,7 @@ export const orders: Order[] = [
     orderDate: '2026-05-12',
     shop: 'SportZone',
     commissionPct: 0,
+    productImageUrl: 'https://picsum.photos/seed/chatz-ord-0003/88/88',
   },
   {
     id: 'ORD-0004',
@@ -57,6 +60,7 @@ export const orders: Order[] = [
     shop: 'GadgetStore',
     commissionPct: 0,
     slipStatus: 'verified',
+    productImageUrl: 'https://picsum.photos/seed/chatz-ord-0004/88/88',
   },
   {
     id: 'ORD-0005',
@@ -70,6 +74,7 @@ export const orders: Order[] = [
     orderDate: '2026-05-13',
     shop: 'HealthFirst',
     commissionPct: 0,
+    productImageUrl: 'https://picsum.photos/seed/chatz-ord-0005/88/88',
   },
   {
     id: 'ORD-0006',
@@ -83,6 +88,7 @@ export const orders: Order[] = [
     orderDate: '2026-05-08',
     shop: 'FurnitureWorld',
     commissionPct: 0,
+    productImageUrl: 'https://picsum.photos/seed/chatz-ord-0006/88/88',
   },
   {
     id: 'ORD-0007',
@@ -97,6 +103,7 @@ export const orders: Order[] = [
     shop: 'BeautyShop',
     commissionPct: 0,
     slipStatus: 'verified',
+    productImageUrl: 'https://picsum.photos/seed/chatz-ord-0007/88/88',
   },
   {
     id: 'ORD-0008',
@@ -110,5 +117,6 @@ export const orders: Order[] = [
     orderDate: '2026-05-15',
     shop: 'SportZone',
     commissionPct: 0,
+    productImageUrl: 'https://picsum.photos/seed/chatz-ord-0008/88/88',
   },
 ];

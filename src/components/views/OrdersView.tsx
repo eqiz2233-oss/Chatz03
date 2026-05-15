@@ -56,7 +56,7 @@ const FULFILLMENT_BADGE: Record<OrderStatus, { labelKey: string; cls: string }> 
 
 // ─── Sort state ───────────────────────────────────────────────────────────────
 
-type SortKey = 'id' | 'amount' | 'date' | 'customer' | 'status';
+type SortKey = 'product' | 'amount' | 'date' | 'customer' | 'status';
 type SortDir = 'asc' | 'desc';
 
 const STATUS_KEYS: OrderStatus[] = ['shipped', 'paid', 'pending', 'cancelled'];
@@ -271,7 +271,7 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
     const base = statusTab === 'all' ? searchFiltered : searchFiltered.filter((o) => o.status === statusTab);
     return [...base].sort((a, b) => {
       let cmp = 0;
-      if (sortKey === 'id') cmp = a.id.localeCompare(b.id);
+      if (sortKey === 'product') cmp = a.product.localeCompare(b.product, 'th');
       else if (sortKey === 'amount') cmp = a.amount - b.amount;
       else if (sortKey === 'date') cmp = (a.orderDate ?? a.createdAt ?? '').localeCompare(b.orderDate ?? b.createdAt ?? '');
       else if (sortKey === 'customer') cmp = a.customer.localeCompare(b.customer);
@@ -486,8 +486,7 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
               {(
                 [
                   { key: 'customer' as SortKey, label: t('orders.th.customer'), cls: '' },
-                  { key: 'id' as SortKey,       label: t('orders.th.id'),       cls: 'w-32' },
-                  { key: null,                  label: t('orders.th.product'),  cls: '' },
+                  { key: 'product' as SortKey, label: t('orders.th.product'), cls: 'min-w-[14rem]' },
                   { key: 'status' as SortKey,   label: t('orders.th.status'),   cls: 'min-w-[10rem]' },
                   { key: 'amount' as SortKey,   label: t('orders.th.amount'),   cls: 'w-28 text-right' },
                   { key: 'date' as SortKey,     label: t('orders.th.date'),     cls: 'w-28' },
@@ -516,7 +515,7 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
           <tbody className="divide-y divide-slate-100 bg-white dark:divide-slate-800/60 dark:bg-slate-900">
             {displayed.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-16 text-center text-sm text-slate-400 dark:text-slate-500">
+                <td colSpan={7} className="px-4 py-16 text-center text-sm text-slate-400 dark:text-slate-500">
                   {t('orders.empty')}
                 </td>
               </tr>
@@ -598,6 +597,30 @@ function shortId(str: string): string {
   return `CST-${(h % 900) + 100}`;
 }
 
+function OrderProductThumb({ url }: { url?: string }) {
+  const [ok, setOk] = useState(Boolean(url));
+  useEffect(() => {
+    setOk(Boolean(url));
+  }, [url]);
+
+  return (
+    <div className="grid h-11 w-11 shrink-0 overflow-hidden rounded-lg bg-slate-100 ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700">
+      {url && ok ? (
+        <img
+          src={url}
+          alt=""
+          className="h-full w-full object-cover"
+          onError={() => setOk(false)}
+        />
+      ) : (
+        <span className="grid h-full w-full place-items-center text-slate-400 dark:text-slate-500" aria-hidden>
+          <I.Box className="h-5 w-5" />
+        </span>
+      )}
+    </div>
+  );
+}
+
 // ─── Table row ────────────────────────────────────────────────────────────────
 
 function OrderRow({
@@ -643,17 +666,20 @@ function OrderRow({
         </div>
       </td>
 
-      {/* Order ID */}
+      {/* Product + order ID */}
       <td className="px-4 py-4">
-        <span className="font-mono text-[12px] font-medium text-slate-600 dark:text-slate-400">{o.id}</span>
-      </td>
-
-      {/* Product */}
-      <td className="px-4 py-4">
-        <div className="inline-flex max-w-[180px] items-center rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white dark:bg-slate-700">
-          <span className="truncate">{o.product}</span>
+        <div className="flex items-center gap-3">
+          <OrderProductThumb url={o.productImageUrl} />
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
+              {o.product}
+              {o.qty > 1 ? (
+                <span className="ml-1.5 font-normal text-slate-500 dark:text-slate-400">×{o.qty}</span>
+              ) : null}
+            </div>
+            <div className="font-mono text-[11px] text-slate-400 dark:text-slate-500">{o.id}</div>
+          </div>
         </div>
-        <div className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500">×{o.qty}</div>
       </td>
 
       {/* Status — high-contrast pill (primary scan target) */}

@@ -75,6 +75,8 @@ export interface Order {
   slipStatus?: SlipResult['status'];
   /** Customer slip image URL for order card (from chat upload / OCR pipeline). */
   slipImageUrl?: string;
+  /** Product thumbnail for order list (from catalog or chat). */
+  productImageUrl?: string;
 }
 
 export type View = 'inbox' | 'orders' | 'slips' | 'shop' | 'commission' | 'analytics' | 'settings';
