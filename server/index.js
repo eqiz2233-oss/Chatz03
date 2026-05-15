@@ -2491,7 +2491,7 @@ app.get('/api/products', async (_req, res) => {
   }
 });
 
-app.post('/api/products', express.json({ limit: '5mb' }), async (req, res) => {
+app.post('/api/products', express.json({ limit: '70mb' }), async (req, res) => {
   try {
     const p = req.body?.product;
     if (!p?.id) return res.status(400).json({ error: 'product.id required' });

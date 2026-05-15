@@ -226,7 +226,8 @@ const PRODUCT_IMAGE_EXTENSIONS = new Set([
   'svg',
 ]);
 
-const PRODUCT_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+const PRODUCT_IMAGE_MAX_BYTES = 50 * 1024 * 1024;
+const PRODUCT_IMAGE_MAX_MB = 50;
 
 function productImageFileExtension(name: string): string {
   const base = name.split(/[/\\]/).pop() ?? name;
@@ -617,7 +618,7 @@ function AddForm({
       return;
     }
     if (file.size > PRODUCT_IMAGE_MAX_BYTES) {
-      setImageError('ไฟล์ใหญ่เกิน 8 MB');
+      setImageError(`ไฟล์ใหญ่เกิน ${PRODUCT_IMAGE_MAX_MB} MB`);
       return;
     }
     setImageError(null);
@@ -795,13 +796,7 @@ function AddForm({
             ) : null}
             {imageError ? (
               <p className="mt-1.5 text-[11px] text-rose-600 dark:text-rose-400">{imageError}</p>
-            ) : (
-              <p className="mt-1.5 text-[11px] text-slate-400 dark:text-slate-500">
-                {form.imageUrl
-                  ? 'คลิกหรือลากไฟล์ใหม่เพื่อเปลี่ยนรูป'
-                  : 'รูปจากเว็บ / iOS / Android: JPEG, PNG, WebP, GIF, HEIC, AVIF, SVG … · สูงสุด 8 MB · มือถือกดเลือกจากแกลเลอรีหรือกล้องได้ตามระบบ'}
-              </p>
-            )}
+            ) : null}
           </section>
 
           {/* Name + Price */}
@@ -816,7 +811,7 @@ function AddForm({
               />
             </div>
             <div className="col-span-3 sm:col-span-1">
-              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">ราคา (฿)</label>
+              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">ราคา (บาท)</label>
               <input
                 type="number"
                 value={form.price}

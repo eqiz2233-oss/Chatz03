@@ -66,8 +66,9 @@ export function Sidebar({ active, onChange }: Props) {
   const { t } = useAppPreferences();
   const { user, logout } = useAuth();
   const isMobile = useIsMobile();
-  const [expanded, setExpanded] = useState(false);
-  const [pinned, setPinned] = useState(false);
+  const [hoverOpen, setHoverOpen] = useState(false);
+  const [lockedOpen, setLockedOpen] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearClose = useCallback(() => {
@@ -77,57 +78,73 @@ export function Sidebar({ active, onChange }: Props) {
     }
   }, []);
 
+  const expanded = isMobile ? mobileOpen : lockedOpen || hoverOpen;
+
   const handleOpen = useCallback(() => {
+    if (isMobile) {
+      clearClose();
+      setMobileOpen(true);
+      return;
+    }
+    if (lockedOpen) return;
     clearClose();
-    setExpanded(true);
-  }, [clearClose]);
+    setHoverOpen(true);
+  }, [clearClose, isMobile, lockedOpen]);
 
-  const handleClose = useCallback((delay = 200) => {
-    clearClose();
-    closeTimer.current = setTimeout(() => setExpanded(false), delay);
-  }, [clearClose]);
+  const handleClose = useCallback(
+    (delay = 200) => {
+      if (isMobile) {
+        clearClose();
+        closeTimer.current = setTimeout(() => setMobileOpen(false), delay);
+        return;
+      }
+      if (lockedOpen) return;
+      clearClose();
+      closeTimer.current = setTimeout(() => setHoverOpen(false), delay);
+    },
+    [clearClose, isMobile, lockedOpen],
+  );
 
-  // Collapse when viewport changes
   useEffect(() => {
-    setExpanded(false);
-    setPinned(false);
+    setHoverOpen(false);
+    setLockedOpen(false);
+    setMobileOpen(false);
     clearClose();
   }, [isMobile, clearClose]);
 
-  // ── Shared aside ─────────────────────────────────────────────────────────
   const lbl = labelStyle(expanded);
 
-  const togglePinned = useCallback(() => {
-    setPinned((v) => {
-      const next = !v;
-      // When pinning: keep expanded. When unpinning: collapse back to icons.
-      setExpanded(next);
-      return next;
-    });
-  }, []);
+  const toggleSidebar = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (isMobile) {
+        setMobileOpen((v) => !v);
+        return;
+      }
+      setLockedOpen((v) => {
+        const next = !v;
+        if (!next) setHoverOpen(false);
+        return next;
+      });
+    },
+    [isMobile],
+  );
 
   const aside = (
     <aside
-      onMouseEnter={() => {
-        if (!pinned) handleOpen();
-      }}
-      onMouseLeave={() => {
-        if (!pinned) handleClose(180);
-      }}
+      onMouseEnter={handleOpen}
+      onMouseLeave={() => handleClose(180)}
       style={!isMobile ? { width: expanded ? W_EXPANDED : W_COLLAPSED } : undefined}
       className={[
         'flex h-screen shrink-0 flex-col overflow-hidden border-r border-slate-200/90 bg-white select-none',
         'dark:border-slate-800 dark:bg-slate-900',
-        // Desktop: width-transition (in-flow)
         !isMobile ? 'transition-[width] duration-300 ease-in-out' : '',
-        // Mobile: fixed overlay, translate-in from left
         isMobile
           ? 'fixed left-0 top-0 z-[45] w-[248px] shadow-2xl transition-transform duration-300 ease-in-out ' +
             (expanded ? 'translate-x-0' : '-translate-x-full pointer-events-none')
           : '',
       ].filter(Boolean).join(' ')}
     >
-
       {/* ── Logo ─────────────────────────────────────────────────────────── */}
       <div className="shrink-0 px-[14px] pt-6 pb-2">
         <div className="flex items-center gap-3">
@@ -142,26 +159,6 @@ export function Sidebar({ active, onChange }: Props) {
               {t('sidebar.workspace')}
             </div>
           </div>
-
-          {/* Pin / collapse button (always visible) */}
-          <button
-            type="button"
-            onClick={() => togglePinned()}
-            title={pinned ? 'เก็บ sidebar' : 'ดึง sidebar ออกมา'}
-            aria-label={pinned ? 'เก็บ sidebar' : 'ดึง sidebar ออกมา'}
-            className={[
-              'ml-auto grid h-8 w-8 place-items-center rounded-xl transition',
-              pinned
-                ? 'bg-brand-600 text-white shadow-sm'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700',
-            ].join(' ')}
-          >
-            {pinned ? (
-              <I.ChevronLeft className="h-4 w-4" />
-            ) : (
-              <I.ChevronRight className="h-4 w-4" />
-            )}
-          </button>
         </div>
       </div>
 
@@ -175,7 +172,10 @@ export function Sidebar({ active, onChange }: Props) {
               type="button"
               onClick={() => {
                 onChange(it.key);
-                if (isMobile) handleClose(0);
+                if (isMobile) {
+                  clearClose();
+                  setMobileOpen(false);
+                }
               }}
               title={!expanded ? t(it.labelKey) : undefined}
               className={[
@@ -217,90 +217,119 @@ export function Sidebar({ active, onChange }: Props) {
       </nav>
 
       {/* ── Footer ───────────────────────────────────────────────────────── */}
-      <div
-        className={[
-          'flex shrink-0 items-center border-t border-slate-200 py-3 transition-[padding,gap] duration-300 dark:border-slate-800',
-          expanded ? 'gap-2.5 px-4' : 'justify-center px-0',
-        ].join(' ')}
-      >
-        {/* Avatar — always visible */}
+      <div className="shrink-0 border-t border-slate-200 dark:border-slate-800">
+        {/* Toggle — top of footer, above user row */}
         <div
-          className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-brand-600 text-[11px] font-bold text-white ring-2 ring-white dark:bg-brand-500 dark:ring-slate-900"
-          title={!expanded ? (user?.displayName || user?.username || undefined) : undefined}
-          aria-hidden
+          className={[
+            'flex shrink-0 px-2 pt-2 pb-1',
+            expanded ? 'justify-end' : 'justify-center',
+          ].join(' ')}
         >
-          {user ? initials(user.displayName || user.username) : '??'}
-        </div>
-
-        {/* Name + logout — slide in */}
-        <div
-          style={{
-            ...lbl,
-            flex: 1,
-            minWidth: 0,
-            maxWidth: expanded ? 140 : 0,
-          }}
-        >
-          <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
-            {user?.displayName || user?.username || '—'}
-          </div>
           <button
             type="button"
-            onClick={() => void logout()}
-            className="text-[11px] text-slate-400 transition hover:text-rose-500 dark:text-slate-500 dark:hover:text-rose-400"
+            onClick={toggleSidebar}
+            title={expanded ? 'เก็บเมนู' : 'เปิดเมนู'}
+            aria-label={expanded ? 'เก็บเมนู' : 'เปิดเมนู'}
+            aria-expanded={expanded}
+            className={[
+              'grid h-8 w-8 place-items-center rounded-xl transition',
+              expanded
+                ? 'bg-brand-600 text-white shadow-sm hover:bg-brand-700 dark:bg-brand-500 dark:hover:bg-brand-400'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700',
+            ].join(' ')}
           >
-            ออกจากระบบ
+            {expanded ? (
+              <I.ChevronLeft className="h-4 w-4" />
+            ) : (
+              <I.ChevronRight className="h-4 w-4" />
+            )}
           </button>
         </div>
 
-        {/* Settings — slide in */}
         <div
-          style={{
-            maxWidth: expanded ? 36 : 0,
-            opacity:  expanded ? 1  : 0,
-            overflow: 'hidden',
-            flexShrink: 0,
-            transition: lbl.transition,
-          }}
+          className={[
+            'flex items-center py-3 transition-[padding,gap] duration-300',
+            expanded ? 'gap-2.5 px-4' : 'justify-center px-2',
+          ].join(' ')}
         >
-          <button
-            type="button"
-            className={
-              'btn-ghost rounded-xl p-1.5 ' +
-              (active === 'settings'
-                ? 'bg-brand-600 text-white dark:bg-brand-500'
-                : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100')
-            }
-            aria-label={t('nav.settings')}
-            title={t('nav.settings')}
-            onClick={() => {
-              onChange('settings');
-              if (isMobile) handleClose(0);
+          <div
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-brand-600 text-[11px] font-bold text-white ring-2 ring-white dark:bg-brand-500 dark:ring-slate-900"
+            title={!expanded ? (user?.displayName || user?.username || undefined) : undefined}
+            aria-hidden
+          >
+            {user ? initials(user.displayName || user.username) : '??'}
+          </div>
+
+          <div
+            style={{
+              ...lbl,
+              flex: 1,
+              minWidth: 0,
+              maxWidth: expanded ? 140 : 0,
             }}
           >
-            <I.Settings className="h-4 w-4" />
-          </button>
+            <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
+              {user?.displayName || user?.username || '—'}
+            </div>
+            <button
+              type="button"
+              onClick={() => void logout()}
+              className="text-[11px] text-slate-400 transition hover:text-rose-500 dark:text-slate-500 dark:hover:text-rose-400"
+            >
+              ออกจากระบบ
+            </button>
+          </div>
+
+          <div
+            style={{
+              maxWidth: expanded ? 36 : 0,
+              opacity: expanded ? 1 : 0,
+              overflow: 'hidden',
+              flexShrink: 0,
+              transition: lbl.transition,
+            }}
+          >
+            <button
+              type="button"
+              className={
+                'btn-ghost rounded-xl p-1.5 ' +
+                (active === 'settings'
+                  ? 'bg-brand-600 text-white dark:bg-brand-500'
+                  : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100')
+              }
+              aria-label={t('nav.settings')}
+              title={t('nav.settings')}
+              onClick={() => {
+                onChange('settings');
+                if (isMobile) {
+                  clearClose();
+                  setMobileOpen(false);
+                }
+              }}
+            >
+              <I.Settings className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </div>
     </aside>
   );
 
-  // ── Desktop: aside is in-flow, width transitions ──────────────────────────
   if (!isMobile) return aside;
 
-  // ── Mobile: fixed overlay with backdrop ──────────────────────────────────
   return (
     <div className="relative w-0 shrink-0 overflow-visible">
-      {/* Backdrop */}
       {expanded && (
         <button
           type="button"
           aria-label="ปิดเมนู"
           className="fixed inset-0 z-[40] bg-slate-900/35 backdrop-blur-[1px]"
-          onClick={() => { clearClose(); setExpanded(false); }}
+          onClick={() => {
+            clearClose();
+            setMobileOpen(false);
+          }}
         />
       )}
-      {/* Thin edge trigger when sidebar is hidden */}
       {!expanded && (
         <div
           role="presentation"

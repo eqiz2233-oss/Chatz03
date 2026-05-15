@@ -156,14 +156,16 @@ function avatarColor(str: string) {
 
 // ─── Lightbox ─────────────────────────────────────────────────────────────────
 
-function SlipImageLightbox({
+function ImageLightbox({
   src,
   onClose,
-  t,
+  ariaLabel,
+  closeLabel,
 }: {
   src: string;
   onClose: () => void;
-  t: (key: string, vars?: Record<string, string | number>) => string;
+  ariaLabel: string;
+  closeLabel: string;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -180,14 +182,14 @@ function SlipImageLightbox({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label={t('orders.slipImageAria')}
+      aria-label={ariaLabel}
       className="fixed inset-0 z-[200] flex items-center justify-center bg-black/88 p-4 backdrop-blur-[1px]"
       onClick={onClose}
     >
       <button
         type="button"
         className="absolute right-3 top-3 z-[201] grid h-11 w-11 place-items-center rounded-full bg-white/12 text-white ring-1 ring-white/35 transition hover:bg-white/22"
-        aria-label={t('chat.closeMedia')}
+        aria-label={closeLabel}
         onClick={(e) => { e.stopPropagation(); onClose(); }}
       >
         <I.X className="h-6 w-6" />
@@ -210,7 +212,10 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
   const [serverOrders, setServerOrders] = useState<Order[] | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const list = serverOrders ?? seed;
-  const [slipPreview, setSlipPreview] = useState<string | null>(null);
+  const [imagePreview, setImagePreview] = useState<{
+    src: string;
+    ariaKey: 'orders.slipImageAria' | 'orders.productImageAria';
+  } | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
   const [filters, setFilters] = useState<OrderFiltersState>(DEFAULT_ORDER_FILTERS);
   const [statusTab, setStatusTab] = useState<OrderStatus | 'all'>('all');
@@ -430,8 +435,13 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
 
   return (
     <div className="flex h-screen flex-1 flex-col overflow-hidden bg-[#f4f3f8] dark:bg-slate-950">
-      {slipPreview && (
-        <SlipImageLightbox src={slipPreview} onClose={() => setSlipPreview(null)} t={t} />
+      {imagePreview && (
+        <ImageLightbox
+          src={imagePreview.src}
+          ariaLabel={t(imagePreview.ariaKey)}
+          closeLabel={t('chat.closeMedia')}
+          onClose={() => setImagePreview(null)}
+        />
       )}
       {createOpen && (
         <CreateOrderModal
@@ -702,7 +712,7 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
                   onToggleSelect={() => toggleSelectOne(o.id)}
                   t={t}
                   onGoToChat={goToChat}
-                  onSlipPreview={setSlipPreview}
+                  onImagePreview={(src, ariaKey) => setImagePreview({ src, ariaKey })}
                 />
               ))
             )}
@@ -772,14 +782,47 @@ function shortId(str: string): string {
   return `CST-${(h % 900) + 100}`;
 }
 
-function OrderProductThumb({ url }: { url?: string }) {
+function OrderProductThumb({
+  url,
+  productName,
+  onPreview,
+}: {
+  url?: string;
+  productName: string;
+  onPreview?: (url: string) => void;
+}) {
   const [ok, setOk] = useState(Boolean(url));
   useEffect(() => {
     setOk(Boolean(url));
   }, [url]);
 
+  const shellCls =
+    'grid h-11 w-11 shrink-0 overflow-hidden rounded-lg bg-slate-100 ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700';
+
+  if (url && ok && onPreview) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onPreview(url);
+        }}
+        title="ดูรูปสินค้า"
+        aria-label={`ดูรูปสินค้า — ${productName}`}
+        className={shellCls + ' cursor-zoom-in transition hover:ring-2 hover:ring-brand-300 dark:hover:ring-brand-600'}
+      >
+        <img
+          src={url}
+          alt=""
+          className="h-full w-full object-cover"
+          onError={() => setOk(false)}
+        />
+      </button>
+    );
+  }
+
   return (
-    <div className="grid h-11 w-11 shrink-0 overflow-hidden rounded-lg bg-slate-100 ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700">
+    <div className={shellCls}>
       {url && ok ? (
         <img
           src={url}
@@ -804,14 +847,14 @@ function OrderRow({
   onToggleSelect,
   t,
   onGoToChat,
-  onSlipPreview,
+  onImagePreview,
 }: {
   order: Order;
   isSelected: boolean;
   onToggleSelect: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
   onGoToChat: (o: Order) => void;
-  onSlipPreview: (url: string) => void;
+  onImagePreview: (url: string, ariaKey: 'orders.slipImageAria' | 'orders.productImageAria') => void;
 }) {
   const hasSlipImg = Boolean(o.slipImageUrl?.trim());
   const cstId = shortId(o.customer + o.shop);
@@ -852,17 +895,21 @@ function OrderRow({
         </div>
       </td>
 
-      {/* Product + order ID — whole cell opens chat */}
-      <td className="p-0">
-        <button
-          type="button"
-          onClick={() => onGoToChat(o)}
-          title={t('orders.goToChat')}
-          aria-label={`${t('orders.goToChat')} — ${o.product}`}
-          className="flex w-full min-w-0 items-center gap-3 px-4 py-4 text-left transition-colors hover:bg-brand-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-400 dark:hover:bg-brand-950/30 dark:focus-visible:ring-brand-500"
-        >
-          <OrderProductThumb url={o.productImageUrl} />
-          <div className="min-w-0 flex-1">
+      {/* Product + order ID — thumb opens preview; rest opens chat */}
+      <td className="px-4 py-4">
+        <div className="flex w-full min-w-0 items-center gap-3">
+          <OrderProductThumb
+            url={o.productImageUrl}
+            productName={o.product}
+            onPreview={(url) => onImagePreview(url, 'orders.productImageAria')}
+          />
+          <button
+            type="button"
+            onClick={() => onGoToChat(o)}
+            title={t('orders.goToChat')}
+            aria-label={`${t('orders.goToChat')} — ${o.product}`}
+            className="min-w-0 flex-1 text-left transition-colors hover:text-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 focus-visible:ring-offset-2 dark:hover:text-brand-300 dark:focus-visible:ring-brand-500"
+          >
             <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
               {o.product}
               {o.qty > 1 ? (
@@ -870,8 +917,8 @@ function OrderRow({
               ) : null}
             </div>
             <div className="font-mono text-[11px] text-slate-400 dark:text-slate-500">{o.id}</div>
-          </div>
-        </button>
+          </button>
+        </div>
       </td>
 
       {/* Status — high-contrast pill (primary scan target) */}
@@ -888,7 +935,7 @@ function OrderRow({
           {hasSlipImg && (
             <button
               type="button"
-              onClick={() => onSlipPreview(o.slipImageUrl!)}
+              onClick={() => onImagePreview(o.slipImageUrl!, 'orders.slipImageAria')}
               title={t('orders.slipImageAria')}
               className="inline-flex w-fit items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 transition hover:bg-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-400"
             >
