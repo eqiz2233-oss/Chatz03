@@ -215,6 +215,7 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('date');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const filterWrapRef = useRef<HTMLDivElement>(null);
 
   // Pull persisted orders from the backend on mount and after every create.
@@ -343,6 +344,49 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
       return key;
     });
   }, []);
+
+  const displayedIds = useMemo(() => displayed.map((o) => o.id), [displayed]);
+  const allSelected = displayedIds.length > 0 && displayedIds.every((id) => selected.has(id));
+  const someSelected = !allSelected && displayedIds.some((id) => selected.has(id));
+
+  const toggleSelectAll = useCallback(() => {
+    setSelected((prev) => {
+      if (allSelected) {
+        const next = new Set(prev);
+        displayedIds.forEach((id) => next.delete(id));
+        return next;
+      }
+      const next = new Set(prev);
+      displayedIds.forEach((id) => next.add(id));
+      return next;
+    });
+  }, [allSelected, displayedIds]);
+
+  const toggleSelectOne = useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const selectedIds = useMemo(() => [...selected].filter((id) => displayedIds.includes(id)), [selected, displayedIds]);
+
+  const bulkChangeStatus = useCallback((status: OrderStatus) => {
+    if (serverOrders) {
+      setServerOrders((prev) => prev!.map((o) => selectedIds.includes(o.id) ? { ...o, status } : o));
+    }
+    setSelected(new Set());
+  }, [selectedIds, serverOrders]);
+
+  const bulkDelete = useCallback(() => {
+    const label = selectedIds.length === 1 ? '1 ออเดอร์' : `${selectedIds.length} ออเดอร์`;
+    if (!window.confirm(`ลบ ${label} ที่เลือกทั้งหมดใช่หรือไม่?`)) return;
+    if (serverOrders) {
+      setServerOrders((prev) => prev!.filter((o) => !selectedIds.includes(o.id)));
+    }
+    setSelected(new Set());
+  }, [selectedIds, serverOrders]);
 
   // Stat counts
   const paidShippedCount = useMemo(() => searchFiltered.filter((o) => o.status === 'shipped').length, [searchFiltered]);
@@ -515,20 +559,71 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
         </div>
       </div>
 
+      {/* ── Bulk action bar ── */}
+      {selectedIds.length > 0 && (
+        <div className="shrink-0 border-b border-brand-200 bg-brand-50 px-6 py-2.5 dark:border-brand-800 dark:bg-brand-950/40">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm font-semibold text-brand-700 dark:text-brand-300">
+              เลือก {selectedIds.length} รายการ
+            </span>
+            <span className="h-4 w-px bg-brand-300 dark:bg-brand-700" />
+            <span className="text-xs font-medium text-slate-600 dark:text-slate-300">เปลี่ยนสถานะ:</span>
+            {STATUS_KEYS.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => bulkChangeStatus(s)}
+                className={
+                  'inline-flex items-center whitespace-nowrap rounded-full px-3 py-1 text-[12px] font-bold transition hover:opacity-90 ' +
+                  STATUS_CONFIG[s].pillCls
+                }
+              >
+                {t(STATUS_CONFIG[s].labelKey)}
+              </button>
+            ))}
+            <span className="h-4 w-px bg-brand-300 dark:bg-brand-700" />
+            <button
+              type="button"
+              onClick={bulkDelete}
+              className="flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-600 transition hover:bg-rose-50 dark:border-rose-800 dark:bg-slate-900 dark:text-rose-400 dark:hover:bg-rose-950/40"
+            >
+              <I.Trash2 className="h-3.5 w-3.5" />
+              ลบที่เลือก
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelected(new Set())}
+              className="ml-auto text-xs font-medium text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
+            >
+              ยกเลิก
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── Table ── */}
       <div className="min-h-0 flex-1 overflow-auto">
         <table className="w-full min-w-[820px] border-collapse">
           <thead className="sticky top-0 z-10 bg-[#f0eff6] dark:bg-slate-900">
             <tr className="text-left">
-              <th className="w-10 border-b border-slate-200 px-4 py-3 text-[11px] font-semibold text-slate-400 dark:border-slate-800 dark:text-slate-500">#</th>
+              {/* Select-all checkbox */}
+              <th className="w-12 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  ref={(el) => { if (el) el.indeterminate = someSelected; }}
+                  onChange={toggleSelectAll}
+                  className="h-4 w-4 cursor-pointer rounded border-slate-300 accent-brand-600 dark:border-slate-600"
+                  aria-label="เลือกทั้งหมด"
+                />
+              </th>
               {(
                 [
                   { key: 'customer' as SortKey, label: t('orders.th.customer'), cls: '' },
-                  { key: 'product' as SortKey, label: t('orders.th.product'), cls: 'min-w-[14rem]' },
+                  { key: 'product' as SortKey,  label: t('orders.th.product'),  cls: 'min-w-[14rem]' },
                   { key: 'status' as SortKey,   label: t('orders.th.status'),   cls: 'min-w-[10rem]' },
                   { key: 'amount' as SortKey,   label: t('orders.th.amount'),   cls: 'w-28 text-right' },
                   { key: 'date' as SortKey,     label: t('orders.th.date'),     cls: 'w-28' },
-                  { key: null,                  label: '',                       cls: 'w-24' },
                 ] as { key: SortKey | null; label: string; cls: string }[]
               ).map((col, i) => (
                 <th
@@ -558,11 +653,12 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
                 </td>
               </tr>
             ) : (
-              displayed.map((o, idx) => (
+              displayed.map((o) => (
                 <OrderRow
                   key={o.id}
                   order={o}
-                  rowNum={idx + 1}
+                  isSelected={selected.has(o.id)}
+                  onToggleSelect={() => toggleSelectOne(o.id)}
                   t={t}
                   onGoToChat={goToChat}
                   onSlipPreview={setSlipPreview}
@@ -663,13 +759,15 @@ function OrderProductThumb({ url }: { url?: string }) {
 
 function OrderRow({
   order: o,
-  rowNum,
+  isSelected,
+  onToggleSelect,
   t,
   onGoToChat,
   onSlipPreview,
 }: {
   order: Order;
-  rowNum: number;
+  isSelected: boolean;
+  onToggleSelect: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
   onGoToChat: (o: Order) => void;
   onSlipPreview: (url: string) => void;
@@ -679,10 +777,19 @@ function OrderRow({
   const payBadge = PAYMENT_BADGE[o.status];
 
   return (
-    <tr className="group transition-colors hover:bg-brand-50/30 dark:hover:bg-brand-950/20">
-      {/* Row number */}
-      <td className="px-4 py-4 text-[12px] tabular-nums text-slate-400 dark:text-slate-500">
-        {rowNum}
+    <tr className={
+      'group transition-colors ' +
+      (isSelected ? 'bg-brand-50/60 dark:bg-brand-950/30' : 'hover:bg-brand-50/30 dark:hover:bg-brand-950/20')
+    }>
+      {/* Checkbox */}
+      <td className="px-4 py-4">
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={onToggleSelect}
+          className="h-4 w-4 cursor-pointer rounded border-slate-300 accent-brand-600 dark:border-slate-600"
+          aria-label={`เลือก ${o.customer}`}
+        />
       </td>
 
       {/* Customer — channel icon opens chat */}
@@ -760,17 +867,6 @@ function OrderRow({
         <span className="text-[12px] text-slate-600 dark:text-slate-400">
           {o.orderDate ?? o.createdAt?.slice(0, 10) ?? '—'}
         </span>
-      </td>
-
-      {/* Actions */}
-      <td className="px-4 py-4">
-        <button
-          type="button"
-          onClick={() => onGoToChat(o)}
-          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-medium text-slate-600 opacity-0 transition hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700 group-hover:opacity-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-brand-500 dark:hover:bg-brand-950/40 dark:hover:text-brand-300"
-        >
-          {t('orders.goToChat')}
-        </button>
       </td>
     </tr>
   );
