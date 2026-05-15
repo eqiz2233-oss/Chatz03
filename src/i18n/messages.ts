@@ -502,7 +502,7 @@ const thFlat: Record<string, string> = {
   'orders.chatNotFound': 'ไม่พบแชทที่ตรงกับออเดอร์นี้ในกล่องข้อความ',
   'orders.empty': 'ไม่มีออเดอร์ในคอลัมน์นี้',
   'orders.col.pending': 'รอชำระ',
-  'orders.col.paid': 'จ่ายแล้ว — รอส่ง',
+  'orders.col.paid': 'เตรียมจัดส่ง',
   'orders.col.shipped': 'จัดส่งแล้ว',
   'orders.col.cancelled': 'ยกเลิก',
   'orders.commission': 'คอม',
