@@ -2,7 +2,6 @@ import { useCallback, useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { InboxView } from './components/inbox/InboxView';
 import { OrdersView } from './components/views/OrdersView';
-import { SlipsView } from './components/views/SlipsView';
 import { CommissionView } from './components/views/CommissionView';
 import { ShopBrainView } from './components/views/ShopBrainView';
 import { AnalyticsView } from './components/views/AnalyticsView';
@@ -47,7 +46,6 @@ export default function App() {
           }}
         />
       )}
-      {view === 'slips' && <SlipsView />}
       {view === 'shop' && <ShopBrainView />}
       {view === 'commission' && <CommissionView />}
       {view === 'analytics' && <AnalyticsView />}

@@ -674,7 +674,7 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
                   { key: 'product' as SortKey,  label: t('orders.th.product'),  cls: 'min-w-[14rem]' },
                   { key: 'status' as SortKey,   label: t('orders.th.status'),   cls: 'min-w-[10rem]' },
                   { key: 'amount' as SortKey,   label: t('orders.th.amount'),   cls: 'w-28 text-right' },
-                  { key: 'date' as SortKey,     label: t('orders.th.date'),     cls: 'w-28' },
+                  { key: null,                  label: 'สลิป',                  cls: 'w-20' },
                 ] as { key: SortKey | null; label: string; cls: string }[]
               ).map((col, i) => (
                 <th
@@ -780,6 +780,14 @@ function shortId(str: string): string {
   let h = 0;
   for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
   return `CST-${(h % 900) + 100}`;
+}
+
+function formatOrderDate(o: Order): string {
+  const raw = o.orderDate ?? o.createdAt?.slice(0, 10);
+  if (!raw) return '—';
+  const d = new Date(raw.includes('T') ? raw : `${raw}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return raw;
+  return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 function OrderProductThumb({
@@ -917,6 +925,7 @@ function OrderRow({
               ) : null}
             </div>
             <div className="font-mono text-[11px] text-slate-400 dark:text-slate-500">{o.id}</div>
+            <div className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">{formatOrderDate(o)}</div>
           </button>
         </div>
       </td>
@@ -932,17 +941,6 @@ function OrderRow({
           >
             {t(STATUS_CONFIG[o.status].labelKey)}
           </span>
-          {hasSlipImg && (
-            <button
-              type="button"
-              onClick={() => onImagePreview(o.slipImageUrl!, 'orders.slipImageAria')}
-              title={t('orders.slipImageAria')}
-              className="inline-flex w-fit items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 transition hover:bg-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-400"
-            >
-              <I.Image className="h-2.5 w-2.5" />
-              {o.slipStatus === 'verified' ? t('orders.slipVerified') : 'สลิป'}
-            </button>
-          )}
         </div>
       </td>
 
@@ -956,12 +954,33 @@ function OrderRow({
         </div>
       </td>
 
-      {/* Date */}
+      {/* Slip — last column, thumb opens preview when present */}
       <td className="px-4 py-4">
-        <span className="text-[12px] text-slate-600 dark:text-slate-400">
-          {o.orderDate ?? o.createdAt?.slice(0, 10) ?? '—'}
-        </span>
+        {hasSlipImg ? (
+          <button
+            type="button"
+            onClick={() => onImagePreview(o.slipImageUrl!, 'orders.slipImageAria')}
+            title={t('orders.slipImageAria')}
+            aria-label={t('orders.slipImageAria')}
+            className="group/slip relative block h-14 w-14 overflow-hidden rounded-lg ring-1 ring-slate-200 transition hover:ring-2 hover:ring-brand-400 dark:ring-slate-700 dark:hover:ring-brand-500"
+          >
+            <img
+              src={o.slipImageUrl!}
+              alt="สลิปโอนเงิน"
+              className="h-full w-full object-cover"
+              loading="lazy"
+            />
+            {o.slipStatus === 'verified' && (
+              <span className="absolute right-0.5 top-0.5 grid h-4 w-4 place-items-center rounded-full bg-emerald-500 text-white shadow ring-1 ring-white">
+                <I.Check className="h-2.5 w-2.5" />
+              </span>
+            )}
+          </button>
+        ) : (
+          <span className="text-[11px] text-slate-300 dark:text-slate-600">—</span>
+        )}
       </td>
+
     </tr>
   );
 }
