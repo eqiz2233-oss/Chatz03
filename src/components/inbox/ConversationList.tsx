@@ -25,9 +25,9 @@ export function ConversationList({ conversations, activeId, onSelect, loading = 
       [
         { key: 'all' as const, label: t('inbox.filterAll'), mode: 'clear' as const },
         { key: 'unread' as const, label: t('inbox.filterUnread'), mode: 'toggle' as const },
-        { key: 'line' as const, label: 'LINE', mode: 'toggle' as const },
-        { key: 'ig' as const, label: 'IG', mode: 'toggle' as const },
-        { key: 'facebook' as const, label: 'FB', mode: 'toggle' as const },
+        { key: 'line' as const, channel: 'line' as const, ariaLabel: 'LINE', mode: 'toggle' as const },
+        { key: 'ig' as const, channel: 'ig' as const, ariaLabel: 'Instagram', mode: 'toggle' as const },
+        { key: 'facebook' as const, channel: 'facebook' as const, ariaLabel: 'Facebook', mode: 'toggle' as const },
       ] as const,
     [t],
   );
@@ -212,23 +212,33 @@ export function ConversationList({ conversations, activeId, onSelect, loading = 
               f.mode === 'clear'
                 ? selected.size === 0
                 : selected.has(f.key);
+            const isChannel = 'channel' in f;
             return (
               <button
                 key={f.key}
                 type="button"
                 aria-pressed={isOn}
+                aria-label={isChannel ? f.ariaLabel : undefined}
+                title={isChannel ? f.ariaLabel : undefined}
                 onClick={() => {
                   if (f.mode === 'clear') setSelected(new Set());
                   else toggleKey(f.key);
                 }}
                 className={
-                  'shrink-0 rounded-full px-3 py-1 text-xs font-medium transition ' +
+                  'shrink-0 rounded-full transition ' +
+                  (isChannel
+                    ? 'grid h-7 w-7 place-items-center '
+                    : 'px-3 py-1 text-xs font-medium ') +
                   (isOn
-                    ? 'bg-brand-600 text-white shadow-sm dark:bg-brand-500'
+                    ? 'bg-brand-600 text-white shadow-sm ring-2 ring-brand-200/80 dark:bg-brand-500 dark:ring-brand-800/60'
                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700')
                 }
               >
-                {f.label}
+                {isChannel ? (
+                  <ChannelIcon channel={f.channel} className="h-4 w-4" />
+                ) : (
+                  f.label
+                )}
               </button>
             );
           })}

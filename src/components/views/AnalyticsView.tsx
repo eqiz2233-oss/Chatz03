@@ -213,6 +213,11 @@ export function AnalyticsView() {
     };
   }, [locale, summary]);
 
+  const chartMonthLabel = useMemo(() => {
+    const loc = locale === 'th' ? 'th-TH' : 'en-US';
+    return new Date().toLocaleDateString(loc, { month: 'long', year: 'numeric' });
+  }, [locale]);
+
   const channelMixRows = useMemo(() => {
     const map = new Map(summary?.channelMix?.map((c) => [c.channel, c.pct]) ?? []);
     return [
@@ -271,7 +276,9 @@ export function AnalyticsView() {
         <div className="card p-5">
           <div>
             <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{t(chart.titleKey)}</div>
-            <div className="text-xs text-slate-500 dark:text-slate-400">{t(chart.subKey)}</div>
+            <div className="text-xs text-slate-500 dark:text-slate-400">
+              {t(chart.subKey, { month: chartMonthLabel })}
+            </div>
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] font-medium">
             <span className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
