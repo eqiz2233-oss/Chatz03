@@ -563,206 +563,315 @@ function AddForm({
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col bg-slate-50 dark:bg-slate-950">
-      <div className="flex items-center gap-3 border-b border-slate-200 bg-white px-6 py-3.5 dark:border-slate-800 dark:bg-slate-900">
-        <button type="button" onClick={onBack} className="btn-ghost -ml-1 p-1.5">
-          <I.X className="h-4 w-4" />
-        </button>
-        <div className="flex-1">
-          <div className="text-sm font-semibold text-slate-900 dark:text-white">{isEdit ? 'แก้ไขสินค้า' : 'เพิ่มสินค้า'}</div>
-          <div className="text-xs text-slate-500 dark:text-slate-400">
-            {isEdit ? 'แก้แล้วกดบันทึก — ข้อมูลจะอัปเดตให้ AI' : 'กรอกข้อมูล = สอน AI ขายของให้คุณ'}
-            <span className="text-slate-400 dark:text-slate-500"> · </span>
-            <span className={slotsRemaining > 0 ? 'font-medium text-slate-600 dark:text-slate-300' : 'font-semibold text-amber-600 dark:text-amber-400'}>
-              เพิ่มได้อีก {slotsRemaining} ชิ้น ({usedSlots}/{slotLimit})
-            </span>
+      {/* ── Header: title + Cancel/Save ─────────────────────────────── */}
+      <header className="flex shrink-0 flex-wrap items-start justify-between gap-4 border-b border-slate-200 bg-white px-6 py-5 dark:border-slate-800 dark:bg-slate-900 md:px-8">
+        <div className="flex min-w-0 items-start gap-3">
+          <button
+            type="button"
+            onClick={onBack}
+            aria-label="ยกเลิก"
+            className="-ml-1 mt-1 grid h-9 w-9 shrink-0 place-items-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+          >
+            <I.X className="h-4 w-4" />
+          </button>
+          <div className="min-w-0">
+            <h1 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white sm:text-[26px]">
+              {isEdit ? 'แก้ไขสินค้า' : 'เพิ่มสินค้าใหม่'}
+            </h1>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+              {isEdit
+                ? 'แก้แล้วกดบันทึก — ข้อมูลจะอัปเดตให้ AI ใช้ตอบลูกค้าทันที'
+                : 'กรอกข้อมูลให้ครบ ยิ่งละเอียด AI ยิ่งตอบขายเก่ง'}
+            </p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={onSave}
-          disabled={!hasValidCore || (!isEdit && slotsRemaining <= 0)}
-          className="btn-primary text-sm disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          {isEdit ? 'บันทึกการแก้ไข' : 'บันทึก'}
-        </button>
-      </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={onBack}
+            className="rounded-full border border-slate-300 bg-white px-5 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+          >
+            ยกเลิก
+          </button>
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={!hasValidCore || (!isEdit && slotsRemaining <= 0)}
+            className="rounded-full bg-brand-600 px-6 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 dark:bg-brand-500 dark:hover:bg-brand-400"
+          >
+            {isEdit ? 'บันทึกการแก้ไข' : 'บันทึก'}
+          </button>
+        </div>
+      </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-6">
-        <div className="w-full space-y-6">
-          {/* ข้อมูลสินค้า */}
-          <section className="space-y-4">
-            <SectionTitle n="" title="ข้อมูลสินค้า" />
-            <button
-              type="button"
-              className="flex h-28 w-full cursor-pointer items-center justify-center gap-2.5 rounded-xl border-2 border-dashed border-slate-200 bg-white text-sm text-slate-400 transition hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-brand-600 dark:hover:text-brand-400"
-            >
-              <I.Image className="h-5 w-5" />
-              รูปสินค้า — ลากมาวาง หรือคลิกเพื่อเลือก
-            </button>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="col-span-2">
-                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">ชื่อสินค้า</label>
-                <input
-                  value={form.name}
-                  onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                  placeholder="เช่น เสื้อ Oversize Cotton"
-                  className={inputClass}
-                />
-              </div>
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">ราคา (฿)</label>
-                <input
-                  type="number"
-                  value={form.price}
-                  onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
-                  placeholder="350"
-                  className={inputClass}
-                />
-              </div>
-            </div>
-          </section>
+      {/* ── Body: 2-column layout ────────────────────────────────────── */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6 md:px-8 md:py-8">
+        <div className="mx-auto flex max-w-6xl flex-col gap-6 lg:flex-row">
 
-          {/* 2 ตัวเลือกสินค้า */}
-          <section className="space-y-3">
-            <SectionTitle
-              n=""
-              title="มีแบบไหนให้ลูกค้าเลือกบ้าง? (ถ้ามี)"
-              sub={'พิมพ์เองได้ทั้งหมด เช่น\n\nสี\nน้ำหนัก\nรสชาติ\nความจุ'}
-            />
-            <div className="grid gap-3 lg:grid-cols-2">
-              {form.optionGroups.map((g, i) => (
-                <div key={g.id} className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="text-[11px] font-medium text-slate-400">ชุดที่ {i + 1}</span>
-                    {form.optionGroups.length > 1 && (
-                      <button type="button" onClick={() => removeOptionRow(g.id)} className="text-xs text-slate-400 hover:text-rose-600 dark:hover:text-rose-400">
-                        ลบชุดนี้
-                      </button>
-                    )}
-                  </div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-500 dark:text-slate-400">ประเภทตัวเลือก (พิมพ์เอง)</label>
-                  <input
-                    value={g.label}
-                    onChange={(e) => updateOptionRow(g.id, { label: e.target.value })}
-                    placeholder="เช่น สี, น้ำหนัก, รสชาติ, ความจุ"
-                    className={'mb-2 ' + inputClass}
-                  />
-                  <label className="mb-1 block text-xs font-semibold text-slate-500 dark:text-slate-400">ค่าที่ลูกค้าเลือกได้ (พิมพ์เอง)</label>
-                  <input
-                    value={g.valuesInput}
-                    onChange={(e) => updateOptionRow(g.id, { valuesInput: e.target.value })}
-                    placeholder="เช่น ดำ, ขาว, เทา หรือ 250g, 500g"
-                    className={inputClass}
-                  />
-                </div>
-              ))}
-            </div>
-            <div className="flex gap-2">
-              <button type="button" onClick={addOptionRow} className="btn-secondary flex-1 text-xs">
-                <I.Plus className="h-3.5 w-3.5" />
-                เพิ่มตัวเลือก
-              </button>
+          {/* ── Left rail: thumbnail / status / tips ───────────────── */}
+          <aside className="w-full shrink-0 space-y-5 lg:w-[300px]">
+
+            {/* Thumbnail */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+              <h3 className="mb-4 text-base font-bold text-slate-900 dark:text-white">รูปสินค้า</h3>
               <button
                 type="button"
-                onClick={() => {
-                  if (!optionsHaveContent) return;
-                  setSaveTplOpen(true);
-                }}
-                disabled={!optionsHaveContent}
-                title={optionsHaveContent ? 'บันทึกชุดตัวเลือกนี้เป็นแม่แบบเพื่อใช้ซ้ำ' : 'กรอกชื่อตัวเลือกและค่าก่อน'}
-                className="btn-secondary flex-1 text-xs disabled:cursor-not-allowed disabled:opacity-40"
+                className="group flex aspect-square w-full flex-col items-center justify-center gap-2.5 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 text-slate-400 transition hover:border-brand-400 hover:bg-brand-50/50 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-800/50 dark:hover:border-brand-500 dark:hover:bg-brand-950/30 dark:hover:text-brand-300"
               >
-                💾 บันทึกเป็นแม่แบบ
+                <I.Image className="h-12 w-12" />
+                <span className="text-xs font-medium">ลากมาวาง หรือคลิก</span>
               </button>
+              <p className="mt-3 text-center text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
+                รองรับไฟล์ .png, .jpg, .jpeg
+              </p>
             </div>
-            {saveTplOpen && (
-              <div className="rounded-xl border border-brand-200 bg-brand-50/60 p-3 dark:border-brand-800 dark:bg-brand-950/40">
-                <label className="mb-1 block text-xs font-semibold text-slate-600 dark:text-slate-300">ตั้งชื่อแม่แบบ</label>
-                <input
-                  autoFocus
-                  value={tplDraftName}
-                  onChange={(e) => setTplDraftName(e.target.value)}
-                  placeholder="เช่น เสื้อยืดของฉัน"
-                  className={'mb-2 ' + inputClass}
+
+            {/* Status */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+              <div className="mb-4 flex items-center justify-between">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">สถานะ</h3>
+                <span
+                  className={
+                    'h-2.5 w-2.5 rounded-full ' +
+                    (hasValidCore ? 'bg-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-900' : 'bg-amber-400 ring-2 ring-amber-200 dark:ring-amber-900')
+                  }
+                  aria-label={hasValidCore ? 'พร้อมบันทึก' : 'ข้อมูลยังไม่ครบ'}
                 />
-                <label className="mb-1 block text-xs font-semibold text-slate-600 dark:text-slate-300">เลือกไอคอน</label>
-                <div className="mb-3 flex flex-wrap gap-1">
-                  {TEMPLATE_EMOJI_OPTIONS.map((em) => (
-                    <button
-                      key={em}
-                      type="button"
-                      onClick={() => setTplDraftEmoji(em)}
-                      className={
-                        'grid h-8 w-8 place-items-center rounded-lg border text-lg transition ' +
-                        (tplDraftEmoji === em
-                          ? 'border-brand-400 bg-white ring-2 ring-brand-200 dark:border-brand-500 dark:bg-slate-800 dark:ring-brand-900'
-                          : 'border-slate-200 bg-white hover:border-brand-300 dark:border-slate-700 dark:bg-slate-900')
-                      }
-                    >
-                      {em}
-                    </button>
-                  ))}
+              </div>
+              <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">
+                {hasValidCore ? 'พร้อมบันทึก — AI จะนำไปใช้ตอบลูกค้า' : 'ข้อมูลยังไม่ครบ กรอก ชื่อ + ราคา + ตัวเลือก'}
+              </p>
+              <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">โควต้าสินค้า</label>
+              <div
+                className={
+                  'rounded-lg border px-3 py-2 text-sm font-medium ' +
+                  (slotsRemaining > 0
+                    ? 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200'
+                    : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-200')
+                }
+              >
+                เพิ่มได้อีก <strong className="font-bold">{slotsRemaining}</strong> ชิ้น
+                <span className="ml-1 text-slate-400 dark:text-slate-500">({usedSlots}/{slotLimit})</span>
+              </div>
+            </div>
+
+            {/* Tips card — only when adding new (skip clutter on edit) */}
+            {!isEdit && (
+              <div className="rounded-2xl border border-brand-100 bg-brand-50/40 p-5 dark:border-brand-900/60 dark:bg-brand-950/30">
+                <div className="mb-3 flex items-center gap-2">
+                  <I.Sparkle className="h-4 w-4 text-brand-600 dark:text-brand-300" />
+                  <h3 className="text-sm font-bold text-brand-700 dark:text-brand-200">เคล็ดลับ</h3>
                 </div>
-                <div className="flex justify-end gap-2">
-                  <button type="button" onClick={closeSaveTpl} className="btn-secondary text-xs">
-                    ยกเลิก
-                  </button>
-                  <button
-                    type="button"
-                    onClick={submitSaveTpl}
-                    disabled={!tplDraftName.trim()}
-                    className="btn-primary text-xs disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    บันทึก
-                  </button>
-                </div>
+                <ul className="space-y-2 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+                  <li className="flex gap-2">
+                    <span className="text-brand-500">•</span>
+                    กรอกครบ AI ตอบลูกค้าได้ดีขึ้น
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="text-brand-500">•</span>
+                    บอก "จุดเด่น" → AI ใช้ปิดการขาย
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="text-brand-500">•</span>
+                    บันทึกตัวเลือกเป็นแม่แบบ → ใช้ซ้ำได้
+                  </li>
+                </ul>
               </div>
             )}
-          </section>
+          </aside>
 
-          {/* รายละเอียดสินค้า */}
-          <section className="space-y-2">
-            <SectionTitle
-              n=""
-              title="รายละเอียดสินค้า"
-              sub={'อธิบายสั้นๆ ให้ลูกค้ารู้ว่าสินค้าคืออะไร\n\nตัวอย่าง:\n\nผ้านุ่ม ใส่สบาย ระบายอากาศดี'}
-            />
-            <textarea
-              value={form.description}
-              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-              placeholder="เช่น ผ้านุ่ม ใส่สบาย ระบายอากาศดี"
-              rows={3}
-              className={'resize-none ' + inputClass}
-            />
-          </section>
+          {/* ── Main content: 3 stacked cards ──────────────────────── */}
+          <div className="flex-1 space-y-5">
 
-          {/* จุดเด่นสินค้า */}
-          <section className="space-y-2">
-            <SectionTitle
-              n=""
-              title="จุดเด่นสินค้า"
-              sub={'อะไรที่ทำให้ลูกค้าอยากซื้อ?\n\nเช่น:\n\nส่งไว, ผ้านุ่ม, กันน้ำ'}
-            />
-            <textarea
-              value={form.sellingPoints}
-              onChange={(e) => setForm((f) => ({ ...f, sellingPoints: e.target.value }))}
-              placeholder="เช่น ส่งไว, ผ้านุ่ม, กันน้ำ"
-              rows={2}
-              className={'resize-none ' + inputClass}
-            />
-          </section>
+            {/* General info */}
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+              <h2 className="mb-1 text-lg font-bold text-slate-900 dark:text-white">ข้อมูลทั่วไป</h2>
+              <p className="mb-5 border-b border-slate-100 pb-4 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400">
+                ข้อมูลพื้นฐานที่ลูกค้าจะเห็นก่อน
+              </p>
+              <div className="space-y-5">
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="col-span-3 sm:col-span-2">
+                    <label className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-200">ชื่อสินค้า</label>
+                    <input
+                      value={form.name}
+                      onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                      placeholder="เช่น เสื้อ Oversize Cotton"
+                      className={inputClass}
+                    />
+                    <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">ตั้งชื่อให้ชัดเจน ลูกค้าค้นเจอง่าย</p>
+                  </div>
+                  <div className="col-span-3 sm:col-span-1">
+                    <label className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-200">ราคา (฿)</label>
+                    <input
+                      type="number"
+                      value={form.price}
+                      onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
+                      placeholder="350"
+                      className={inputClass}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-200">รายละเอียดสินค้า</label>
+                  <textarea
+                    value={form.description}
+                    onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+                    placeholder="เช่น ผ้านุ่ม ใส่สบาย ระบายอากาศดี"
+                    rows={3}
+                    className={'resize-none ' + inputClass}
+                  />
+                  <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">อธิบายสั้นๆ ให้ลูกค้ารู้ว่าสินค้าคืออะไร</p>
+                </div>
+              </div>
+            </section>
 
-          {/* สต๊อก */}
-          <section className="space-y-2">
-            <SectionTitle n="" title="สต๊อก (ถ้ามี)" sub="จำนวนชิ้น หรือปล่อยว่างได้" />
-            <input
-              type="number"
-              value={form.stock}
-              onChange={(e) => setForm((f) => ({ ...f, stock: e.target.value }))}
-              placeholder="เช่น 120 (ไม่บังคับ)"
-              className={inputClass}
-            />
-          </section>
+            {/* Variants */}
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+              <div className="mb-5 flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-4 dark:border-slate-800">
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900 dark:text-white">ตัวเลือกสินค้า</h2>
+                  <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                    มีแบบไหนให้ลูกค้าเลือก เช่น สี ขนาด รสชาติ (ถ้ามี)
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!optionsHaveContent) return;
+                    setSaveTplOpen(true);
+                  }}
+                  disabled={!optionsHaveContent}
+                  title={optionsHaveContent ? 'บันทึกชุดตัวเลือกนี้เป็นแม่แบบ' : 'กรอกตัวเลือกก่อน'}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-brand-300 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-brand-500"
+                >
+                  💾 บันทึกเป็นแม่แบบ
+                </button>
+              </div>
+
+              <div className="grid gap-3 lg:grid-cols-2">
+                {form.optionGroups.map((g, i) => (
+                  <div key={g.id} className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 dark:border-slate-700 dark:bg-slate-800/40">
+                    <div className="mb-3 flex items-center justify-between">
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">ชุดที่ {i + 1}</span>
+                      {form.optionGroups.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeOptionRow(g.id)}
+                          className="text-xs font-medium text-slate-400 transition hover:text-rose-600 dark:hover:text-rose-400"
+                        >
+                          ลบ
+                        </button>
+                      )}
+                    </div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-200">ประเภท</label>
+                    <input
+                      value={g.label}
+                      onChange={(e) => updateOptionRow(g.id, { label: e.target.value })}
+                      placeholder="เช่น สี, ขนาด, รสชาติ"
+                      className={'mb-3 ' + inputClass}
+                    />
+                    <label className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-200">ค่าที่เลือกได้</label>
+                    <input
+                      value={g.valuesInput}
+                      onChange={(e) => updateOptionRow(g.id, { valuesInput: e.target.value })}
+                      placeholder="เช่น ดำ, ขาว, เทา"
+                      className={inputClass}
+                    />
+                  </div>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                onClick={addOptionRow}
+                className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-500 transition hover:border-brand-400 hover:bg-brand-50/40 hover:text-brand-600 dark:border-slate-700 dark:text-slate-400 dark:hover:border-brand-500 dark:hover:bg-brand-950/30 dark:hover:text-brand-300"
+              >
+                <I.Plus className="h-4 w-4" />
+                เพิ่มตัวเลือก
+              </button>
+
+              {saveTplOpen && (
+                <div className="mt-4 rounded-xl border border-brand-200 bg-brand-50/60 p-4 dark:border-brand-800 dark:bg-brand-950/40">
+                  <label className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-200">ตั้งชื่อแม่แบบ</label>
+                  <input
+                    autoFocus
+                    value={tplDraftName}
+                    onChange={(e) => setTplDraftName(e.target.value)}
+                    placeholder="เช่น เสื้อยืดของฉัน"
+                    className={'mb-3 ' + inputClass}
+                  />
+                  <label className="mb-1.5 block text-xs font-semibold text-slate-700 dark:text-slate-200">เลือกไอคอน</label>
+                  <div className="mb-4 flex flex-wrap gap-1">
+                    {TEMPLATE_EMOJI_OPTIONS.map((em) => (
+                      <button
+                        key={em}
+                        type="button"
+                        onClick={() => setTplDraftEmoji(em)}
+                        className={
+                          'grid h-9 w-9 place-items-center rounded-lg border text-lg transition ' +
+                          (tplDraftEmoji === em
+                            ? 'border-brand-400 bg-white ring-2 ring-brand-200 dark:border-brand-500 dark:bg-slate-800 dark:ring-brand-900'
+                            : 'border-slate-200 bg-white hover:border-brand-300 dark:border-slate-700 dark:bg-slate-900')
+                        }
+                      >
+                        {em}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={closeSaveTpl}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                    >
+                      ยกเลิก
+                    </button>
+                    <button
+                      type="button"
+                      onClick={submitSaveTpl}
+                      disabled={!tplDraftName.trim()}
+                      className="rounded-lg bg-brand-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-brand-500 dark:hover:bg-brand-400"
+                    >
+                      บันทึก
+                    </button>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            {/* Extras: selling points + stock */}
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+              <h2 className="mb-1 text-lg font-bold text-slate-900 dark:text-white">จุดเด่นและสต๊อก</h2>
+              <p className="mb-5 border-b border-slate-100 pb-4 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400">
+                ข้อมูลเสริมที่ทำให้สินค้าน่าซื้อ
+              </p>
+              <div className="space-y-5">
+                <div>
+                  <label className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-200">จุดเด่นสินค้า</label>
+                  <textarea
+                    value={form.sellingPoints}
+                    onChange={(e) => setForm((f) => ({ ...f, sellingPoints: e.target.value }))}
+                    placeholder="เช่น ส่งไว, ผ้านุ่ม, กันน้ำ"
+                    rows={2}
+                    className={'resize-none ' + inputClass}
+                  />
+                  <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">อะไรที่ทำให้ลูกค้าอยากซื้อ? AI จะเอาไปใช้ปิดการขาย</p>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-200">สต๊อก</label>
+                  <input
+                    type="number"
+                    value={form.stock}
+                    onChange={(e) => setForm((f) => ({ ...f, stock: e.target.value }))}
+                    placeholder="เช่น 120"
+                    className={inputClass}
+                  />
+                  <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">จำนวนชิ้น (ไม่บังคับ — ปล่อยว่างได้)</p>
+                </div>
+              </div>
+            </section>
+          </div>
         </div>
       </div>
     </div>
