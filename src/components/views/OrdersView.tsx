@@ -226,7 +226,9 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
       const r = await fetch('/api/orders', { credentials: 'include' });
       if (!r.ok) return;
       const j = (await r.json()) as { items: Order[] };
-      setServerOrders(Array.isArray(j.items) ? j.items : []);
+      const items = Array.isArray(j.items) ? j.items : [];
+      // Only override seed when the server actually has data
+      if (items.length > 0) setServerOrders(items);
     } catch {
       /* offline or auth gate — fall back to seed */
     }
