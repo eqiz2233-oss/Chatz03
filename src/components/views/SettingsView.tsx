@@ -27,7 +27,6 @@ type SettingsSection = 'channels' | 'ai-bot' | 'notifications' | 'appearance' | 
 interface NavItem {
   key: SettingsSection;
   label: string;
-  desc: string;
   icon: React.ReactNode;
 }
 
@@ -35,59 +34,52 @@ export function SettingsView() {
   const { t, theme, setTheme, locale, setLocale } = useAppPreferences();
   const [section, setSection] = useState<SettingsSection>('channels');
 
+  // Section names mirror the standard Thai business terms used by zaapi /
+  // Lazada Seller / LINE Official Account, not literal translations of
+  // English UI labels. No emojis in the nav — real settings pages don't.
   const nav: NavItem[] = [
     {
       key: 'channels',
-      label: locale === 'th' ? 'เชื่อมต่อแชท' : 'Channels',
-      desc: locale === 'th' ? 'LINE · Facebook · Instagram · ตรวจสลิป' : 'LINE · Facebook · Instagram · Slip Check',
-      icon: <I.Plug className="h-4 w-4" />,
+      label: locale === 'th' ? 'การเชื่อมต่อ' : 'Integrations',
+      icon: <I.Plug className="h-[18px] w-[18px]" />,
     },
     {
       key: 'ai-bot',
-      label: locale === 'th' ? 'AI ตอบลูกค้า' : 'AI Bot',
-      desc: locale === 'th' ? 'ข้อมูลร้าน · ตอบอัตโนมัติ · คีย์เวิร์ด' : 'Brand · Auto-reply · Keywords',
-      icon: <I.Bot className="h-4 w-4" />,
+      label: locale === 'th' ? 'ตอบกลับอัตโนมัติ' : 'Auto-reply',
+      icon: <I.Bot className="h-[18px] w-[18px]" />,
     },
     {
       key: 'notifications',
       label: locale === 'th' ? 'การแจ้งเตือน' : 'Notifications',
-      desc: locale === 'th' ? 'เสียง · ป้ายแจ้งเตือน' : 'Sound · Tab badge',
-      icon: <I.Bell className="h-4 w-4" />,
+      icon: <I.Bell className="h-[18px] w-[18px]" />,
     },
     {
       key: 'appearance',
-      label: locale === 'th' ? 'หน้าตา & ภาษา' : 'Appearance',
-      desc: locale === 'th' ? 'สว่าง / มืด · ไทย / English' : 'Light / Dark · TH / EN',
-      icon: <I.Palette className="h-4 w-4" />,
+      label: locale === 'th' ? 'การแสดงผล' : 'Display',
+      icon: <I.Palette className="h-[18px] w-[18px]" />,
     },
     {
       key: 'account',
-      label: locale === 'th' ? 'บัญชีของฉัน' : 'My Account',
-      desc: locale === 'th' ? 'รหัสผ่าน · ออกจากระบบ' : 'Password · Sign out',
-      icon: <I.User className="h-4 w-4" />,
+      label: locale === 'th' ? 'บัญชี' : 'Account',
+      icon: <I.User className="h-[18px] w-[18px]" />,
     },
   ];
 
-  const active = nav.find((n) => n.key === section) ?? nav[0];
-
   return (
     <div className="flex h-screen flex-1 flex-col bg-slate-50 dark:bg-slate-950">
-      {/* Page header */}
-      <header className="shrink-0 border-b border-slate-200 bg-white px-6 py-5 dark:border-slate-800 dark:bg-slate-900 md:px-8">
-        <h1 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
+      {/* Page header — title only. No marketing subtitle (real settings don't have one). */}
+      <header className="shrink-0 border-b border-slate-200 bg-white px-6 py-4 dark:border-slate-800 dark:bg-slate-900 md:px-8">
+        <h1 className="text-xl font-semibold text-slate-900 dark:text-white">
           {locale === 'th' ? 'ตั้งค่า' : 'Settings'}
         </h1>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          {locale === 'th' ? 'ทุกอย่างที่ต้องการ — แยกเป็นหมวดเพื่อหาง่าย' : 'Everything in one place — grouped by topic'}
-        </p>
       </header>
 
       {/* Body: sidebar + content */}
       <div className="flex min-h-0 flex-1 overflow-hidden">
 
-        {/* ── Left nav ───────────────────────────────────────────── */}
-        <aside className="hidden w-[240px] shrink-0 overflow-y-auto border-r border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900 md:block">
-          <nav className="space-y-1">
+        {/* ── Left nav (desktop) — Facebook-style: plain icon + label, subtle active row ── */}
+        <aside className="hidden w-[220px] shrink-0 overflow-y-auto border-r border-slate-200 bg-white py-3 dark:border-slate-800 dark:bg-slate-900 md:block">
+          <nav>
             {nav.map((it) => {
               const isActive = it.key === section;
               return (
@@ -96,37 +88,25 @@ export function SettingsView() {
                   type="button"
                   onClick={() => setSection(it.key)}
                   className={
-                    'flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left transition ' +
+                    'flex w-full items-center gap-3 px-5 py-2 text-left transition ' +
                     (isActive
-                      ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-200'
-                      : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800')
+                      ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-white'
+                      : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800/60')
                   }
                 >
-                  <span
-                    className={
-                      'mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg ' +
-                      (isActive
-                        ? 'bg-brand-600 text-white dark:bg-brand-500'
-                        : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400')
-                    }
-                  >
+                  <span className={isActive ? 'text-brand-600 dark:text-brand-400' : 'text-slate-400 dark:text-slate-500'}>
                     {it.icon}
                   </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-sm font-semibold leading-tight">{it.label}</span>
-                    <span className={'mt-0.5 block truncate text-[11px] ' + (isActive ? 'text-brand-600/80 dark:text-brand-300/80' : 'text-slate-400 dark:text-slate-500')}>
-                      {it.desc}
-                    </span>
-                  </span>
+                  <span className="text-sm font-medium">{it.label}</span>
                 </button>
               );
             })}
           </nav>
         </aside>
 
-        {/* ── Mobile: horizontal scroll nav pills ─────────────── */}
-        <div className="md:hidden border-b border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex gap-1.5 overflow-x-auto">
+        {/* ── Mobile: horizontal scroll tabs (LINE settings pattern) ── */}
+        <div className="md:hidden border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex overflow-x-auto">
             {nav.map((it) => {
               const isActive = it.key === section;
               return (
@@ -135,13 +115,12 @@ export function SettingsView() {
                   type="button"
                   onClick={() => setSection(it.key)}
                   className={
-                    'inline-flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ' +
+                    'shrink-0 border-b-2 px-4 py-3 text-sm font-medium transition ' +
                     (isActive
-                      ? 'bg-brand-600 text-white dark:bg-brand-500'
-                      : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300')
+                      ? 'border-brand-600 text-slate-900 dark:border-brand-400 dark:text-white'
+                      : 'border-transparent text-slate-500 dark:text-slate-400')
                   }
                 >
-                  {it.icon}
                   {it.label}
                 </button>
               );
@@ -149,15 +128,9 @@ export function SettingsView() {
           </div>
         </div>
 
-        {/* ── Active section content ────────────────────────────── */}
+        {/* ── Content ── */}
         <main className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-3xl px-6 py-6 md:px-8 md:py-8">
-            {/* Section heading (on the content side, mirrors active nav item) */}
-            <div className="mb-6">
-              <h2 className="text-xl font-bold text-slate-900 dark:text-white">{active.label}</h2>
-              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{active.desc}</p>
-            </div>
-
+          <div className="mx-auto max-w-2xl px-5 py-6 md:px-8 md:py-8">
             {section === 'channels' && <ChannelsSection t={t} />}
             {section === 'ai-bot' && <AiBotSection t={t} />}
             {section === 'notifications' && <NotificationsSection locale={locale} />}
@@ -183,7 +156,6 @@ function AppearanceSection({
   return (
     <div className="space-y-4">
       <SectionCard
-        emoji="🌗"
         title={t('settings.theme')}
         desc={locale === 'th' ? 'เปลี่ยนระหว่างโหมดสว่างกับโหมดมืด' : 'Switch between light and dark mode'}
       >
@@ -198,7 +170,6 @@ function AppearanceSection({
       </SectionCard>
 
       <SectionCard
-        emoji="🌐"
         title={t('settings.language')}
         desc={locale === 'th' ? 'ภาษาที่ใช้แสดงผลในแอป' : 'Display language for the app'}
       >
@@ -233,66 +204,90 @@ function AccountSection({ t, locale }: { t: (k: string) => string; locale: Local
 function NotificationsSection({ locale }: { locale: Locale }) {
   const [muted, setMuted] = useMutedState();
   const th = locale === 'th';
+  const soundOn = !muted;
 
   return (
     <div className="space-y-4">
-      <SectionCard
-        emoji="🔔"
-        title={th ? 'เสียงแจ้งเตือน' : 'Notification sound'}
-        desc={th
-          ? 'ดิ๊งแบบเบาๆ เมื่อมีลูกค้าทักเข้ามา'
-          : 'A soft ding when a customer messages in'}
-      >
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="text-sm text-slate-700 dark:text-slate-200">
-            {muted
-              ? (th ? '🔕 ปิดเสียงแล้ว' : '🔕 Muted')
-              : (th ? '🔔 เปิดเสียงอยู่' : '🔔 Sound on')}
-          </div>
-          <div className="flex gap-2">
+      <SectionCard title={th ? 'เสียง' : 'Sound'}>
+        <SettingRow
+          label={th ? 'เสียงแจ้งเตือนข้อความใหม่' : 'New message sound'}
+          hint={th ? 'เล่นเสียงเมื่อมีข้อความใหม่' : 'Play a sound when a new message arrives'}
+        >
+          <Switch
+            checked={soundOn}
+            onChange={(v) => setMuted(!v)}
+            label={th ? 'เสียงแจ้งเตือน' : 'Notification sound'}
+          />
+        </SettingRow>
+        {soundOn && (
+          <div className="border-t border-slate-100 px-0 pt-3 dark:border-slate-800">
             <button
               type="button"
               onClick={() => playNotification()}
-              disabled={muted}
-              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+              className="text-sm font-medium text-brand-600 hover:text-brand-700 dark:text-brand-400 dark:hover:text-brand-300"
             >
-              {th ? '▶ ทดสอบเสียง' : '▶ Test sound'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setMuted(!muted)}
-              className={
-                'rounded-lg px-4 py-1.5 text-xs font-semibold transition ' +
-                (muted
-                  ? 'bg-brand-600 text-white hover:bg-brand-700 dark:bg-brand-500 dark:hover:bg-brand-400'
-                  : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800')
-              }
-            >
-              {muted
-                ? (th ? 'เปิดเสียง' : 'Unmute')
-                : (th ? 'ปิดเสียง' : 'Mute')}
+              {th ? 'ทดสอบเสียง' : 'Test sound'}
             </button>
           </div>
-        </div>
-      </SectionCard>
-
-      <SectionCard
-        emoji="🏷️"
-        title={th ? 'ป้ายแจ้งเตือนบนแท็บ' : 'Tab title badge'}
-        desc={th
-          ? 'ตัวเลขในวงเล็บข้างชื่อแท็บเบราว์เซอร์ — เปิดอยู่ตลอด'
-          : 'The number in the browser tab title — always on'}
-      >
-        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 font-mono text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200">
-          (3) Chatz · Unified Chat
-        </div>
-        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-          {th
-            ? 'ตัวเลขจะหายเมื่อเปิดแชทนั้นๆ เห็นจากแท็บอื่นได้แม้ Chatz ไม่ใช่แท็บที่กำลังดู'
-            : 'The count clears when you open the chat. Visible from other tabs while Chatz runs in the background.'}
-        </p>
+        )}
       </SectionCard>
     </div>
+  );
+}
+
+/**
+ * Settings list row — label + optional sublabel on the left, control on the right.
+ * Mirrors the row pattern used by LINE / IG / iOS settings.
+ */
+function SettingRow({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-4 py-1">
+      <div className="min-w-0 flex-1">
+        <div className="text-sm text-slate-900 dark:text-slate-100">{label}</div>
+        {hint && <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{hint}</div>}
+      </div>
+      <div className="shrink-0">{children}</div>
+    </div>
+  );
+}
+
+/** Simple iOS-style on/off switch. */
+function Switch({
+  checked,
+  onChange,
+  label,
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      onClick={() => onChange(!checked)}
+      className={
+        'relative inline-flex h-6 w-10 shrink-0 rounded-full p-0.5 transition-colors ' +
+        (checked ? 'bg-brand-600 dark:bg-brand-500' : 'bg-slate-300 dark:bg-slate-700')
+      }
+    >
+      <span
+        className={
+          'block h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200 ' +
+          (checked ? 'translate-x-4' : 'translate-x-0')
+        }
+      />
+    </button>
   );
 }
 
@@ -338,9 +333,8 @@ function AccountCard({ t, locale }: { t: (k: string) => string; locale: Locale }
 
   return (
     <SectionCard
-      emoji="👤"
       title={locale === 'th' ? 'บัญชี' : 'Account'}
-      desc={user ? `${user.displayName || user.username} • ${user.role}` : null}
+      desc={user ? `${user.displayName || user.username} · ${user.role}` : null}
     >
       {!showPw ? (
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -565,7 +559,7 @@ function AiBotSection({ t }: { t: (k: string) => string }) {
         )
       )}
 
-      <SectionCard emoji="⚡" title={t('settings.aiEngine')} desc={locale === 'th' ? 'เปิด-ปิดฟีเจอร์บอทได้ตามต้องการ' : 'Turn each bot feature on or off'}>
+      <SectionCard title={locale === 'th' ? 'การตอบกลับอัตโนมัติ' : 'Auto-reply'} desc={locale === 'th' ? 'เลือกเปิด-ปิดแต่ละฟีเจอร์ที่จะให้บอทช่วยตอบ' : 'Choose which auto-reply features the bot handles'}>
         <div className="space-y-2">
           <ToggleRow title={t('settings.ai1t')} desc={t('settings.ai1d')} on={settings.autoGreet} onChange={(v) => set('autoGreet', v)} />
           <ToggleRow title={t('settings.ai2t')} desc={t('settings.ai2d')} on={settings.autoFaq} onChange={(v) => set('autoFaq', v)} />
@@ -576,7 +570,7 @@ function AiBotSection({ t }: { t: (k: string) => string }) {
         </div>
       </SectionCard>
 
-      <SectionCard emoji="💬" title={t('settings.brandVoice')} desc={null}>
+      <SectionCard title={locale === 'th' ? 'น้ำเสียงของแบรนด์' : 'Brand voice'} desc={locale === 'th' ? 'อธิบายโทนการพูดที่อยากให้บอทใช้ตอบลูกค้า' : 'Describe how the bot should sound when replying to customers'}>
         <textarea
           className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:ring-brand-900/30"
           rows={3}
@@ -589,7 +583,7 @@ function AiBotSection({ t }: { t: (k: string) => string }) {
       <KeywordRulesCard />
 
 
-      <SectionCard emoji="📄" title={t('settings.payment')} desc={null}>
+      <SectionCard title={locale === 'th' ? 'ตรวจสลิปการโอนเงิน' : 'Slip verification'} desc={locale === 'th' ? 'ตั้งค่าบัญชีรับเงินและการตรวจสลิปอัตโนมัติ' : 'Bank account and automatic slip checking'}>
         <div className="mb-3 grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/60">
           <label className="block">
             <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
@@ -626,30 +620,28 @@ function AiBotSection({ t }: { t: (k: string) => string }) {
 // Read the current locale from the document for places that don't have it via prop.
 const locale = (typeof window !== 'undefined' && document.documentElement.lang === 'en') ? 'en' : 'th';
 
+/**
+ * Plain settings card — title + optional description + content.
+ * Matches the visual pattern used by Facebook/LINE/IG settings:
+ * no decorative emoji, no chip, just a clear hierarchy.
+ */
 function SectionCard({
-  emoji,
   title,
   desc,
   children,
 }: {
-  emoji: string;
   title: string;
-  desc: string | null;
+  desc?: string | null;
   children: React.ReactNode;
 }) {
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
-      <div className="border-b border-slate-100 px-5 py-4 dark:border-slate-800">
-        <div className="flex items-center gap-2.5">
-          <span className="text-xl leading-none">{emoji}</span>
-          <div>
-            <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{title}</div>
-            {desc && <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{desc}</div>}
-          </div>
-        </div>
-      </div>
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+      <header className="border-b border-slate-100 px-5 py-3.5 dark:border-slate-800">
+        <h3 className="text-[15px] font-semibold text-slate-900 dark:text-slate-100">{title}</h3>
+        {desc && <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{desc}</p>}
+      </header>
       <div className="px-5 py-4">{children}</div>
-    </div>
+    </section>
   );
 }
 
@@ -1092,8 +1084,7 @@ function KeywordRulesCard() {
 
   return (
     <SectionCard
-      emoji="💡"
-      title={locale === 'th' ? 'ตอบอัตโนมัติด้วย Keyword' : 'Keyword auto-reply'}
+      title={locale === 'th' ? 'ตอบอัตโนมัติด้วยคำสำคัญ' : 'Keyword auto-reply'}
       desc={
         locale === 'th'
           ? 'ถ้าข้อความลูกค้าตรงกับ keyword ที่ตั้งไว้ ระบบจะตอบให้ทันที (ไม่ใช้ AI)'
