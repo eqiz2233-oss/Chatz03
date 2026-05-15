@@ -509,7 +509,6 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
                   { key: null,                  label: t('orders.th.channel'),  cls: 'w-20 text-center' },
                   { key: 'amount' as SortKey,   label: t('orders.th.amount'),   cls: 'w-28 text-right' },
                   { key: 'date' as SortKey,     label: t('orders.th.date'),     cls: 'w-28' },
-                  { key: null,                  label: 'วันที่ผ่านมา',          cls: 'w-24 text-right' },
                   { key: null,                  label: '',                       cls: 'w-24' },
                 ] as { key: SortKey | null; label: string; cls: string }[]
               ).map((col, i) => (
@@ -535,7 +534,7 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
           <tbody className="divide-y divide-slate-100 bg-white dark:divide-slate-800/60 dark:bg-slate-900">
             {displayed.length === 0 ? (
               <tr>
-                <td colSpan={10} className="px-4 py-16 text-center text-sm text-slate-400 dark:text-slate-500">
+                <td colSpan={9} className="px-4 py-16 text-center text-sm text-slate-400 dark:text-slate-500">
                   {t('orders.empty')}
                 </td>
               </tr>
@@ -545,7 +544,6 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
                   key={o.id}
                   order={o}
                   rowNum={idx + 1}
-                  daysAgo={daysAgo(o.orderDate ?? o.createdAt)}
                   t={t}
                   onGoToChat={goToChat}
                   onSlipPreview={setSlipPreview}
@@ -637,7 +635,6 @@ function OrderRow({
 }: {
   order: Order;
   rowNum: number;
-  daysAgo: number | null;
   t: (key: string, vars?: Record<string, string | number>) => string;
   onGoToChat: (o: Order) => void;
   onSlipPreview: (url: string) => void;
@@ -730,13 +727,6 @@ function OrderRow({
       <td className="px-4 py-4">
         <span className="text-[12px] text-slate-600 dark:text-slate-400">
           {o.orderDate ?? o.createdAt?.slice(0, 10) ?? '—'}
-        </span>
-      </td>
-
-      {/* Days ago */}
-      <td className="px-4 py-4 text-right">
-        <span className="text-sm font-semibold tabular-nums text-slate-700 dark:text-slate-300">
-          {daysAgo != null ? daysAgo : '—'}
         </span>
       </td>
 
