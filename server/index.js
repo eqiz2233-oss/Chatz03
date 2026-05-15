@@ -224,7 +224,11 @@ let fbWebhookDebug = {
 /** @type {Map<string, { kind: string; targetId: string; key: string; displayName: string | null; pictureUrl: string | null; messages: Array<{ id: string; receivedAt: string; sender: string; text?: string; image?: string }>; updatedAt: string }>} */
 const fbThreads = new Map();
 const fbProfileBackfillAttempts = new Map(); // threadKey -> unix ms
-const FB_PROFILE_BACKFILL_COOLDOWN_MS = 90 * 1000;
+// Throttle re-tries for unresolved profiles. 30s is a good balance:
+// long enough to avoid hammering the Graph API on every fetch, short
+// enough that the seller's first conversation gets named within the
+// span of reading the very first inbound message.
+const FB_PROFILE_BACKFILL_COOLDOWN_MS = 30 * 1000;
 
 function getOrCreateFbThread(targetId, channel = 'fb') {
   const key = `${channel}:${targetId}`;
@@ -260,7 +264,81 @@ function messengerProfilePicFromGraph(d) {
   return typeof u === 'string' && u ? u : null;
 }
 
-/** Messenger Page inbox: PSID profile uses first_name/last_name (not always `name`). */
+/**
+ * Resolve the Page ID we should query for this thread. Webhook caller passes
+ * it explicitly; the periodic backfill loop doesn't have it, so we fall back
+ * to the first OAuth-connected page.
+ */
+function resolvePageIdForBackfill(pageId) {
+  if (pageId) return String(pageId);
+  const first = listPages()[0];
+  return first?.id ? String(first.id) : null;
+}
+
+/**
+ * Fallback path that pulls user info from /PAGE_ID/conversations?user_id=PSID.
+ * This endpoint returns `participants[].name` and works with the lighter
+ * `pages_read_engagement` permission, so it succeeds for Pages whose app is
+ * still in Development mode or whose review for `pages_messaging` hasn't
+ * cleared yet.
+ *
+ * Does NOT return a profile picture — only the display name. The avatar
+ * stays on the deterministic dicebear illustration until the regular
+ * /{psid}?fields=profile_pic call also succeeds.
+ */
+async function enrichFbProfileViaConversations(psid, thread, pageId) {
+  const tok = pageId ? tokenForPageId(String(pageId)) : primaryPageAccessToken();
+  const targetPageId = resolvePageIdForBackfill(pageId);
+  if (!tok || !targetPageId) return false;
+  try {
+    const url =
+      `https://graph.facebook.com/${fbConfig.apiVersion}/${encodeURIComponent(targetPageId)}/conversations` +
+      `?platform=messenger&user_id=${encodeURIComponent(psid)}` +
+      `&fields=participants{id,name}` +
+      `&access_token=${encodeURIComponent(tok)}`;
+    const r = await fetch(url);
+    const d = await r.json();
+    if (d?.error) {
+      const code = d.error.code;
+      const msg = d.error.message || String(d.error);
+      console.warn(`FB conversations lookup error [code=${code}] psid=${psid}:`, msg);
+      // Don't overwrite an existing profileError from the primary path —
+      // the user already has the more informative one.
+      if (!thread.profileError) thread.profileError = `Conv#${code}: ${msg}`;
+      return false;
+    }
+    const convs = Array.isArray(d?.data) ? d.data : [];
+    for (const conv of convs) {
+      const participants = conv?.participants?.data || [];
+      // The page is also listed in participants; the customer is whoever isn't us.
+      const customer = participants.find((p) => p?.id === psid)
+        || participants.find((p) => p?.id !== targetPageId);
+      if (customer?.name) {
+        thread.displayName = customer.name;
+        thread.profileError = null;
+        thread.updatedAt = new Date().toISOString();
+        markChatStateDirty();
+        return true;
+      }
+    }
+    return false;
+  } catch (e) {
+    console.warn('FB conversations lookup failed:', e?.message || e);
+    return false;
+  }
+}
+
+/**
+ * Messenger Page inbox: PSID profile uses first_name/last_name (not always `name`).
+ *
+ * Two-step strategy because /{psid}?fields=name,profile_pic requires the
+ * `pages_messaging` permission which is gated behind FB App Review:
+ *   1. Try /{psid}?fields=… — succeeds for live apps, gives BOTH name + picture.
+ *   2. If that fails (typical for new sellers whose app is in dev mode),
+ *      fall back to /PAGE/conversations?user_id=PSID&fields=participants
+ *      which works with the much easier `pages_read_engagement` scope and
+ *      gives the display name (no picture).
+ */
 async function enrichFbProfile(psid, thread, pageId) {
   const tok = pageId ? tokenForPageId(String(pageId)) : primaryPageAccessToken();
   if (!tok) {
@@ -284,6 +362,8 @@ async function enrichFbProfile(psid, thread, pageId) {
       const msg = d.error.message || String(d.error);
       console.warn(`FB getProfile error [code=${code}] psid=${psid}:`, msg);
       thread.profileError = `FB#${code}: ${msg}`;
+      // Conversations-endpoint fallback for the common case of permission denial.
+      await enrichFbProfileViaConversations(psid, thread, pageId);
       return;
     }
     const display = messengerDisplayNameFromGraph(d);
@@ -294,9 +374,79 @@ async function enrichFbProfile(psid, thread, pageId) {
     if (display || pic) thread.profileError = null;
     thread.updatedAt = new Date().toISOString();
     markChatStateDirty();
+
+    // Even on a successful /{psid} call, if the picture didn't come through
+    // (some apps return name only), still try the conversations endpoint —
+    // doesn't help with the picture but ensures we have the best name.
+    if (!display) {
+      await enrichFbProfileViaConversations(psid, thread, pageId);
+    }
   } catch (e) {
     console.warn('FB getProfile failed:', e?.message || e);
     thread.profileError = `network: ${e?.message || e}`;
+    await enrichFbProfileViaConversations(psid, thread, pageId);
+  }
+}
+
+/** Resolve the IG Business Account ID for backfill when caller didn't pass one. */
+function resolveIgAccountIdForBackfill(igBusinessAccountId) {
+  if (igBusinessAccountId) return String(igBusinessAccountId);
+  for (const p of listPages()) {
+    const ig = p?.instagram;
+    if (ig?.id) return String(ig.id);
+  }
+  return null;
+}
+
+/**
+ * Same trick as enrichFbProfileViaConversations but for Instagram —
+ * participants[].name + participants[].username gives us "Display Name (@handle)".
+ */
+async function enrichIgProfileViaConversations(igsid, thread, igAccountId) {
+  const tok = igAccountId
+    ? tokenForIgId(String(igAccountId)) || primaryPageAccessToken()
+    : primaryPageAccessToken();
+  const targetIgId = resolveIgAccountIdForBackfill(igAccountId);
+  if (!tok || !targetIgId) return false;
+  try {
+    const url =
+      `https://graph.facebook.com/${fbConfig.apiVersion}/${encodeURIComponent(targetIgId)}/conversations` +
+      `?platform=instagram&user_id=${encodeURIComponent(igsid)}` +
+      `&fields=participants{id,name,username}` +
+      `&access_token=${encodeURIComponent(tok)}`;
+    const r = await fetch(url);
+    const d = await r.json();
+    if (d?.error) {
+      const code = d.error.code;
+      const msg = d.error.message || String(d.error);
+      console.warn(`IG conversations lookup error [code=${code}] igsid=${igsid}:`, msg);
+      if (!thread.profileError) thread.profileError = `Conv#${code}: ${msg}`;
+      return false;
+    }
+    const convs = Array.isArray(d?.data) ? d.data : [];
+    for (const conv of convs) {
+      const participants = conv?.participants?.data || [];
+      const customer = participants.find((p) => p?.id === igsid)
+        || participants.find((p) => p?.id !== targetIgId);
+      if (!customer) continue;
+      const nm = typeof customer.name === 'string' ? customer.name.trim() : '';
+      const un = typeof customer.username === 'string' ? customer.username.trim() : '';
+      let name = null;
+      if (nm && un) name = `${nm} (@${un})`;
+      else if (un) name = `@${un}`;
+      else if (nm) name = nm;
+      if (name) {
+        thread.displayName = name;
+        thread.profileError = null;
+        thread.updatedAt = new Date().toISOString();
+        markChatStateDirty();
+        return true;
+      }
+    }
+    return false;
+  } catch (e) {
+    console.warn('IG conversations lookup failed:', e?.message || e);
+    return false;
   }
 }
 
@@ -305,7 +455,10 @@ async function enrichIgProfile(igsid, thread, igBusinessAccountId) {
   const tok = igBusinessAccountId
     ? tokenForIgId(String(igBusinessAccountId)) || primaryPageAccessToken()
     : primaryPageAccessToken();
-  if (!tok) return;
+  if (!tok) {
+    thread.profileError = 'NO_PAGE_TOKEN';
+    return;
+  }
   try {
     const url =
       `https://graph.facebook.com/${fbConfig.apiVersion}/${encodeURIComponent(igsid)}` +
@@ -314,7 +467,11 @@ async function enrichIgProfile(igsid, thread, igBusinessAccountId) {
     const r = await fetch(url);
     const d = await r.json();
     if (d?.error) {
-      console.warn('IG getProfile error:', d.error?.message || d.error);
+      const code = d.error.code;
+      const msg = d.error.message || String(d.error);
+      console.warn(`IG getProfile error [code=${code}] igsid=${igsid}:`, msg);
+      thread.profileError = `IG#${code}: ${msg}`;
+      await enrichIgProfileViaConversations(igsid, thread, igBusinessAccountId);
       return;
     }
     const un = typeof d.username === 'string' ? d.username.trim() : '';
@@ -324,10 +481,17 @@ async function enrichIgProfile(igsid, thread, igBusinessAccountId) {
     else if (nm) thread.displayName = nm;
     const pic = typeof d.profile_picture_url === 'string' ? d.profile_picture_url : null;
     if (pic) thread.pictureUrl = pic;
+    if (thread.displayName || pic) thread.profileError = null;
     thread.updatedAt = new Date().toISOString();
     markChatStateDirty();
+
+    if (!thread.displayName) {
+      await enrichIgProfileViaConversations(igsid, thread, igBusinessAccountId);
+    }
   } catch (e) {
     console.warn('IG getProfile failed:', e?.message || e);
+    thread.profileError = `network: ${e?.message || e}`;
+    await enrichIgProfileViaConversations(igsid, thread, igBusinessAccountId);
   }
 }
 
