@@ -563,8 +563,9 @@ export function ShopBrainView() {
           </div>
         </aside>
 
-        {/* RIGHT — add/edit form */}
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-slate-700 dark:bg-slate-900 dark:shadow-none">
+        {/* RIGHT — add/edit form. No outer white card so each inner section
+             reads as its own card (the layered look from the reference). */}
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <AddForm
             key={editingId ?? 'new'}
             form={form}
@@ -757,8 +758,10 @@ function AddForm({
     closeSaveTpl();
   };
 
+  // Premium-looking input style: more padding, slightly rounder corners,
+  // subtle border — matches the reference image's input height & weight.
   const inputClass =
-    'w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-brand-500 dark:focus:ring-brand-900/40';
+    'w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 transition placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-brand-500 dark:focus:ring-brand-900/40';
 
   const updateOptionRow = (id: string, patch: Partial<OptionGroupFormRow>) =>
     setForm((f) => ({
@@ -788,24 +791,39 @@ function AddForm({
     form.imageUrl.trim() ||
     optionsHaveContent;
 
+  /** Hidden file input — same element shared by the image card. */
+  const hiddenFileInput = (
+    <input
+      ref={imageInputRef}
+      id={imageInputId}
+      type="file"
+      accept="image/*"
+      className="sr-only"
+      onChange={(e) => {
+        applyImageFile(e.target.files?.[0]);
+        e.target.value = '';
+      }}
+    />
+  );
+
   return (
     <>
-      {/* Sticky header */}
-      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-3.5 dark:border-slate-800 dark:bg-slate-900">
+      {/* ── Header bar: title + Cancel/Save in top-right (reference: Circlue) ── */}
+      <header className="flex shrink-0 flex-wrap items-start justify-between gap-4 border-b border-slate-200 bg-white px-6 py-5 dark:border-slate-800 dark:bg-slate-900 md:px-8 md:py-6">
         <div className="min-w-0">
-          <h2 className="text-base font-bold text-slate-900 dark:text-white">
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white md:text-[28px]">
             {isEdit ? 'แก้ไขสินค้า' : 'เพิ่มสินค้าใหม่'}
-          </h2>
-          {isEdit && (
-            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-              แก้แล้วกดบันทึก ข้อมูลจะอัปเดตให้ AI ทันที
-            </p>
-          )}
+          </h1>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            {isEdit
+              ? 'แก้แล้วกดบันทึก ข้อมูลจะอัปเดตให้ AI ใช้ตอบลูกค้าทันที'
+              : 'กรอกข้อมูลให้ครบ AI จะใช้ข้อมูลนี้ตอบและขายของให้คุณ'}
+          </p>
           {onLoadDemo && !hasAnyContent && (
             <button
               type="button"
               onClick={onLoadDemo}
-              className="mt-2 text-xs font-semibold text-brand-600 underline-offset-2 hover:underline dark:text-brand-400"
+              className="mt-2 text-xs font-medium text-brand-600 underline-offset-2 hover:underline dark:text-brand-400"
             >
               โหลดตัวอย่าง (mockup)
             </button>
@@ -816,7 +834,7 @@ function AddForm({
             type="button"
             onClick={onCancel}
             disabled={!isEdit && !hasAnyContent}
-            className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+            className="rounded-full border border-slate-300 bg-white px-5 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
           >
             ยกเลิก
           </button>
@@ -824,251 +842,123 @@ function AddForm({
             type="button"
             onClick={onSave}
             disabled={!hasValidCore || (!isEdit && slotsRemaining <= 0)}
-            className="rounded-full bg-brand-600 px-5 py-1.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 dark:bg-brand-500 dark:hover:bg-brand-400"
+            className="rounded-full bg-brand-600 px-6 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 dark:bg-brand-500 dark:hover:bg-brand-400"
           >
             บันทึก
           </button>
         </div>
-      </div>
+      </header>
 
-      {/* Scrollable body */}
-      <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaff] dark:bg-slate-950/40">
-        <div className="space-y-4 p-5">
-          {/* Image upload */}
-          <section>
-            <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200" htmlFor={imageInputId}>
-              รูปสินค้า
-            </label>
-            <input
-              ref={imageInputRef}
-              id={imageInputId}
-              type="file"
-              accept="image/*"
-              className="sr-only"
-              onChange={(e) => {
-                applyImageFile(e.target.files?.[0]);
-                e.target.value = '';
-              }}
-            />
-            <div
-              role="button"
-              tabIndex={0}
-              aria-label="อัปโหลดรูปสินค้า ลากมาวางหรือคลิก"
-              onClick={() => imageInputRef.current?.click()}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
+      {/* ── Body: 2-column (left rail + main form) ── */}
+      <div className="min-h-0 flex-1 overflow-y-auto bg-[#f4f3f8] dark:bg-slate-950">
+        {hiddenFileInput}
+        <div className="flex flex-col gap-5 px-6 py-6 md:px-8 md:py-7 lg:flex-row lg:gap-6">
+
+          {/* ── Left rail: media + status + stock ─────────────────── */}
+          <aside className="flex w-full shrink-0 flex-col gap-5 lg:w-[260px]">
+
+            {/* Thumbnail card */}
+            <FormCard title="รูปสินค้า">
+              <div
+                role="button"
+                tabIndex={0}
+                aria-label="อัปโหลดรูปสินค้า ลากมาวางหรือคลิก"
+                onClick={() => imageInputRef.current?.click()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    imageInputRef.current?.click();
+                  }
+                }}
+                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onDrop={(e) => {
                   e.preventDefault();
-                  imageInputRef.current?.click();
-                }
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                applyImageFile(e.dataTransfer.files?.[0]);
-              }}
-              className="flex h-32 w-full cursor-pointer flex-col items-center justify-center gap-2 overflow-hidden rounded-xl border-2 border-dashed border-slate-200 bg-white px-2 text-slate-400 transition hover:border-brand-300 hover:bg-brand-50/40 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-brand-500 dark:hover:bg-brand-950/30 dark:hover:text-brand-300"
-            >
-              {form.imageUrl ? (
-                previewOk ? (
-                  <img
-                    src={form.imageUrl}
-                    alt=""
-                    className="max-h-28 max-w-full rounded-lg object-contain"
-                    onError={() => setPreviewOk(false)}
-                  />
+                  e.stopPropagation();
+                  applyImageFile(e.dataTransfer.files?.[0]);
+                }}
+                className="flex aspect-square w-full cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50/60 text-slate-400 transition hover:border-brand-300 hover:bg-white hover:text-brand-600 dark:border-slate-700 dark:bg-slate-800/40 dark:hover:border-brand-500 dark:hover:bg-slate-900 dark:hover:text-brand-300"
+              >
+                {form.imageUrl ? (
+                  previewOk ? (
+                    <img
+                      src={form.imageUrl}
+                      alt=""
+                      className="h-full w-full object-contain"
+                      onError={() => setPreviewOk(false)}
+                    />
+                  ) : (
+                    <div className="flex max-w-full flex-col items-center gap-2 px-3 text-center">
+                      <I.Image className="h-8 w-8 shrink-0 opacity-60" />
+                      <span className="text-xs font-medium leading-snug text-slate-600 dark:text-slate-300">
+                        บันทึกรูปได้ แต่เบราว์เซอร์นี้ไม่แสดงตัวอย่าง
+                      </span>
+                    </div>
+                  )
                 ) : (
-                  <div className="flex max-w-full flex-col items-center gap-2 px-3 text-center">
-                    <I.Image className="h-8 w-8 shrink-0 opacity-60" />
-                    <span className="text-xs font-medium leading-snug text-slate-600 dark:text-slate-300">
-                      บันทึกรูปได้ แต่เบราว์เซอร์นี้ไม่แสดงตัวอย่าง (เช่น HEIC บน Chrome บน Windows)
-                    </span>
+                  <div className="flex flex-col items-center gap-2 px-3 text-center">
+                    <I.Image className="h-9 w-9 opacity-70" />
+                    <span className="text-xs font-medium">ลากมาวาง หรือคลิก</span>
                   </div>
-                )
-              ) : (
-                <>
-                  <I.Image className="h-6 w-6 opacity-80" />
-                  <span className="text-sm font-medium">ลากมาวาง หรือคลิก</span>
-                </>
-              )}
-            </div>
-            {form.imageUrl ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setImageError(null);
-                  setForm((f) => ({ ...f, imageUrl: '' }));
-                }}
-                className="mt-2 text-left text-xs font-medium text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400"
-              >
-                ลบรูป
-              </button>
-            ) : null}
-            {imageError ? (
-              <p className="mt-1.5 text-[11px] text-rose-600 dark:text-rose-400">{imageError}</p>
-            ) : null}
-          </section>
-
-          {/* Name + Price */}
-          <section className="grid grid-cols-3 gap-3">
-            <div className="col-span-3 sm:col-span-2">
-              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">ชื่อสินค้า</label>
-              <input
-                value={form.name}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                placeholder="เช่น เสื้อ Oversize Cotton"
-                className={inputClass}
-              />
-            </div>
-            <div className="col-span-3 sm:col-span-1">
-              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">ราคา (บาท)</label>
-              <input
-                type="number"
-                value={form.price}
-                onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
-                placeholder="350"
-                className={inputClass}
-              />
-            </div>
-          </section>
-
-          {/* Description */}
-          <section>
-            <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">รายละเอียด</label>
-            <textarea
-              value={form.description}
-              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-              placeholder="เช่น ผ้านุ่ม ใส่สบาย ระบายอากาศดี"
-              rows={3}
-              className={'resize-none ' + inputClass}
-            />
-          </section>
-
-          {/* Variants */}
-          <section>
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <label className="text-sm font-medium text-slate-700 dark:text-slate-200">ตัวเลือกสินค้า</label>
-              <button
-                type="button"
-                onClick={() => {
-                  if (!optionsHaveContent) return;
-                  setSaveTplOpen(true);
-                }}
-                disabled={!optionsHaveContent}
-                title={optionsHaveContent ? 'บันทึกชุดตัวเลือกนี้เป็นแม่แบบ' : 'กรอกตัวเลือกก่อน'}
-                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600 transition hover:border-brand-300 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-brand-500"
-              >
-                บันทึกเป็นแม่แบบ
-              </button>
-            </div>
-            <div className="space-y-2">
-              {form.optionGroups.map((g, i) => (
-                <div key={g.id} className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">ชุดที่ {i + 1}</span>
-                    {form.optionGroups.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => removeOptionRow(g.id)}
-                        className="text-xs font-medium text-slate-400 transition hover:text-rose-600 dark:hover:text-rose-400"
-                      >
-                        ลบ
-                      </button>
-                    )}
-                  </div>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <input
-                      value={g.label}
-                      onChange={(e) => updateOptionRow(g.id, { label: e.target.value })}
-                      placeholder="ประเภท เช่น สี"
-                      className={inputClass}
-                    />
-                    <input
-                      value={g.valuesInput}
-                      onChange={(e) => updateOptionRow(g.id, { valuesInput: e.target.value })}
-                      placeholder="ค่า เช่น ดำ, ขาว, เทา"
-                      className={inputClass}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-            <button
-              type="button"
-              onClick={addOptionRow}
-              className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 px-4 py-2 text-sm font-medium text-slate-500 transition hover:border-brand-400 hover:bg-brand-50/40 hover:text-brand-600 dark:border-slate-700 dark:text-slate-400 dark:hover:border-brand-500 dark:hover:bg-brand-950/30 dark:hover:text-brand-300"
-            >
-              <I.Plus className="h-4 w-4" />
-              เพิ่มตัวเลือก
-            </button>
-
-            {saveTplOpen && (
-              <div className="mt-3 rounded-xl border border-brand-200 bg-brand-50/60 p-3 dark:border-brand-800 dark:bg-brand-950/40">
-                <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-200">ตั้งชื่อแม่แบบ</label>
-                <input
-                  autoFocus
-                  value={tplDraftName}
-                  onChange={(e) => setTplDraftName(e.target.value)}
-                  placeholder="เช่น เสื้อยืดของฉัน"
-                  className={'mb-2 ' + inputClass}
-                />
-                <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-200">ไอคอน</label>
-                <div className="mb-3 flex flex-wrap gap-1">
-                  {TEMPLATE_EMOJI_OPTIONS.map((em) => (
-                    <button
-                      key={em}
-                      type="button"
-                      onClick={() => setTplDraftEmoji(em)}
-                      className={
-                        'grid h-8 w-8 place-items-center rounded-lg border text-lg transition ' +
-                        (tplDraftEmoji === em
-                          ? 'border-brand-400 bg-white ring-2 ring-brand-200 dark:border-brand-500 dark:bg-slate-800 dark:ring-brand-900'
-                          : 'border-slate-200 bg-white hover:border-brand-300 dark:border-slate-700 dark:bg-slate-900')
-                      }
-                    >
-                      {em}
-                    </button>
-                  ))}
-                </div>
-                <div className="flex justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={closeSaveTpl}
-                    className="rounded-lg border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-                  >
-                    ยกเลิก
-                  </button>
-                  <button
-                    type="button"
-                    onClick={submitSaveTpl}
-                    disabled={!tplDraftName.trim()}
-                    className="rounded-lg bg-brand-600 px-4 py-1 text-xs font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-brand-500 dark:hover:bg-brand-400"
-                  >
-                    บันทึก
-                  </button>
-                </div>
+                )}
               </div>
-            )}
-          </section>
+              <p className="mt-3 text-center text-xs leading-relaxed text-slate-400 dark:text-slate-500">
+                ตั้งรูปภาพหลักของสินค้า รองรับไฟล์<br />
+                *.png, *.jpg, *.jpeg เท่านั้น
+              </p>
+              {form.imageUrl && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setImageError(null);
+                    setForm((f) => ({ ...f, imageUrl: '' }));
+                  }}
+                  className="mt-2 block w-full text-center text-xs font-medium text-slate-500 transition hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400"
+                >
+                  ลบรูป
+                </button>
+              )}
+              {imageError && (
+                <p className="mt-2 text-center text-[11px] text-rose-600 dark:text-rose-400">{imageError}</p>
+              )}
+            </FormCard>
 
-          {/* Selling points + stock */}
-          <section className="grid grid-cols-3 gap-3">
-            <div className="col-span-3 sm:col-span-2">
-              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">จุดเด่นของสินค้า</label>
-              <textarea
-                value={form.sellingPoints}
-                onChange={(e) => setForm((f) => ({ ...f, sellingPoints: e.target.value }))}
-                placeholder="เช่น ส่งไว, ผ้านุ่ม, กันน้ำ"
-                rows={2}
-                className={'resize-none ' + inputClass}
-              />
-            </div>
-            <div className="col-span-3 sm:col-span-1">
+            {/* Status card — AI readiness, mirrors reference's "Status" with the green dot */}
+            <FormCard
+              title="สถานะ"
+              accessory={
+                <span
+                  className={
+                    'h-2.5 w-2.5 rounded-full ' +
+                    (hasValidCore
+                      ? 'bg-emerald-500 ring-2 ring-emerald-100 dark:ring-emerald-950'
+                      : 'bg-amber-400 ring-2 ring-amber-100 dark:ring-amber-950')
+                  }
+                  aria-label={hasValidCore ? 'พร้อมใช้งาน' : 'ข้อมูลยังไม่ครบ'}
+                />
+              }
+            >
+              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">ความพร้อมของ AI</label>
+              <div
+                className={
+                  'rounded-lg border px-3 py-2 text-sm font-medium ' +
+                  (hasValidCore
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300'
+                    : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200')
+                }
+              >
+                {hasValidCore ? 'พร้อมตอบลูกค้า' : 'ขาดข้อมูล'}
+              </div>
+              <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">
+                {hasValidCore
+                  ? 'AI จะใช้ข้อมูลนี้ตอบลูกค้าหลังบันทึก'
+                  : 'กรอก ชื่อ + ราคา + ตัวเลือก ให้ครบ'}
+              </p>
+            </FormCard>
+
+            {/* Stock card — single field, mirrors reference's "Product Details > Categories" */}
+            <FormCard title="สต๊อก">
               <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">
-                สต๊อก <span className="font-normal text-slate-400">(ไม่บังคับ)</span>
+                จำนวนคงเหลือ <span className="font-normal text-slate-400">(ไม่บังคับ)</span>
               </label>
               <input
                 type="number"
@@ -1078,11 +968,228 @@ function AddForm({
                 placeholder="เช่น 120"
                 className={inputClass}
               />
-            </div>
-          </section>
+              <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">
+                ปล่อยว่างได้ ถ้าไม่จำกัดจำนวน
+              </p>
+            </FormCard>
+          </aside>
+
+          {/* ── Main form column ──────────────────────────────────── */}
+          <div className="flex-1 space-y-5">
+
+            {/* General */}
+            <FormCard title="ข้อมูลทั่วไป" padding="lg">
+              <div className="space-y-5">
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">ชื่อสินค้า</label>
+                  <input
+                    value={form.name}
+                    onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                    placeholder="เช่น เสื้อ Oversize Cotton"
+                    className={inputClass}
+                  />
+                  <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">
+                    ใช้ชื่อที่ลูกค้าค้นหาเจอ และไม่ซ้ำกับสินค้าอื่น
+                  </p>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">รายละเอียด</label>
+                  <textarea
+                    value={form.description}
+                    onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+                    placeholder="เช่น ผ้านุ่ม ใส่สบาย ระบายอากาศดี"
+                    rows={4}
+                    className={'resize-none ' + inputClass}
+                  />
+                  <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">
+                    อธิบายสินค้าให้ลูกค้าเข้าใจ AI จะหยิบไปใช้ตอบ
+                  </p>
+                </div>
+              </div>
+            </FormCard>
+
+            {/* Pricing */}
+            <FormCard title="ราคา" padding="lg">
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">ราคาขาย (บาท)</label>
+                <input
+                  type="number"
+                  value={form.price}
+                  onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
+                  placeholder="350"
+                  className={inputClass}
+                />
+                <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">
+                  ราคาที่ลูกค้าเห็น AI จะใช้ราคานี้ตอบ
+                </p>
+              </div>
+            </FormCard>
+
+            {/* Variants */}
+            <FormCard
+              title="ตัวเลือกสินค้า"
+              padding="lg"
+              accessory={
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!optionsHaveContent) return;
+                    setSaveTplOpen(true);
+                  }}
+                  disabled={!optionsHaveContent}
+                  title={optionsHaveContent ? 'บันทึกชุดตัวเลือกนี้เป็นแม่แบบ' : 'กรอกตัวเลือกก่อน'}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-brand-300 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-brand-500"
+                >
+                  บันทึกเป็นแม่แบบ
+                </button>
+              }
+            >
+              <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">
+                เช่น สี · ขนาด · รสชาติ (เว้นได้ถ้าไม่มี)
+              </p>
+              <div className="space-y-3">
+                {form.optionGroups.map((g, i) => (
+                  <div key={g.id} className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 dark:border-slate-700 dark:bg-slate-800/30">
+                    <div className="mb-3 flex items-center justify-between">
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">ชุดที่ {i + 1}</span>
+                      {form.optionGroups.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeOptionRow(g.id)}
+                          className="text-xs font-medium text-slate-400 transition hover:text-rose-600 dark:hover:text-rose-400"
+                        >
+                          ลบ
+                        </button>
+                      )}
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-300">ประเภท</label>
+                        <input
+                          value={g.label}
+                          onChange={(e) => updateOptionRow(g.id, { label: e.target.value })}
+                          placeholder="สี"
+                          className={inputClass}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-300">ค่า</label>
+                        <input
+                          value={g.valuesInput}
+                          onChange={(e) => updateOptionRow(g.id, { valuesInput: e.target.value })}
+                          placeholder="ดำ, ขาว, เทา"
+                          className={inputClass}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={addOptionRow}
+                className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-500 transition hover:border-brand-400 hover:bg-brand-50/40 hover:text-brand-600 dark:border-slate-600 dark:text-slate-400 dark:hover:border-brand-500 dark:hover:bg-brand-950/30 dark:hover:text-brand-300"
+              >
+                <I.Plus className="h-4 w-4" />
+                เพิ่มตัวเลือก
+              </button>
+
+              {saveTplOpen && (
+                <div className="mt-4 rounded-xl border border-brand-200 bg-brand-50/60 p-4 dark:border-brand-800 dark:bg-brand-950/40">
+                  <label className="mb-1.5 block text-xs font-medium text-slate-700 dark:text-slate-200">ตั้งชื่อแม่แบบ</label>
+                  <input
+                    autoFocus
+                    value={tplDraftName}
+                    onChange={(e) => setTplDraftName(e.target.value)}
+                    placeholder="เช่น เสื้อยืดของฉัน"
+                    className={'mb-3 ' + inputClass}
+                  />
+                  <label className="mb-1.5 block text-xs font-medium text-slate-700 dark:text-slate-200">ไอคอน</label>
+                  <div className="mb-3 flex flex-wrap gap-1.5">
+                    {TEMPLATE_EMOJI_OPTIONS.map((em) => (
+                      <button
+                        key={em}
+                        type="button"
+                        onClick={() => setTplDraftEmoji(em)}
+                        className={
+                          'grid h-9 w-9 place-items-center rounded-lg border text-lg transition ' +
+                          (tplDraftEmoji === em
+                            ? 'border-brand-400 bg-white ring-2 ring-brand-200 dark:border-brand-500 dark:bg-slate-800 dark:ring-brand-900'
+                            : 'border-slate-200 bg-white hover:border-brand-300 dark:border-slate-700 dark:bg-slate-900')
+                        }
+                      >
+                        {em}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={closeSaveTpl}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                    >
+                      ยกเลิก
+                    </button>
+                    <button
+                      type="button"
+                      onClick={submitSaveTpl}
+                      disabled={!tplDraftName.trim()}
+                      className="rounded-lg bg-brand-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-brand-500 dark:hover:bg-brand-400"
+                    >
+                      บันทึก
+                    </button>
+                  </div>
+                </div>
+              )}
+            </FormCard>
+
+            {/* Selling points */}
+            <FormCard title="จุดเด่นของสินค้า" padding="lg">
+              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">อะไรที่ทำให้ลูกค้าอยากซื้อ?</label>
+              <textarea
+                value={form.sellingPoints}
+                onChange={(e) => setForm((f) => ({ ...f, sellingPoints: e.target.value }))}
+                placeholder="เช่น ส่งไว, ผ้านุ่ม, กันน้ำ"
+                rows={3}
+                className={'resize-none ' + inputClass}
+              />
+              <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">
+                คั่นด้วยจุลภาค AI จะใช้ปิดการขายตอนลูกค้าลังเล
+              </p>
+            </FormCard>
+          </div>
         </div>
       </div>
     </>
+  );
+}
+
+/**
+ * Reusable card shell for the product editor — matches the Circlue
+ * reference style: rounded-2xl, subtle border, title + optional right-side
+ * accessory at top, divider, then the content.
+ */
+function FormCard({
+  title,
+  accessory,
+  padding = 'md',
+  children,
+}: {
+  title: string;
+  accessory?: React.ReactNode;
+  padding?: 'md' | 'lg';
+  children: React.ReactNode;
+}) {
+  const bodyPad = padding === 'lg' ? 'px-6 py-5' : 'px-5 py-4';
+  const headPad = padding === 'lg' ? 'px-6 py-4' : 'px-5 py-3.5';
+  return (
+    <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-slate-700 dark:bg-slate-900 dark:shadow-none">
+      <header className={'flex items-center justify-between border-b border-slate-100 ' + headPad + ' dark:border-slate-800'}>
+        <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">{title}</h3>
+        {accessory}
+      </header>
+      <div className={bodyPad}>{children}</div>
+    </section>
   );
 }
 
