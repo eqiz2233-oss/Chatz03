@@ -368,21 +368,30 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
         {/* Stat cards */}
         <div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-3">
           <StatCard
-            icon={<I.Box className="h-5 w-5" />}
+            icon={<I.Receipt className="h-5 w-5 text-brand-600 dark:text-brand-400" />}
+            iconBg="bg-brand-50 ring-brand-200/80 dark:bg-brand-950/40 dark:ring-brand-800"
             label="ออเดอร์ทั้งหมด"
             value={countByStatus.all}
+            isActive={statusTab === 'all'}
+            onClick={() => setStatusTab('all')}
           />
           <StatCard
-            icon={<I.Check className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />}
+            icon={<I.Truck className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />}
+            iconBg="bg-emerald-50 ring-emerald-200/80 dark:bg-emerald-950/40 dark:ring-emerald-800"
             label="ชำระแล้ว + ส่งแล้ว"
             value={paidShippedCount}
             valueClass="text-emerald-600 dark:text-emerald-400"
+            isActive={statusTab === 'paid' || statusTab === 'shipped'}
+            onClick={() => setStatusTab('paid')}
           />
           <StatCard
-            icon={<I.X className="h-5 w-5 text-rose-500 dark:text-rose-400" />}
+            icon={<I.Bell className="h-5 w-5 text-amber-600 dark:text-amber-400" />}
+            iconBg="bg-amber-50 ring-amber-200/80 dark:bg-amber-950/40 dark:ring-amber-800"
             label="รอชำระ + ยกเลิก"
             value={pendingCount + cancelledCount}
-            valueClass={pendingCount + cancelledCount > 0 ? 'text-rose-600 dark:text-rose-400' : undefined}
+            valueClass={pendingCount + cancelledCount > 0 ? 'text-amber-600 dark:text-amber-400' : undefined}
+            isActive={statusTab === 'pending' || statusTab === 'cancelled'}
+            onClick={() => setStatusTab('pending')}
           />
         </div>
       </div>
@@ -554,18 +563,33 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
 
 function StatCard({
   icon,
+  iconBg,
   label,
   value,
   valueClass,
+  isActive,
+  onClick,
 }: {
   icon: React.ReactNode;
+  iconBg?: string;
   label: string;
   value: number;
   valueClass?: string;
+  isActive?: boolean;
+  onClick?: () => void;
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-slate-200/80 bg-slate-50/60 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/40">
-      <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-white shadow-sm ring-1 ring-slate-200/80 text-slate-500 dark:bg-slate-900 dark:ring-slate-700 dark:text-slate-400">
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        'flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left transition-all ' +
+        (isActive
+          ? 'border-brand-300 bg-brand-50/80 shadow-sm ring-1 ring-brand-200 dark:border-brand-700 dark:bg-brand-950/30 dark:ring-brand-800'
+          : 'border-slate-200/80 bg-slate-50/60 hover:border-slate-300 hover:bg-white hover:shadow-sm dark:border-slate-700 dark:bg-slate-800/40 dark:hover:bg-slate-800/70')
+      }
+    >
+      <div className={'grid h-10 w-10 shrink-0 place-items-center rounded-xl shadow-sm ring-1 ' + (iconBg ?? 'bg-white ring-slate-200/80 dark:bg-slate-900 dark:ring-slate-700')}>
         {icon}
       </div>
       <div>
@@ -574,7 +598,7 @@ function StatCard({
         </div>
         <div className="text-[11px] text-slate-500 dark:text-slate-400">{label}</div>
       </div>
-    </div>
+    </button>
   );
 }
 
