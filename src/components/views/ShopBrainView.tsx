@@ -561,35 +561,26 @@ function AddForm({
     form.price &&
     form.optionGroups.some((g) => g.label.trim() && parseValuesInput(g.valuesInput).length > 0);
 
+  const sectionClass =
+    'rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-slate-700 dark:bg-slate-900 dark:shadow-none';
+
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col bg-slate-50 dark:bg-slate-950">
+    <div className="flex h-full min-h-0 flex-1 flex-col bg-[#f4f3f8] dark:bg-slate-950">
       {/* ── Header: title + Cancel/Save ─────────────────────────────── */}
-      <header className="flex shrink-0 flex-wrap items-start justify-between gap-4 border-b border-slate-200 bg-white px-6 py-5 dark:border-slate-800 dark:bg-slate-900 md:px-8">
-        <div className="flex min-w-0 items-start gap-3">
-          <button
-            type="button"
-            onClick={onBack}
-            aria-label="ยกเลิก"
-            className="-ml-1 mt-1 grid h-9 w-9 shrink-0 place-items-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-          >
-            <I.X className="h-4 w-4" />
-          </button>
-          <div className="min-w-0">
-            <h1 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white sm:text-[26px]">
-              {isEdit ? 'แก้ไขสินค้า' : 'เพิ่มสินค้าใหม่'}
-            </h1>
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-              {isEdit
-                ? 'แก้แล้วกดบันทึก — ข้อมูลจะอัปเดตให้ AI ใช้ตอบลูกค้าทันที'
-                : 'กรอกข้อมูลให้ครบ ยิ่งละเอียด AI ยิ่งตอบขายเก่ง'}
-            </p>
-          </div>
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-4 bg-transparent px-6 pt-7 pb-5 md:px-10 md:pt-9">
+        <div className="min-w-0">
+          <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">
+            {isEdit ? 'แก้ไขสินค้า' : 'เพิ่มสินค้าใหม่'}
+          </h1>
+          <p className="mt-1.5 max-w-md text-sm text-slate-500 dark:text-slate-400">
+            กรอกข้อมูลให้ครบ AI จะได้ตอบลูกค้าและปิดการขายได้แม่นยำขึ้น
+          </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2.5">
           <button
             type="button"
             onClick={onBack}
-            className="rounded-full border border-slate-300 bg-white px-5 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+            className="rounded-full border border-slate-300 bg-white px-6 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
           >
             ยกเลิก
           </button>
@@ -597,112 +588,89 @@ function AddForm({
             type="button"
             onClick={onSave}
             disabled={!hasValidCore || (!isEdit && slotsRemaining <= 0)}
-            className="rounded-full bg-brand-600 px-6 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 dark:bg-brand-500 dark:hover:bg-brand-400"
+            className="rounded-full bg-brand-600 px-7 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 dark:bg-brand-500 dark:hover:bg-brand-400"
           >
-            {isEdit ? 'บันทึกการแก้ไข' : 'บันทึก'}
+            บันทึก
           </button>
         </div>
       </header>
 
       {/* ── Body: 2-column layout ────────────────────────────────────── */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6 md:px-8 md:py-8">
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-10 md:px-10">
         <div className="mx-auto flex max-w-6xl flex-col gap-6 lg:flex-row">
 
-          {/* ── Left rail: thumbnail / status / tips ───────────────── */}
-          <aside className="w-full shrink-0 space-y-5 lg:w-[300px]">
+          {/* ── Left rail: thumbnail / status / quota ───────────────── */}
+          <aside className="w-full shrink-0 space-y-5 lg:w-[280px]">
 
             {/* Thumbnail */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+            <div className={sectionClass}>
               <h3 className="mb-4 text-base font-bold text-slate-900 dark:text-white">รูปสินค้า</h3>
               <button
                 type="button"
-                className="group flex aspect-square w-full flex-col items-center justify-center gap-2.5 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 text-slate-400 transition hover:border-brand-400 hover:bg-brand-50/50 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-800/50 dark:hover:border-brand-500 dark:hover:bg-brand-950/30 dark:hover:text-brand-300"
+                className="flex aspect-square w-full flex-col items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50/70 text-slate-400 transition hover:border-brand-300 hover:bg-brand-50/40 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-800/40 dark:hover:border-brand-500 dark:hover:bg-brand-950/30 dark:hover:text-brand-300"
               >
-                <I.Image className="h-12 w-12" />
+                <I.Image className="h-10 w-10 opacity-80" />
                 <span className="text-xs font-medium">ลากมาวาง หรือคลิก</span>
               </button>
               <p className="mt-3 text-center text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
-                รองรับไฟล์ .png, .jpg, .jpeg
+                รองรับเฉพาะ .png, .jpg, .jpeg
               </p>
             </div>
 
             {/* Status */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-              <div className="mb-4 flex items-center justify-between">
+            <div className={sectionClass}>
+              <div className="mb-3 flex items-center justify-between">
                 <h3 className="text-base font-bold text-slate-900 dark:text-white">สถานะ</h3>
                 <span
                   className={
                     'h-2.5 w-2.5 rounded-full ' +
-                    (hasValidCore ? 'bg-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-900' : 'bg-amber-400 ring-2 ring-amber-200 dark:ring-amber-900')
+                    (hasValidCore
+                      ? 'bg-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-900'
+                      : 'bg-amber-400 ring-2 ring-amber-200 dark:ring-amber-900')
                   }
                   aria-label={hasValidCore ? 'พร้อมบันทึก' : 'ข้อมูลยังไม่ครบ'}
                 />
               </div>
-              <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">
-                {hasValidCore ? 'พร้อมบันทึก — AI จะนำไปใช้ตอบลูกค้า' : 'ข้อมูลยังไม่ครบ กรอก ชื่อ + ราคา + ตัวเลือก'}
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                {hasValidCore ? 'พร้อมบันทึก' : 'ยังไม่ครบ — ต้องมีชื่อ + ราคา + ตัวเลือก'}
               </p>
-              <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">โควต้าสินค้า</label>
-              <div
-                className={
-                  'rounded-lg border px-3 py-2 text-sm font-medium ' +
-                  (slotsRemaining > 0
-                    ? 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200'
-                    : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-200')
-                }
-              >
-                เพิ่มได้อีก <strong className="font-bold">{slotsRemaining}</strong> ชิ้น
-                <span className="ml-1 text-slate-400 dark:text-slate-500">({usedSlots}/{slotLimit})</span>
-              </div>
             </div>
 
-            {/* Tips card — only when adding new (skip clutter on edit) */}
-            {!isEdit && (
-              <div className="rounded-2xl border border-brand-100 bg-brand-50/40 p-5 dark:border-brand-900/60 dark:bg-brand-950/30">
-                <div className="mb-3 flex items-center gap-2">
-                  <I.Sparkle className="h-4 w-4 text-brand-600 dark:text-brand-300" />
-                  <h3 className="text-sm font-bold text-brand-700 dark:text-brand-200">เคล็ดลับ</h3>
-                </div>
-                <ul className="space-y-2 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
-                  <li className="flex gap-2">
-                    <span className="text-brand-500">•</span>
-                    กรอกครบ AI ตอบลูกค้าได้ดีขึ้น
-                  </li>
-                  <li className="flex gap-2">
-                    <span className="text-brand-500">•</span>
-                    บอก "จุดเด่น" → AI ใช้ปิดการขาย
-                  </li>
-                  <li className="flex gap-2">
-                    <span className="text-brand-500">•</span>
-                    บันทึกตัวเลือกเป็นแม่แบบ → ใช้ซ้ำได้
-                  </li>
-                </ul>
+            {/* Quota */}
+            <div className={sectionClass}>
+              <h3 className="mb-3 text-base font-bold text-slate-900 dark:text-white">โควต้า</h3>
+              <div className="flex items-baseline gap-1.5">
+                <span className={
+                  'text-2xl font-extrabold tabular-nums ' +
+                  (slotsRemaining > 0 ? 'text-slate-900 dark:text-white' : 'text-amber-600 dark:text-amber-400')
+                }>
+                  {slotsRemaining}
+                </span>
+                <span className="text-xs text-slate-400 dark:text-slate-500">/ {slotLimit} ชิ้น</span>
               </div>
-            )}
+              <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">ใช้แล้ว {usedSlots} ชิ้น</p>
+            </div>
           </aside>
 
-          {/* ── Main content: 3 stacked cards ──────────────────────── */}
+          {/* ── Main content: stacked cards ─────────────────────────── */}
           <div className="flex-1 space-y-5">
 
             {/* General info */}
-            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-              <h2 className="mb-1 text-lg font-bold text-slate-900 dark:text-white">ข้อมูลทั่วไป</h2>
-              <p className="mb-5 border-b border-slate-100 pb-4 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400">
-                ข้อมูลพื้นฐานที่ลูกค้าจะเห็นก่อน
-              </p>
-              <div className="space-y-5">
+            <section className={sectionClass}>
+              <h2 className="mb-5 text-lg font-bold text-slate-900 dark:text-white">ข้อมูลทั่วไป</h2>
+              <div className="space-y-4">
                 <div className="grid grid-cols-3 gap-4">
                   <div className="col-span-3 sm:col-span-2">
-                    <label className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-200">ชื่อสินค้า</label>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">ชื่อสินค้า</label>
                     <input
                       value={form.name}
                       onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                       placeholder="เช่น เสื้อ Oversize Cotton"
                       className={inputClass}
                     />
-                    <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">ตั้งชื่อให้ชัดเจน ลูกค้าค้นเจอง่าย</p>
                   </div>
                   <div className="col-span-3 sm:col-span-1">
-                    <label className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-200">ราคา (฿)</label>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">ราคา (฿)</label>
                     <input
                       type="number"
                       value={form.price}
@@ -713,7 +681,7 @@ function AddForm({
                   </div>
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-200">รายละเอียดสินค้า</label>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">รายละเอียด</label>
                   <textarea
                     value={form.description}
                     onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
@@ -721,20 +689,14 @@ function AddForm({
                     rows={3}
                     className={'resize-none ' + inputClass}
                   />
-                  <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">อธิบายสั้นๆ ให้ลูกค้ารู้ว่าสินค้าคืออะไร</p>
                 </div>
               </div>
             </section>
 
             {/* Variants */}
-            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-              <div className="mb-5 flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-4 dark:border-slate-800">
-                <div>
-                  <h2 className="text-lg font-bold text-slate-900 dark:text-white">ตัวเลือกสินค้า</h2>
-                  <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                    มีแบบไหนให้ลูกค้าเลือก เช่น สี ขนาด รสชาติ (ถ้ามี)
-                  </p>
-                </div>
+            <section className={sectionClass}>
+              <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+                <h2 className="text-lg font-bold text-slate-900 dark:text-white">ตัวเลือกสินค้า</h2>
                 <button
                   type="button"
                   onClick={() => {
@@ -745,7 +707,7 @@ function AddForm({
                   title={optionsHaveContent ? 'บันทึกชุดตัวเลือกนี้เป็นแม่แบบ' : 'กรอกตัวเลือกก่อน'}
                   className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-brand-300 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-brand-500"
                 >
-                  💾 บันทึกเป็นแม่แบบ
+                  บันทึกเป็นแม่แบบ
                 </button>
               </div>
 
@@ -764,18 +726,16 @@ function AddForm({
                         </button>
                       )}
                     </div>
-                    <label className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-200">ประเภท</label>
                     <input
                       value={g.label}
                       onChange={(e) => updateOptionRow(g.id, { label: e.target.value })}
-                      placeholder="เช่น สี, ขนาด, รสชาติ"
-                      className={'mb-3 ' + inputClass}
+                      placeholder="ประเภท เช่น สี, ขนาด"
+                      className={'mb-2 ' + inputClass}
                     />
-                    <label className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-200">ค่าที่เลือกได้</label>
                     <input
                       value={g.valuesInput}
                       onChange={(e) => updateOptionRow(g.id, { valuesInput: e.target.value })}
-                      placeholder="เช่น ดำ, ขาว, เทา"
+                      placeholder="ค่าที่เลือก เช่น ดำ, ขาว, เทา"
                       className={inputClass}
                     />
                   </div>
@@ -793,7 +753,7 @@ function AddForm({
 
               {saveTplOpen && (
                 <div className="mt-4 rounded-xl border border-brand-200 bg-brand-50/60 p-4 dark:border-brand-800 dark:bg-brand-950/40">
-                  <label className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-200">ตั้งชื่อแม่แบบ</label>
+                  <label className="mb-1.5 block text-xs font-medium text-slate-700 dark:text-slate-200">ตั้งชื่อแม่แบบ</label>
                   <input
                     autoFocus
                     value={tplDraftName}
@@ -801,7 +761,7 @@ function AddForm({
                     placeholder="เช่น เสื้อยืดของฉัน"
                     className={'mb-3 ' + inputClass}
                   />
-                  <label className="mb-1.5 block text-xs font-semibold text-slate-700 dark:text-slate-200">เลือกไอคอน</label>
+                  <label className="mb-1.5 block text-xs font-medium text-slate-700 dark:text-slate-200">เลือกไอคอน</label>
                   <div className="mb-4 flex flex-wrap gap-1">
                     {TEMPLATE_EMOJI_OPTIONS.map((em) => (
                       <button
@@ -841,14 +801,11 @@ function AddForm({
             </section>
 
             {/* Extras: selling points + stock */}
-            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-              <h2 className="mb-1 text-lg font-bold text-slate-900 dark:text-white">จุดเด่นและสต๊อก</h2>
-              <p className="mb-5 border-b border-slate-100 pb-4 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400">
-                ข้อมูลเสริมที่ทำให้สินค้าน่าซื้อ
-              </p>
-              <div className="space-y-5">
+            <section className={sectionClass}>
+              <h2 className="mb-5 text-lg font-bold text-slate-900 dark:text-white">จุดเด่น &amp; สต๊อก</h2>
+              <div className="space-y-4">
                 <div>
-                  <label className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-200">จุดเด่นสินค้า</label>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">จุดเด่น</label>
                   <textarea
                     value={form.sellingPoints}
                     onChange={(e) => setForm((f) => ({ ...f, sellingPoints: e.target.value }))}
@@ -856,18 +813,18 @@ function AddForm({
                     rows={2}
                     className={'resize-none ' + inputClass}
                   />
-                  <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">อะไรที่ทำให้ลูกค้าอยากซื้อ? AI จะเอาไปใช้ปิดการขาย</p>
                 </div>
-                <div>
-                  <label className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-200">สต๊อก</label>
-                  <input
-                    type="number"
-                    value={form.stock}
-                    onChange={(e) => setForm((f) => ({ ...f, stock: e.target.value }))}
-                    placeholder="เช่น 120"
-                    className={inputClass}
-                  />
-                  <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">จำนวนชิ้น (ไม่บังคับ — ปล่อยว่างได้)</p>
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="col-span-3 sm:col-span-1">
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">สต๊อก</label>
+                    <input
+                      type="number"
+                      value={form.stock}
+                      onChange={(e) => setForm((f) => ({ ...f, stock: e.target.value }))}
+                      placeholder="ไม่บังคับ"
+                      className={inputClass}
+                    />
+                  </div>
                 </div>
               </div>
             </section>
