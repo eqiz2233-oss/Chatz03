@@ -318,8 +318,20 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
     });
   }, []);
 
+  // Stat counts
+  const paidShippedCount = useMemo(() => searchFiltered.filter((o) => o.status === 'paid' || o.status === 'shipped').length, [searchFiltered]);
+  const pendingCount = countByStatus.pending;
+  const cancelledCount = countByStatus.cancelled;
+
+  // Days ago helper
+  function daysAgo(dateStr: string | undefined): number | null {
+    if (!dateStr) return null;
+    const diff = Date.now() - new Date(dateStr).getTime();
+    return Math.max(0, Math.floor(diff / 86_400_000));
+  }
+
   return (
-    <div className="flex h-screen flex-1 flex-col overflow-hidden bg-slate-50 dark:bg-slate-950">
+    <div className="flex h-screen flex-1 flex-col overflow-hidden bg-[#f4f3f8] dark:bg-slate-950">
       {slipPreview && (
         <SlipImageLightbox src={slipPreview} onClose={() => setSlipPreview(null)} t={t} />
       )}
@@ -333,31 +345,52 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
       )}
 
       {/* ── Top bar ── */}
-      <div className="shrink-0 border-b border-slate-200 bg-white px-6 py-4 dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <h1 className="text-lg font-bold tracking-tight text-slate-900 dark:text-white">
+      <div className="shrink-0 border-b border-slate-200/80 bg-white px-6 py-4 dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
               {t('orders.title')}
             </h1>
-            <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold tabular-nums text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-              {countByStatus.all}
-            </span>
+            <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+              {t('orders.subtitle')}
+            </p>
           </div>
           <button
             type="button"
             onClick={() => setCreateOpen(true)}
-            className="btn-primary text-xs"
+            className="btn-primary gap-2"
           >
             <I.Plus className="h-4 w-4" />
             {t('orders.create')}
           </button>
         </div>
+
+        {/* Stat cards */}
+        <div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-3">
+          <StatCard
+            icon={<I.Box className="h-5 w-5" />}
+            label="ออเดอร์ทั้งหมด"
+            value={countByStatus.all}
+          />
+          <StatCard
+            icon={<I.Check className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />}
+            label="ชำระแล้ว + ส่งแล้ว"
+            value={paidShippedCount}
+            valueClass="text-emerald-600 dark:text-emerald-400"
+          />
+          <StatCard
+            icon={<I.X className="h-5 w-5 text-rose-500 dark:text-rose-400" />}
+            label="รอชำระ + ยกเลิก"
+            value={pendingCount + cancelledCount}
+            valueClass={pendingCount + cancelledCount > 0 ? 'text-rose-600 dark:text-rose-400' : undefined}
+          />
+        </div>
       </div>
 
-      {/* ── Status tabs ── */}
-      <div className="shrink-0 border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex items-end justify-between gap-2 px-6">
-          <div className="flex items-center gap-0.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      {/* ── Status tabs + search ── */}
+      <div className="shrink-0 border-b border-slate-200/80 bg-white px-6 dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-0.5 overflow-x-auto py-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {(
               [
                 { key: 'all' as const, label: t('orders.tab.all') },
@@ -365,24 +398,28 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
               ] as { key: OrderStatus | 'all'; label: string }[]
             ).map(({ key, label }) => {
               const isActive = statusTab === key;
+              const dot = key !== 'all' ? STATUS_CONFIG[key].dotCls : null;
               return (
                 <button
                   key={key}
                   type="button"
                   onClick={() => setStatusTab(key)}
                   className={
-                    'flex shrink-0 items-center gap-1.5 border-b-2 px-3 pb-3 pt-3 text-xs font-medium transition-colors ' +
+                    'flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ' +
                     (isActive
-                      ? 'border-brand-600 text-brand-600 dark:border-brand-400 dark:text-brand-400'
-                      : 'border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200')
+                      ? 'bg-brand-600 text-white dark:bg-brand-500'
+                      : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200')
                   }
                 >
+                  {dot && (
+                    <span className={'h-2 w-2 shrink-0 rounded-full ' + (isActive ? 'bg-white/70' : dot)} />
+                  )}
                   {label}
                   <span
                     className={
-                      'rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ' +
+                      'rounded-full px-1.5 py-0 text-[10px] font-semibold tabular-nums leading-5 ' +
                       (isActive
-                        ? 'bg-brand-100 text-brand-700 dark:bg-brand-950/60 dark:text-brand-300'
+                        ? 'bg-white/20 text-white'
                         : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400')
                     }
                   >
@@ -392,71 +429,58 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
               );
             })}
           </div>
-          <div className="mb-2 flex shrink-0 items-center gap-2">
-            <span className="h-4 w-px bg-slate-200 dark:bg-slate-700" />
-            <button
-              type="button"
-              className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-            >
-              <I.Settings className="h-3.5 w-3.5" />
-              {t('orders.manageTable')}
-            </button>
-          </div>
-        </div>
-      </div>
 
-      {/* ── Filter bar ── */}
-      <div className="shrink-0 border-b border-slate-200 bg-white px-6 py-2 dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <div className="relative" ref={filterWrapRef}>
-            <button
-              type="button"
-              onClick={() => setFilterOpen((v) => !v)}
-              aria-expanded={filterOpen}
-              className={
-                'relative flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[11px] font-medium transition ' +
-                (activeFilterCount > 0
-                  ? 'border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-700 dark:bg-brand-950/40 dark:text-brand-300'
-                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800')
-              }
-            >
-              <I.Filter className="h-3.5 w-3.5" />
-              {t('orders.filter')}
-              {activeFilterCount > 0 && (
-                <span className="grid h-4 min-w-4 place-items-center rounded-full bg-brand-600 px-1 text-[10px] font-bold text-white dark:bg-brand-500">
-                  {activeFilterCount > 9 ? '9+' : activeFilterCount}
-                </span>
+          <div className="flex shrink-0 items-center gap-2 py-3">
+            <div className="relative" ref={filterWrapRef}>
+              <button
+                type="button"
+                onClick={() => setFilterOpen((v) => !v)}
+                aria-expanded={filterOpen}
+                className={
+                  'relative flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] font-medium transition ' +
+                  (activeFilterCount > 0
+                    ? 'border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-700 dark:bg-brand-950/40 dark:text-brand-300'
+                    : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800')
+                }
+              >
+                <I.Filter className="h-3.5 w-3.5" />
+                {t('orders.filter')}
+                {activeFilterCount > 0 && (
+                  <span className="grid h-4 min-w-4 place-items-center rounded-full bg-brand-600 px-1 text-[10px] font-bold text-white">
+                    {activeFilterCount > 9 ? '9+' : activeFilterCount}
+                  </span>
+                )}
+              </button>
+              {filterOpen && (
+                <FilterPanel
+                  t={t}
+                  filters={filters}
+                  setFilters={setFilters}
+                  onClear={clearFilters}
+                  onClose={() => setFilterOpen(false)}
+                  shops={shops}
+                />
               )}
-            </button>
-            {filterOpen && (
-              <FilterPanel
-                t={t}
-                filters={filters}
-                setFilters={setFilters}
-                onClear={clearFilters}
-                onClose={() => setFilterOpen(false)}
-                shops={shops}
+            </div>
+            <div className="relative">
+              <I.Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={t('orders.search')}
+                className="w-48 rounded-lg border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-xs text-slate-900 outline-none focus:border-brand-400 focus:bg-white focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:bg-slate-900 dark:focus:ring-brand-900/40"
               />
+            </div>
+            {activeFilterCount > 0 && (
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="flex shrink-0 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-500 transition hover:bg-slate-50 hover:text-rose-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:text-rose-400"
+              >
+                <I.X className="h-3 w-3" />
+                {t('orders.filter.reset')}
+              </button>
             )}
-          </div>
-          {activeFilterCount > 0 && (
-            <button
-              type="button"
-              onClick={clearFilters}
-              className="flex shrink-0 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-500 transition hover:bg-slate-50 hover:text-rose-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:text-rose-400"
-            >
-              <I.X className="h-3 w-3" />
-              {t('orders.filter.reset')}
-            </button>
-          )}
-          <div className="ml-auto relative shrink-0">
-            <I.Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={t('orders.search')}
-              className="w-52 rounded-lg border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-xs text-slate-900 outline-none focus:border-brand-400 focus:bg-white focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:bg-slate-900 dark:focus:ring-brand-900/40"
-            />
           </div>
         </div>
       </div>
@@ -464,18 +488,19 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
       {/* ── Table ── */}
       <div className="min-h-0 flex-1 overflow-auto">
         <table className="w-full min-w-[820px] border-collapse">
-          <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-900">
+          <thead className="sticky top-0 z-10 bg-[#f0eff6] dark:bg-slate-900">
             <tr className="text-left">
-              <th className="w-1 border-b border-slate-200 px-3 py-3 dark:border-slate-800" />
+              <th className="w-10 border-b border-slate-200 px-4 py-3 text-[11px] font-semibold text-slate-400 dark:border-slate-800 dark:text-slate-500">#</th>
               {(
                 [
-                  { key: 'id' as SortKey,       label: t('orders.th.id'),       cls: 'w-32' },
-                  { key: 'amount' as SortKey,   label: t('orders.th.amount'),   cls: 'w-28' },
-                  { key: 'status' as SortKey,   label: t('orders.th.status'),   cls: 'w-52' },
                   { key: 'customer' as SortKey, label: t('orders.th.customer'), cls: '' },
+                  { key: 'id' as SortKey,       label: t('orders.th.id'),       cls: 'w-32' },
                   { key: null,                  label: t('orders.th.product'),  cls: '' },
+                  { key: 'status' as SortKey,   label: t('orders.th.status'),   cls: 'w-36' },
                   { key: null,                  label: t('orders.th.channel'),  cls: 'w-20 text-center' },
+                  { key: 'amount' as SortKey,   label: t('orders.th.amount'),   cls: 'w-28 text-right' },
                   { key: 'date' as SortKey,     label: t('orders.th.date'),     cls: 'w-28' },
+                  { key: null,                  label: 'วันที่ผ่านมา',          cls: 'w-24 text-right' },
                   { key: null,                  label: '',                       cls: 'w-24' },
                 ] as { key: SortKey | null; label: string; cls: string }[]
               ).map((col, i) => (
@@ -491,27 +516,27 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
                   {col.label && (
                     <span className="inline-flex items-center gap-1">
                       {col.label}
-                      {col.key && (
-                        <SortIcon active={sortKey === col.key} dir={sortDir} />
-                      )}
+                      {col.key && <SortIcon active={sortKey === col.key} dir={sortDir} />}
                     </span>
                   )}
                 </th>
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 bg-white dark:divide-slate-800/80 dark:bg-slate-900">
+          <tbody className="divide-y divide-slate-100 bg-white dark:divide-slate-800/60 dark:bg-slate-900">
             {displayed.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-4 py-16 text-center text-sm text-slate-400 dark:text-slate-500">
+                <td colSpan={10} className="px-4 py-16 text-center text-sm text-slate-400 dark:text-slate-500">
                   {t('orders.empty')}
                 </td>
               </tr>
             ) : (
-              displayed.map((o) => (
+              displayed.map((o, idx) => (
                 <OrderRow
                   key={o.id}
                   order={o}
+                  rowNum={idx + 1}
+                  daysAgo={daysAgo(o.orderDate ?? o.createdAt)}
                   t={t}
                   onGoToChat={goToChat}
                   onSlipPreview={setSlipPreview}
@@ -520,6 +545,34 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
             )}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+// ─── Stat card ────────────────────────────────────────────────────────────────
+
+function StatCard({
+  icon,
+  label,
+  value,
+  valueClass,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: number;
+  valueClass?: string;
+}) {
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-slate-200/80 bg-slate-50/60 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/40">
+      <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-white shadow-sm ring-1 ring-slate-200/80 text-slate-500 dark:bg-slate-900 dark:ring-slate-700 dark:text-slate-400">
+        {icon}
+      </div>
+      <div>
+        <div className={'text-2xl font-extrabold tabular-nums leading-tight ' + (valueClass ?? 'text-slate-900 dark:text-white')}>
+          {value}
+        </div>
+        <div className="text-[11px] text-slate-500 dark:text-slate-400">{label}</div>
       </div>
     </div>
   );
@@ -552,11 +605,15 @@ function shortId(str: string): string {
 
 function OrderRow({
   order: o,
+  rowNum,
+  daysAgo,
   t,
   onGoToChat,
   onSlipPreview,
 }: {
   order: Order;
+  rowNum: number;
+  daysAgo: number | null;
   t: (key: string, vars?: Record<string, string | number>) => string;
   onGoToChat: (o: Order) => void;
   onSlipPreview: (url: string) => void;
@@ -564,112 +621,102 @@ function OrderRow({
   const hasSlipImg = Boolean(o.slipImageUrl?.trim());
   const color = avatarColor(o.customer);
   const cstId = shortId(o.customer + o.shop);
+  const { dotCls } = STATUS_CONFIG[o.status];
   const payBadge = PAYMENT_BADGE[o.status];
-  const fulBadge = FULFILLMENT_BADGE[o.status];
-  const needsAttention = o.status === 'pending';
 
   return (
-    <tr className="group transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40">
-      {/* alert dot */}
-      <td className="w-1 pl-3 pr-0 py-0">
-        <span
-          className={
-            'block h-1.5 w-1.5 rounded-full transition-opacity ' +
-            (needsAttention ? 'bg-rose-500' : 'opacity-0')
-          }
-        />
+    <tr className="group transition-colors hover:bg-brand-50/30 dark:hover:bg-brand-950/20">
+      {/* Row number */}
+      <td className="px-4 py-4 text-[12px] tabular-nums text-slate-400 dark:text-slate-500">
+        {rowNum}
+      </td>
+
+      {/* Customer */}
+      <td className="px-4 py-4">
+        <div className="flex items-center gap-3">
+          <span className={'grid h-9 w-9 shrink-0 place-items-center rounded-full text-[11px] font-bold text-white ' + color}>
+            {initials(o.customer)}
+          </span>
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{o.customer}</div>
+            <div className="font-mono text-[11px] text-slate-400 dark:text-slate-500">{cstId}</div>
+          </div>
+        </div>
       </td>
 
       {/* Order ID */}
-      <td className="px-4 py-3.5">
-        <span className="font-mono text-[12px] font-semibold text-slate-700 dark:text-slate-300">
-          {o.id}
-        </span>
+      <td className="px-4 py-4">
+        <span className="font-mono text-[12px] font-medium text-slate-600 dark:text-slate-400">{o.id}</span>
       </td>
 
-      {/* Total */}
-      <td className="px-4 py-3.5">
-        <div className="flex items-center gap-1.5">
-          <span className="text-[14px] font-semibold tabular-nums text-slate-900 dark:text-slate-100">
-            ฿{o.amount.toLocaleString()}
+      {/* Product */}
+      <td className="px-4 py-4">
+        <div className="inline-flex max-w-[180px] items-center rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white dark:bg-slate-700">
+          <span className="truncate">{o.product}</span>
+        </div>
+        <div className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500">×{o.qty}</div>
+      </td>
+
+      {/* Status */}
+      <td className="px-4 py-4">
+        <div className="flex flex-col gap-1">
+          <span className="inline-flex items-center gap-1.5">
+            <span className={'h-2 w-2 shrink-0 rounded-full ' + dotCls} />
+            <span className="text-[12px] font-medium text-slate-700 dark:text-slate-300">
+              {t(STATUS_CONFIG[o.status].labelKey)}
+            </span>
           </span>
           {hasSlipImg && (
             <button
               type="button"
               onClick={() => onSlipPreview(o.slipImageUrl!)}
               title={t('orders.slipImageAria')}
-              className="inline-flex h-5 w-5 items-center justify-center rounded bg-emerald-100 text-emerald-600 transition hover:bg-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-400 dark:hover:bg-emerald-900/70"
+              className="inline-flex w-fit items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 transition hover:bg-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-400"
             >
-              <I.Image className="h-3 w-3" />
+              <I.Image className="h-2.5 w-2.5" />
+              {o.slipStatus === 'verified' ? t('orders.slipVerified') : 'สลิป'}
             </button>
           )}
         </div>
       </td>
 
-      {/* Status: payment + fulfillment badges */}
-      <td className="px-4 py-3.5">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className={'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ' + payBadge.cls}>
-            {t(payBadge.labelKey)}
-          </span>
-          {o.status !== 'cancelled' && (
-            <span className={'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ' + fulBadge.cls}>
-              {t(fulBadge.labelKey)}
-            </span>
-          )}
-          {o.slipStatus === 'verified' && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-800">
-              <I.Check className="h-2.5 w-2.5" />
-              {t('orders.slipVerified')}
-            </span>
-          )}
-        </div>
-      </td>
-
-      {/* Customer */}
-      <td className="px-4 py-3.5">
-        <div className="flex items-center gap-2.5">
-          <span className={'grid h-7 w-7 shrink-0 place-items-center rounded-full text-[10px] font-bold text-white ' + color}>
-            {initials(o.customer)}
-          </span>
-          <div className="min-w-0">
-            <div className="flex items-center gap-1.5">
-              <span className="truncate text-[13px] font-medium text-slate-900 dark:text-slate-100">{o.customer}</span>
-              <span className="shrink-0 rounded bg-slate-100 px-1 py-px text-[10px] font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                {cstId}
-              </span>
-            </div>
-            <div className="truncate text-[11px] text-slate-400 dark:text-slate-500">{o.shop}</div>
-          </div>
-        </div>
-      </td>
-
-      {/* Product */}
-      <td className="px-4 py-3.5">
-        <div className="text-[13px] text-slate-900 dark:text-slate-100">{o.product}</div>
-        <div className="text-[11px] text-slate-400 dark:text-slate-500">×{o.qty}</div>
-      </td>
-
       {/* Channel */}
-      <td className="px-4 py-3.5 text-center">
-        <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800">
+      <td className="px-4 py-4 text-center">
+        <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800">
           <ChannelIcon channel={o.channel} className="h-4 w-4" />
         </span>
       </td>
 
+      {/* Amount */}
+      <td className="px-4 py-4 text-right">
+        <div className="text-sm font-bold tabular-nums text-slate-900 dark:text-slate-100">
+          ฿{o.amount.toLocaleString()}
+        </div>
+        <div className="text-[11px] text-slate-400 dark:text-slate-500">
+          {t(payBadge.labelKey)}
+        </div>
+      </td>
+
       {/* Date */}
-      <td className="px-4 py-3.5">
-        <span className="text-[12px] text-slate-500 dark:text-slate-400">
+      <td className="px-4 py-4">
+        <span className="text-[12px] text-slate-600 dark:text-slate-400">
           {o.orderDate ?? o.createdAt?.slice(0, 10) ?? '—'}
         </span>
       </td>
 
+      {/* Days ago */}
+      <td className="px-4 py-4 text-right">
+        <span className="text-sm font-semibold tabular-nums text-slate-700 dark:text-slate-300">
+          {daysAgo != null ? daysAgo : '—'}
+        </span>
+      </td>
+
       {/* Actions */}
-      <td className="px-4 py-3.5">
+      <td className="px-4 py-4">
         <button
           type="button"
           onClick={() => onGoToChat(o)}
-          className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-600 opacity-0 transition hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700 group-hover:opacity-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-brand-500 dark:hover:bg-brand-950/40 dark:hover:text-brand-300"
+          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-medium text-slate-600 opacity-0 transition hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700 group-hover:opacity-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-brand-500 dark:hover:bg-brand-950/40 dark:hover:text-brand-300"
         >
           {t('orders.goToChat')}
         </button>
