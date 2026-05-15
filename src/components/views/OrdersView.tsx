@@ -16,29 +16,18 @@ import { resolveConversationIdForOrder } from '../../lib/orderInbox';
 
 // ─── Status config ────────────────────────────────────────────────────────────
 
-const STATUS_CONFIG: Record<
-  OrderStatus,
-  { labelKey: string; badgeCls: string; dotCls: string }
-> = {
+const STATUS_CONFIG: Record<OrderStatus, { labelKey: string }> = {
   pending: {
     labelKey: 'orders.col.pending',
-    badgeCls: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:ring-amber-800',
-    dotCls: 'bg-amber-400',
   },
   paid: {
     labelKey: 'orders.col.paid',
-    badgeCls: 'bg-blue-50 text-blue-700 ring-1 ring-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:ring-blue-800',
-    dotCls: 'bg-blue-400',
   },
   shipped: {
     labelKey: 'orders.col.shipped',
-    badgeCls: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-800',
-    dotCls: 'bg-emerald-400',
   },
   cancelled: {
     labelKey: 'orders.col.cancelled',
-    badgeCls: 'bg-slate-100 text-slate-500 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-700',
-    dotCls: 'bg-slate-400',
   },
 };
 
@@ -326,13 +315,6 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
   const cancelledCount = countByStatus.cancelled;
   const paidNotShippedCount = useMemo(() => searchFiltered.filter((o) => o.status === 'paid').length, [searchFiltered]);
 
-  // Days ago helper
-  function daysAgo(dateStr: string | undefined): number | null {
-    if (!dateStr) return null;
-    const diff = Date.now() - new Date(dateStr).getTime();
-    return Math.max(0, Math.floor(diff / 86_400_000));
-  }
-
   return (
     <div className="flex h-screen flex-1 flex-col overflow-hidden bg-[#f4f3f8] dark:bg-slate-950">
       {slipPreview && (
@@ -409,7 +391,6 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
             ] as { key: OrderStatus | 'all'; label: string }[]
           ).map(({ key, label }) => {
             const isActive = statusTab === key;
-            const dot = key !== 'all' ? STATUS_CONFIG[key].dotCls : null;
             return (
               <button
                 key={key}
@@ -422,9 +403,6 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
                     : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200')
                 }
               >
-                {dot && (
-                  <span className={'h-2 w-2 shrink-0 rounded-full ' + dot} />
-                )}
                 {label}
                 <span className={
                   'text-sm font-semibold tabular-nums ' +
@@ -628,7 +606,6 @@ function shortId(str: string): string {
 function OrderRow({
   order: o,
   rowNum,
-  daysAgo,
   t,
   onGoToChat,
   onSlipPreview,
@@ -642,7 +619,6 @@ function OrderRow({
   const hasSlipImg = Boolean(o.slipImageUrl?.trim());
   const color = avatarColor(o.customer);
   const cstId = shortId(o.customer + o.shop);
-  const { dotCls } = STATUS_CONFIG[o.status];
   const payBadge = PAYMENT_BADGE[o.status];
 
   return (
@@ -681,11 +657,8 @@ function OrderRow({
       {/* Status */}
       <td className="px-4 py-4">
         <div className="flex flex-col gap-1">
-          <span className="inline-flex items-center gap-1.5">
-            <span className={'h-2 w-2 shrink-0 rounded-full ' + dotCls} />
-            <span className="text-[12px] font-medium text-slate-700 dark:text-slate-300">
-              {t(STATUS_CONFIG[o.status].labelKey)}
-            </span>
+          <span className="text-[12px] font-medium text-slate-700 dark:text-slate-300">
+            {t(STATUS_CONFIG[o.status].labelKey)}
           </span>
           {hasSlipImg && (
             <button
