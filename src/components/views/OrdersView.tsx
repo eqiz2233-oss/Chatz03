@@ -51,7 +51,7 @@ const FULFILLMENT_BADGE: Record<OrderStatus, { labelKey: string; cls: string }> 
 type SortKey = 'id' | 'amount' | 'date' | 'customer' | 'status';
 type SortDir = 'asc' | 'desc';
 
-const STATUS_KEYS: OrderStatus[] = ['pending', 'paid', 'shipped', 'cancelled'];
+const STATUS_KEYS: OrderStatus[] = ['shipped', 'paid', 'pending', 'cancelled'];
 
 // ─── Filter state ─────────────────────────────────────────────────────────────
 
