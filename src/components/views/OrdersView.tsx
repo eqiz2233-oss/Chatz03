@@ -704,11 +704,16 @@ function OrderRow({
         </div>
       </td>
 
-      {/* Channel */}
+      {/* Channel — click to open chat */}
       <td className="px-4 py-4 text-center">
-        <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800">
+        <button
+          type="button"
+          onClick={() => onGoToChat(o)}
+          title="ไปที่แชท"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 transition hover:bg-brand-100 hover:ring-2 hover:ring-brand-300 dark:bg-slate-800 dark:hover:bg-brand-900/50 dark:hover:ring-brand-700"
+        >
           <ChannelIcon channel={o.channel} className="h-4 w-4" />
-        </span>
+        </button>
       </td>
 
       {/* Amount */}
