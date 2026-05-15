@@ -341,8 +341,6 @@ export function ShopBrainView() {
           setMode('list');
         }}
         slotsRemaining={slotsRemaining}
-        slotLimit={SHOP_PRODUCT_SLOT_LIMIT}
-        usedSlots={products.length}
         onSaveAsTemplate={saveCurrentAsTemplate}
       />
     );
@@ -505,8 +503,6 @@ function AddForm({
   onSave,
   onBack,
   slotsRemaining,
-  slotLimit,
-  usedSlots,
   onSaveAsTemplate,
 }: {
   form: FormState;
@@ -515,8 +511,6 @@ function AddForm({
   onSave: () => void;
   onBack: () => void;
   slotsRemaining: number;
-  slotLimit: number;
-  usedSlots: number;
   onSaveAsTemplate: (name: string, emoji: string) => void;
 }) {
   const [saveTplOpen, setSaveTplOpen] = useState(false);
@@ -599,7 +593,7 @@ function AddForm({
       <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-10 md:px-10">
         <div className="mx-auto flex max-w-6xl flex-col gap-6 lg:flex-row">
 
-          {/* ── Left rail: thumbnail / status / quota ───────────────── */}
+          {/* ── Left rail: thumbnail / stock (optional) ───────────────── */}
           <aside className="w-full shrink-0 space-y-5 lg:w-[280px]">
 
             {/* Thumbnail */}
@@ -617,38 +611,22 @@ function AddForm({
               </p>
             </div>
 
-            {/* Status */}
+            {/* Stock — optional */}
             <div className={sectionClass}>
-              <div className="mb-3 flex items-center justify-between">
-                <h3 className="text-base font-bold text-slate-900 dark:text-white">สถานะ</h3>
-                <span
-                  className={
-                    'h-2.5 w-2.5 rounded-full ' +
-                    (hasValidCore
-                      ? 'bg-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-900'
-                      : 'bg-amber-400 ring-2 ring-amber-200 dark:ring-amber-900')
-                  }
-                  aria-label={hasValidCore ? 'พร้อมบันทึก' : 'ข้อมูลยังไม่ครบ'}
-                />
-              </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                {hasValidCore ? 'พร้อมบันทึก' : 'ยังไม่ครบ — ต้องมีชื่อ + ราคา + ตัวเลือก'}
-              </p>
-            </div>
-
-            {/* Quota */}
-            <div className={sectionClass}>
-              <h3 className="mb-3 text-base font-bold text-slate-900 dark:text-white">โควต้า</h3>
-              <div className="flex items-baseline gap-1.5">
-                <span className={
-                  'text-2xl font-extrabold tabular-nums ' +
-                  (slotsRemaining > 0 ? 'text-slate-900 dark:text-white' : 'text-amber-600 dark:text-amber-400')
-                }>
-                  {slotsRemaining}
-                </span>
-                <span className="text-xs text-slate-400 dark:text-slate-500">/ {slotLimit} ชิ้น</span>
-              </div>
-              <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">ใช้แล้ว {usedSlots} ชิ้น</p>
+              <h3 className="mb-1 text-base font-bold text-slate-900 dark:text-white">สต๊อก</h3>
+              <p className="mb-3 text-[11px] text-slate-400 dark:text-slate-500">ไม่บังคับ — เว้นว่างได้</p>
+              <label className="sr-only" htmlFor="shop-product-stock">
+                จำนวนสต๊อก
+              </label>
+              <input
+                id="shop-product-stock"
+                type="number"
+                min={0}
+                value={form.stock}
+                onChange={(e) => setForm((f) => ({ ...f, stock: e.target.value }))}
+                placeholder="เช่น 120"
+                className={inputClass}
+              />
             </div>
           </aside>
 
@@ -800,33 +778,17 @@ function AddForm({
               )}
             </section>
 
-            {/* Extras: selling points + stock */}
+            {/* Extras: selling points */}
             <section className={sectionClass}>
-              <h2 className="mb-5 text-lg font-bold text-slate-900 dark:text-white">จุดเด่น &amp; สต๊อก</h2>
-              <div className="space-y-4">
-                <div>
-                  <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">จุดเด่น</label>
-                  <textarea
-                    value={form.sellingPoints}
-                    onChange={(e) => setForm((f) => ({ ...f, sellingPoints: e.target.value }))}
-                    placeholder="เช่น ส่งไว, ผ้านุ่ม, กันน้ำ"
-                    rows={2}
-                    className={'resize-none ' + inputClass}
-                  />
-                </div>
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="col-span-3 sm:col-span-1">
-                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">สต๊อก</label>
-                    <input
-                      type="number"
-                      value={form.stock}
-                      onChange={(e) => setForm((f) => ({ ...f, stock: e.target.value }))}
-                      placeholder="ไม่บังคับ"
-                      className={inputClass}
-                    />
-                  </div>
-                </div>
-              </div>
+              <h2 className="mb-5 text-lg font-bold text-slate-900 dark:text-white">จุดเด่น</h2>
+              <textarea
+                value={form.sellingPoints}
+                onChange={(e) => setForm((f) => ({ ...f, sellingPoints: e.target.value }))}
+                placeholder="เช่น ส่งไว, ผ้านุ่ม, กันน้ำ"
+                rows={2}
+                aria-label="จุดเด่น"
+                className={'resize-none ' + inputClass}
+              />
             </section>
           </div>
         </div>
