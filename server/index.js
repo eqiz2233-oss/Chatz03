@@ -263,7 +263,10 @@ function messengerProfilePicFromGraph(d) {
 /** Messenger Page inbox: PSID profile uses first_name/last_name (not always `name`). */
 async function enrichFbProfile(psid, thread, pageId) {
   const tok = pageId ? tokenForPageId(String(pageId)) : primaryPageAccessToken();
-  if (!tok) return;
+  if (!tok) {
+    thread.profileError = 'NO_PAGE_TOKEN';
+    return;
+  }
   try {
     const url =
       `https://graph.facebook.com/${fbConfig.apiVersion}/${encodeURIComponent(psid)}` +
@@ -272,17 +275,28 @@ async function enrichFbProfile(psid, thread, pageId) {
     const r = await fetch(url);
     const d = await r.json();
     if (d?.error) {
-      console.warn('FB getProfile error:', d.error?.message || d.error);
+      // Surface FB Graph error codes so the UI / Settings page can diagnose
+      // why backfill is failing without needing server logs. Common codes:
+      //   190 = invalid/expired access token
+      //   100 = permission missing (`pages_messaging` or `pages_show_list`)
+      //   200 = user hasn't messaged this page in 24h (Page-Scoped ID locked)
+      const code = d.error.code;
+      const msg = d.error.message || String(d.error);
+      console.warn(`FB getProfile error [code=${code}] psid=${psid}:`, msg);
+      thread.profileError = `FB#${code}: ${msg}`;
       return;
     }
     const display = messengerDisplayNameFromGraph(d);
     if (display) thread.displayName = display;
     const pic = messengerProfilePicFromGraph(d);
     if (pic) thread.pictureUrl = pic;
+    // Clear any previous error now that we got real data.
+    if (display || pic) thread.profileError = null;
     thread.updatedAt = new Date().toISOString();
     markChatStateDirty();
   } catch (e) {
     console.warn('FB getProfile failed:', e?.message || e);
+    thread.profileError = `network: ${e?.message || e}`;
   }
 }
 
@@ -435,9 +449,15 @@ function fbThreadToApiConversation(thread) {
   const isIg = thread.channel === 'ig';
   const id = isIg ? `ig:user:${thread.targetId}` : `fb:user:${thread.targetId}`;
   const last = thread.messages[thread.messages.length - 1];
+  // Friendly fallback when the Graph API hasn't returned a real name yet.
+  // Old format "FB • 21015838" read as a raw system ID to sellers; the new
+  // form uses Thai user-friendly wording with just the last 4 digits — short
+  // enough to read at a glance, unique enough to distinguish two pending
+  // backfills. looksFallbackDisplayName() matches BOTH formats for back-compat
+  // with persisted chat-store data.
   const fallback = isIg
-    ? `IG • ${String(thread.targetId).slice(-8)}`
-    : `FB • ${String(thread.targetId).slice(-8)}`;
+    ? `ลูกค้า Instagram #${String(thread.targetId).slice(-4)}`
+    : `ลูกค้า Facebook #${String(thread.targetId).slice(-4)}`;
   const seedColor = isIg ? 'E4405F' : '1877F2';
   const name = thread.displayName || fallback;
   const avatar =
@@ -469,8 +489,11 @@ function looksFallbackDisplayName(name, channel) {
   if (!name || typeof name !== 'string') return true;
   const s = name.trim();
   if (!s) return true;
-  if (channel === 'ig') return /^IG\s+•\s+/i.test(s);
-  return /^FB\s+•\s+/i.test(s);
+  if (channel === 'ig') {
+    // Matches both old "IG • 21015838" and new "ลูกค้า Instagram #5838".
+    return /^IG\s+•\s+/i.test(s) || /^ลูกค้า\s+Instagram\s+#/i.test(s);
+  }
+  return /^FB\s+•\s+/i.test(s) || /^ลูกค้า\s+Facebook\s+#/i.test(s);
 }
 
 function scheduleFbProfileBackfill() {
@@ -513,15 +536,26 @@ function toIsoOrNow(v) {
 
 function normalizeThreadMessages(messages) {
   if (!Array.isArray(messages)) return [];
-  return messages.map((m) => ({
-    id: String(m?.id || crypto.randomUUID()),
-    receivedAt: toIsoOrNow(m?.receivedAt),
-    sender: m?.sender === 'agent' || m?.sender === 'ai' ? m.sender : 'customer',
-    text: typeof m?.text === 'string' ? m.text : undefined,
-    image: typeof m?.image === 'string' ? m.image : undefined,
-    video: typeof m?.video === 'string' ? m.video : undefined,
-    meta: m?.meta && typeof m.meta === 'object' ? m.meta : undefined,
-  }));
+  return messages.map((m) => {
+    // Strip legacy `meta.slip` with status === 'failed' — those were
+    // attached to non-slip images (product photos etc.) by the old
+    // maybeAttachSlip behavior. The fixed version no longer attaches
+    // failed results, so loading old chat-store.json data should drop them.
+    let meta = m?.meta && typeof m.meta === 'object' ? m.meta : undefined;
+    if (meta?.slip?.status === 'failed') {
+      const { slip: _drop, ...rest } = meta;
+      meta = Object.keys(rest).length ? rest : undefined;
+    }
+    return {
+      id: String(m?.id || crypto.randomUUID()),
+      receivedAt: toIsoOrNow(m?.receivedAt),
+      sender: m?.sender === 'agent' || m?.sender === 'ai' ? m.sender : 'customer',
+      text: typeof m?.text === 'string' ? m.text : undefined,
+      image: typeof m?.image === 'string' ? m.image : undefined,
+      video: typeof m?.video === 'string' ? m.video : undefined,
+      meta,
+    };
+  });
 }
 
 function serializeChatState() {
@@ -860,6 +894,16 @@ async function fetchLineMessageBytes(messageId) {
  * Run slip verification for a freshly-received image, persist the record, and
  * mutate the chat message in place so it carries `meta.slip`. Errors are
  * swallowed — the chat keeps working even if slip checking is down.
+ *
+ * IMPORTANT: A `failed` result is NOT attached to the message anymore.
+ * Customers send all kinds of images (product photos, Pokémon cards, selfies)
+ * and EasySlip returns VALIDATION_ERROR for anything that isn't a transfer
+ * slip. Attaching a "slip failed" card to every non-slip image was misleading
+ * sellers into thinking real customers were trying to cheat. Now: if the API
+ * can't extract a slip, the image just renders as a normal photo.
+ *
+ * The record is still persisted in the slips store for the admin's Slips
+ * page, so they can audit verification attempts and retry manually if needed.
  */
 async function maybeAttachSlip({
   channel,
@@ -881,7 +925,12 @@ async function maybeAttachSlip({
       customerAvatar: thread.pictureUrl || '',
       imageUrl: imageUrl || null,
     });
-    message.meta = { ...(message.meta || {}), slip: result };
+    // Only attach the slip card to the chat message when verification
+    // actually produced useful info. `failed` = it wasn't a slip → leave
+    // the image as a regular photo.
+    if (result?.status === 'verified' || result?.status === 'duplicate' || result?.status === 'pending') {
+      message.meta = { ...(message.meta || {}), slip: result };
+    }
     thread.updatedAt = new Date().toISOString();
     markChatStateDirty();
 

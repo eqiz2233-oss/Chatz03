@@ -9,6 +9,15 @@ export function SlipCard({ slip }: { slip: SlipResult }) {
     return <MockSlipCard slip={slip} t={t} />;
   }
 
+  // `failed` is a degenerate state — the image wasn't a slip, or EasySlip
+  // couldn't read it. The server now refuses to attach `failed` results to
+  // messages (see maybeAttachSlip), but legacy data from chat-store.json may
+  // still contain them. Render a tiny inline notice instead of the misleading
+  // fake "verified-looking" preview card.
+  if (slip.status === 'failed') {
+    return null;
+  }
+
   const label = t(`slipCard.label.${slip.status}`);
 
   const style = {
