@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { I } from '../Icons';
 
 export interface ProductOptionGroup {
@@ -15,6 +15,8 @@ interface Product {
   sellingPoints: string;
   stock?: number;
   imageEmoji: string;
+  /** Data URL or remote URL from user upload */
+  imageUrl?: string;
   aiReady: boolean;
 }
 
@@ -140,6 +142,8 @@ interface FormState {
   description: string;
   sellingPoints: string;
   stock: string;
+  /** Data URL from file picker / drag-drop */
+  imageUrl: string;
 }
 
 const emptyOptionRow = (): OptionGroupFormRow => ({ id: newId('og'), label: '', valuesInput: '' });
@@ -160,6 +164,7 @@ function productToFormState(p: Product): FormState {
     description: p.description,
     sellingPoints: p.sellingPoints,
     stock: p.stock != null ? String(p.stock) : '',
+    imageUrl: p.imageUrl ?? '',
   };
 }
 
@@ -200,6 +205,7 @@ const BLANK: FormState = {
   description: '',
   sellingPoints: '',
   stock: '',
+  imageUrl: '',
 };
 
 function formatOptionSummary(groups: ProductOptionGroup[]): string {
@@ -279,7 +285,12 @@ export function ShopBrainView() {
       setProducts((list) =>
         list.map((p) => {
           if (p.id !== editingId) return p;
-          updated = { ...body, id: editingId, imageEmoji: p.imageEmoji };
+          updated = {
+            ...body,
+            id: editingId,
+            imageEmoji: p.imageEmoji,
+            imageUrl: form.imageUrl.trim() ? form.imageUrl.trim() : undefined,
+          };
           return updated;
         }),
       );
@@ -290,6 +301,7 @@ export function ShopBrainView() {
         ...body,
         id: 'p' + Date.now(),
         imageEmoji: '📦',
+        imageUrl: form.imageUrl.trim() ? form.imageUrl.trim() : undefined,
       };
       setProducts((prev) => [...prev, fresh]);
       void syncProductToServer(fresh);
@@ -416,6 +428,7 @@ export function ShopBrainView() {
         {/* RIGHT — add/edit form */}
         <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-slate-700 dark:bg-slate-900 dark:shadow-none">
           <AddForm
+            key={editingId ?? 'new'}
             form={form}
             setForm={setForm}
             isEdit={editingId !== null}
@@ -461,8 +474,12 @@ function ShopListCard({
           : 'border-slate-200 bg-white hover:border-brand-200 hover:bg-brand-50/30 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-brand-700 dark:hover:bg-brand-950/20')
       }
     >
-      <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-slate-50 text-xl ring-1 ring-slate-100 dark:bg-slate-800 dark:ring-slate-700">
-        {p.imageEmoji}
+      <div className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-50 text-xl ring-1 ring-slate-100 dark:bg-slate-800 dark:ring-slate-700">
+        {p.imageUrl ? (
+          <img src={p.imageUrl} alt="" className="h-full w-full object-cover" />
+        ) : (
+          p.imageEmoji
+        )}
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-2">
@@ -538,6 +555,35 @@ function AddForm({
   slotsRemaining: number;
   onSaveAsTemplate: (name: string, emoji: string) => void;
 }) {
+  const imageInputId = useId();
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const [imageError, setImageError] = useState<string | null>(null);
+
+  const applyImageFile = (file: File | undefined) => {
+    if (!file) return;
+    const mimeOk = file.type === 'image/png' || file.type === 'image/jpeg';
+    const extOk = /\.(jpe?g|png)$/i.test(file.name);
+    if (!mimeOk && !extOk) {
+      setImageError('รองรับเฉพาะไฟล์ .png, .jpg, .jpeg');
+      return;
+    }
+    const maxBytes = 2 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      setImageError('ไฟล์ใหญ่เกิน 2 MB');
+      return;
+    }
+    setImageError(null);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result === 'string') {
+        setForm((f) => ({ ...f, imageUrl: result }));
+      }
+    };
+    reader.onerror = () => setImageError('อ่านไฟล์ไม่สำเร็จ');
+    reader.readAsDataURL(file);
+  };
+
   const [saveTplOpen, setSaveTplOpen] = useState(false);
   const [tplDraftName, setTplDraftName] = useState('');
   const [tplDraftEmoji, setTplDraftEmoji] = useState('👕');
@@ -586,6 +632,7 @@ function AddForm({
     form.description.trim() ||
     form.sellingPoints.trim() ||
     form.stock.trim() ||
+    form.imageUrl.trim() ||
     optionsHaveContent;
 
   return (
@@ -627,17 +674,70 @@ function AddForm({
         <div className="space-y-4 p-5">
           {/* Image upload */}
           <section>
-            <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">รูปสินค้า</label>
-            <button
-              type="button"
-              className="flex h-32 w-full cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 bg-white text-slate-400 transition hover:border-brand-300 hover:bg-brand-50/40 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-brand-500 dark:hover:bg-brand-950/30 dark:hover:text-brand-300"
+            <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200" htmlFor={imageInputId}>
+              รูปสินค้า
+            </label>
+            <input
+              ref={imageInputRef}
+              id={imageInputId}
+              type="file"
+              accept="image/png,image/jpeg,.png,.jpg,.jpeg"
+              className="sr-only"
+              onChange={(e) => {
+                applyImageFile(e.target.files?.[0]);
+                e.target.value = '';
+              }}
+            />
+            <div
+              role="button"
+              tabIndex={0}
+              aria-label="อัปโหลดรูปสินค้า ลากมาวางหรือคลิก"
+              onClick={() => imageInputRef.current?.click()}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  imageInputRef.current?.click();
+                }
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                applyImageFile(e.dataTransfer.files?.[0]);
+              }}
+              className="flex h-32 w-full cursor-pointer flex-col items-center justify-center gap-2 overflow-hidden rounded-xl border-2 border-dashed border-slate-200 bg-white px-2 text-slate-400 transition hover:border-brand-300 hover:bg-brand-50/40 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-brand-500 dark:hover:bg-brand-950/30 dark:hover:text-brand-300"
             >
-              <I.Image className="h-6 w-6 opacity-80" />
-              <span className="text-sm font-medium">ลากมาวาง หรือคลิก</span>
-            </button>
-            <p className="mt-1.5 text-[11px] text-slate-400 dark:text-slate-500">
-              รองรับ .png, .jpg, .jpeg
-            </p>
+              {form.imageUrl ? (
+                <img src={form.imageUrl} alt="" className="max-h-28 max-w-full rounded-lg object-contain" />
+              ) : (
+                <>
+                  <I.Image className="h-6 w-6 opacity-80" />
+                  <span className="text-sm font-medium">ลากมาวาง หรือคลิก</span>
+                </>
+              )}
+            </div>
+            {form.imageUrl ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setImageError(null);
+                  setForm((f) => ({ ...f, imageUrl: '' }));
+                }}
+                className="mt-2 text-left text-xs font-medium text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400"
+              >
+                ลบรูป
+              </button>
+            ) : null}
+            {imageError ? (
+              <p className="mt-1.5 text-[11px] text-rose-600 dark:text-rose-400">{imageError}</p>
+            ) : (
+              <p className="mt-1.5 text-[11px] text-slate-400 dark:text-slate-500">
+                {form.imageUrl ? 'คลิกหรือลากไฟล์ใหม่เพื่อเปลี่ยนรูป' : 'รองรับ .png, .jpg, .jpeg · สูงสุด 2 MB'}
+              </p>
+            )}
           </section>
 
           {/* Name + Price */}
