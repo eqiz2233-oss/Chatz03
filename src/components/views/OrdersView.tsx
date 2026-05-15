@@ -16,18 +16,26 @@ import { resolveConversationIdForOrder } from '../../lib/orderInbox';
 
 // ─── Status config ────────────────────────────────────────────────────────────
 
-const STATUS_CONFIG: Record<OrderStatus, { labelKey: string }> = {
+const STATUS_CONFIG: Record<OrderStatus, { labelKey: string; pillCls: string }> = {
   pending: {
     labelKey: 'orders.col.pending',
+    pillCls:
+      'bg-amber-500 text-white shadow-md ring-2 ring-amber-200/90 dark:bg-amber-500 dark:text-white dark:ring-amber-400/60',
   },
   paid: {
     labelKey: 'orders.col.paid',
+    pillCls:
+      'bg-blue-600 text-white shadow-md ring-2 ring-blue-200/90 dark:bg-blue-500 dark:text-white dark:ring-blue-400/60',
   },
   shipped: {
     labelKey: 'orders.col.shipped',
+    pillCls:
+      'bg-emerald-600 text-white shadow-md ring-2 ring-emerald-200/90 dark:bg-emerald-500 dark:text-white dark:ring-emerald-400/60',
   },
   cancelled: {
     labelKey: 'orders.col.cancelled',
+    pillCls:
+      'bg-slate-600 text-white shadow-md ring-2 ring-slate-300/80 dark:bg-slate-500 dark:text-white dark:ring-slate-400/50',
   },
 };
 
@@ -483,7 +491,7 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
                   { key: 'customer' as SortKey, label: t('orders.th.customer'), cls: '' },
                   { key: 'id' as SortKey,       label: t('orders.th.id'),       cls: 'w-32' },
                   { key: null,                  label: t('orders.th.product'),  cls: '' },
-                  { key: 'status' as SortKey,   label: t('orders.th.status'),   cls: 'w-36' },
+                  { key: 'status' as SortKey,   label: t('orders.th.status'),   cls: 'min-w-[10rem]' },
                   { key: null,                  label: t('orders.th.channel'),  cls: 'w-20 text-center' },
                   { key: 'amount' as SortKey,   label: t('orders.th.amount'),   cls: 'w-28 text-right' },
                   { key: 'date' as SortKey,     label: t('orders.th.date'),     cls: 'w-28' },
@@ -654,10 +662,15 @@ function OrderRow({
         <div className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500">×{o.qty}</div>
       </td>
 
-      {/* Status */}
+      {/* Status — high-contrast pill (primary scan target) */}
       <td className="px-4 py-4">
-        <div className="flex flex-col gap-1">
-          <span className="text-[12px] font-medium text-slate-700 dark:text-slate-300">
+        <div className="flex flex-col items-start gap-1.5">
+          <span
+            className={
+              'inline-flex max-w-full items-center whitespace-nowrap rounded-full px-3 py-1.5 text-[13px] font-bold leading-none tracking-tight ' +
+              STATUS_CONFIG[o.status].pillCls
+            }
+          >
             {t(STATUS_CONFIG[o.status].labelKey)}
           </span>
           {hasSlipImg && (
