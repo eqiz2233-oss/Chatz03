@@ -322,6 +322,7 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
   const paidShippedCount = useMemo(() => searchFiltered.filter((o) => o.status === 'shipped').length, [searchFiltered]);
   const pendingCount = countByStatus.pending;
   const cancelledCount = countByStatus.cancelled;
+  const paidNotShippedCount = useMemo(() => searchFiltered.filter((o) => o.status === 'paid').length, [searchFiltered]);
 
   // Days ago helper
   function daysAgo(dateStr: string | undefined): number | null {
@@ -387,11 +388,11 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
           <StatCard
             icon={<I.Bell className="h-5 w-5 text-amber-600 dark:text-amber-400" />}
             iconBg="bg-amber-50 ring-amber-200/80 dark:bg-amber-950/40 dark:ring-amber-800"
-            label="รอชำระ + ยกเลิก"
-            value={pendingCount + cancelledCount}
-            valueClass={pendingCount + cancelledCount > 0 ? 'text-amber-600 dark:text-amber-400' : undefined}
-            isActive={statusTab === 'pending' || statusTab === 'cancelled'}
-            onClick={() => setStatusTab('pending')}
+            label="ยังไม่จัดส่ง"
+            value={paidNotShippedCount}
+            valueClass={paidNotShippedCount > 0 ? 'text-amber-600 dark:text-amber-400' : undefined}
+            isActive={statusTab === 'paid'}
+            onClick={() => setStatusTab('paid')}
           />
         </div>
       </div>
