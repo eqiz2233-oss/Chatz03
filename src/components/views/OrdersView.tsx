@@ -396,100 +396,97 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
         </div>
       </div>
 
-      {/* ── Status tabs + search ── */}
+      {/* ── Status tabs (own row, underline style) ── */}
       <div className="shrink-0 border-b border-slate-200/80 bg-white px-6 dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-0.5 overflow-x-auto py-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {(
-              [
-                { key: 'all' as const, label: t('orders.tab.all') },
-                ...STATUS_KEYS.map((k) => ({ key: k, label: t(STATUS_CONFIG[k].labelKey) })),
-              ] as { key: OrderStatus | 'all'; label: string }[]
-            ).map(({ key, label }) => {
-              const isActive = statusTab === key;
-              const dot = key !== 'all' ? STATUS_CONFIG[key].dotCls : null;
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => setStatusTab(key)}
-                  className={
-                    'flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ' +
-                    (isActive
-                      ? 'bg-brand-600 text-white dark:bg-brand-500'
-                      : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200')
-                  }
-                >
-                  {dot && (
-                    <span className={'h-2 w-2 shrink-0 rounded-full ' + (isActive ? 'bg-white/70' : dot)} />
-                  )}
-                  {label}
-                  <span
-                    className={
-                      'rounded-full px-1.5 py-0 text-[10px] font-semibold tabular-nums leading-5 ' +
-                      (isActive
-                        ? 'bg-white/20 text-white'
-                        : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400')
-                    }
-                  >
-                    {countByStatus[key]}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="flex shrink-0 items-center gap-2 py-3">
-            <div className="relative" ref={filterWrapRef}>
+        <div className="flex items-end gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {(
+            [
+              { key: 'all' as const, label: t('orders.tab.all') },
+              ...STATUS_KEYS.map((k) => ({ key: k, label: t(STATUS_CONFIG[k].labelKey) })),
+            ] as { key: OrderStatus | 'all'; label: string }[]
+          ).map(({ key, label }) => {
+            const isActive = statusTab === key;
+            const dot = key !== 'all' ? STATUS_CONFIG[key].dotCls : null;
+            return (
               <button
+                key={key}
                 type="button"
-                onClick={() => setFilterOpen((v) => !v)}
-                aria-expanded={filterOpen}
+                onClick={() => setStatusTab(key)}
                 className={
-                  'relative flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] font-medium transition ' +
-                  (activeFilterCount > 0
-                    ? 'border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-700 dark:bg-brand-950/40 dark:text-brand-300'
-                    : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800')
+                  'flex shrink-0 items-center gap-2 border-b-2 px-4 pb-3 pt-3.5 text-sm font-medium transition-colors ' +
+                  (isActive
+                    ? 'border-brand-600 text-brand-700 dark:border-brand-400 dark:text-brand-300'
+                    : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200')
                 }
               >
-                <I.Filter className="h-3.5 w-3.5" />
-                {t('orders.filter')}
-                {activeFilterCount > 0 && (
-                  <span className="grid h-4 min-w-4 place-items-center rounded-full bg-brand-600 px-1 text-[10px] font-bold text-white">
-                    {activeFilterCount > 9 ? '9+' : activeFilterCount}
-                  </span>
+                {dot && (
+                  <span className={'h-2 w-2 shrink-0 rounded-full ' + dot} />
                 )}
+                {label}
+                <span className={
+                  'text-sm font-semibold tabular-nums ' +
+                  (isActive ? 'text-brand-700 dark:text-brand-300' : 'text-slate-400 dark:text-slate-500')
+                }>
+                  {countByStatus[key]}
+                </span>
               </button>
-              {filterOpen && (
-                <FilterPanel
-                  t={t}
-                  filters={filters}
-                  setFilters={setFilters}
-                  onClear={clearFilters}
-                  onClose={() => setFilterOpen(false)}
-                  shops={shops}
-                />
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── Filter + search bar ── */}
+      <div className="shrink-0 border-b border-slate-200/60 bg-white px-6 py-2.5 dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex items-center gap-2">
+          <div className="relative" ref={filterWrapRef}>
+            <button
+              type="button"
+              onClick={() => setFilterOpen((v) => !v)}
+              aria-expanded={filterOpen}
+              className={
+                'relative flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition ' +
+                (activeFilterCount > 0
+                  ? 'border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-700 dark:bg-brand-950/40 dark:text-brand-300'
+                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800')
+              }
+            >
+              <I.Filter className="h-3.5 w-3.5" />
+              {t('orders.filter')}
+              {activeFilterCount > 0 && (
+                <span className="grid h-4 min-w-4 place-items-center rounded-full bg-brand-600 px-1 text-[10px] font-bold text-white">
+                  {activeFilterCount > 9 ? '9+' : activeFilterCount}
+                </span>
               )}
-            </div>
-            <div className="relative">
-              <I.Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder={t('orders.search')}
-                className="w-48 rounded-lg border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-xs text-slate-900 outline-none focus:border-brand-400 focus:bg-white focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:bg-slate-900 dark:focus:ring-brand-900/40"
+            </button>
+            {filterOpen && (
+              <FilterPanel
+                t={t}
+                filters={filters}
+                setFilters={setFilters}
+                onClear={clearFilters}
+                onClose={() => setFilterOpen(false)}
+                shops={shops}
               />
-            </div>
-            {activeFilterCount > 0 && (
-              <button
-                type="button"
-                onClick={clearFilters}
-                className="flex shrink-0 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-500 transition hover:bg-slate-50 hover:text-rose-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:text-rose-400"
-              >
-                <I.X className="h-3 w-3" />
-                {t('orders.filter.reset')}
-              </button>
             )}
+          </div>
+          {activeFilterCount > 0 && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="flex shrink-0 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-500 transition hover:bg-slate-50 hover:text-rose-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:text-rose-400"
+            >
+              <I.X className="h-3 w-3" />
+              {t('orders.filter.reset')}
+            </button>
+          )}
+          <div className="relative ml-auto">
+            <I.Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={t('orders.search')}
+              className="w-56 rounded-lg border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-xs text-slate-900 outline-none focus:border-brand-400 focus:bg-white focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:bg-slate-900 dark:focus:ring-brand-900/40"
+            />
           </div>
         </div>
       </div>
