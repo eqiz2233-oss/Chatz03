@@ -1,10 +1,12 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type Dispatch,
+  type RefObject,
   type SetStateAction,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -217,6 +219,15 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const filterWrapRef = useRef<HTMLDivElement>(null);
+  const filterPanelRef = useRef<HTMLDivElement>(null);
+  const [filterPanelPos, setFilterPanelPos] = useState<{ top: number; right: number } | null>(null);
+
+  const syncFilterPanelPos = useCallback(() => {
+    const el = filterWrapRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setFilterPanelPos({ top: r.bottom + 8, right: window.innerWidth - r.right });
+  }, []);
 
   // Pull persisted orders from the backend on mount and after every create.
   const loadOrders = useCallback(async () => {
@@ -317,10 +328,33 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
   const activeFilterCount = useMemo(() => countActiveFilters(filters), [filters]);
   const shops = useMemo(() => [...new Set(list.map((o) => o.shop))].sort(), [list]);
 
+  useLayoutEffect(() => {
+    if (!filterOpen) {
+      setFilterPanelPos(null);
+      return;
+    }
+    syncFilterPanelPos();
+  }, [filterOpen, syncFilterPanelPos]);
+
+  useEffect(() => {
+    if (!filterOpen) return;
+    const on = () => {
+      syncFilterPanelPos();
+    };
+    window.addEventListener('resize', on);
+    window.addEventListener('scroll', on, true);
+    return () => {
+      window.removeEventListener('resize', on);
+      window.removeEventListener('scroll', on, true);
+    };
+  }, [filterOpen, syncFilterPanelPos]);
+
   useEffect(() => {
     if (!filterOpen) return;
     const close = (ev: PointerEvent) => {
-      if (filterWrapRef.current?.contains(ev.target as Node)) return;
+      const t = ev.target as Node;
+      if (filterWrapRef.current?.contains(t)) return;
+      if (filterPanelRef.current?.contains(t)) return;
       setFilterOpen(false);
     };
     document.addEventListener('pointerdown', close, true);
@@ -495,69 +529,76 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
       {/* ── Filter + search bar ── */}
       <div className="shrink-0 border-b border-slate-200/60 bg-white px-6 py-2.5 dark:border-slate-800 dark:bg-slate-900">
         <div className="flex items-center gap-2">
-          <div className="relative" ref={filterWrapRef}>
-            <button
-              type="button"
-              onClick={() => setFilterOpen((v) => !v)}
-              aria-expanded={filterOpen}
-              className={
-                'relative flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition ' +
-                (activeFilterCount > 0
-                  ? 'border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-700 dark:bg-brand-950/40 dark:text-brand-300'
-                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800')
-              }
-            >
-              <I.Filter className="h-3.5 w-3.5" />
-              {t('orders.filter')}
-              {activeFilterCount > 0 && (
-                <span className="grid h-4 min-w-4 place-items-center rounded-full bg-brand-600 px-1 text-[10px] font-bold text-white">
-                  {activeFilterCount > 9 ? '9+' : activeFilterCount}
-                </span>
-              )}
-            </button>
-            {filterOpen && (
-              <FilterPanel
-                t={t}
-                filters={filters}
-                setFilters={setFilters}
-                onClear={clearFilters}
-                onClose={() => setFilterOpen(false)}
-                shops={shops}
+          <div className="ml-auto flex items-center gap-2">
+            <div className="relative">
+              <I.Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={t('orders.search')}
+                title={t('orders.search')}
+                className="w-64 rounded-lg border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-xs text-slate-900 outline-none focus:border-brand-400 focus:bg-white focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:bg-slate-900 dark:focus:ring-brand-900/40"
               />
-            )}
-          </div>
-          {activeFilterCount > 0 && (
-            <button
-              type="button"
-              onClick={clearFilters}
-              className="flex shrink-0 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-500 transition hover:bg-slate-50 hover:text-rose-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:text-rose-400"
-            >
-              <I.X className="h-3 w-3" />
-              {t('orders.filter.reset')}
-            </button>
-          )}
-          <div className="relative ml-auto">
-            <I.Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={t('orders.search')}
-              title="ค้นได้ด้วย: ชื่อลูกค้า · ชื่อสินค้า · เลขออเดอร์ · ร้าน · ยอดเงิน (890, >500, <2000, 500-1000) · วันที่ (2026-05-10, 05-10, 2026)"
-              className="w-64 rounded-lg border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-xs text-slate-900 outline-none focus:border-brand-400 focus:bg-white focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:bg-slate-900 dark:focus:ring-brand-900/40"
-            />
-            {search && (
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                  aria-label="ล้างค้นหา"
+                >
+                  <I.X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+            {activeFilterCount > 0 && (
               <button
                 type="button"
-                onClick={() => setSearch('')}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                aria-label="ล้างค้นหา"
+                onClick={clearFilters}
+                className="flex shrink-0 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-500 transition hover:bg-slate-50 hover:text-rose-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:text-rose-400"
               >
                 <I.X className="h-3 w-3" />
+                {t('orders.filter.reset')}
               </button>
             )}
+            <div className="relative shrink-0" ref={filterWrapRef}>
+              <button
+                type="button"
+                onClick={() => setFilterOpen((v) => !v)}
+                aria-expanded={filterOpen}
+                className={
+                  'relative flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition ' +
+                  (activeFilterCount > 0
+                    ? 'border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-700 dark:bg-brand-950/40 dark:text-brand-300'
+                    : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800')
+                }
+              >
+                <I.Filter className="h-3.5 w-3.5" />
+                {t('orders.filter')}
+                {activeFilterCount > 0 && (
+                  <span className="grid h-4 min-w-4 place-items-center rounded-full bg-brand-600 px-1 text-[10px] font-bold text-white">
+                    {activeFilterCount > 9 ? '9+' : activeFilterCount}
+                  </span>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </div>
+      {filterOpen &&
+        filterPanelPos != null &&
+        createPortal(
+          <FilterPanel
+            panelRef={filterPanelRef}
+            fixedStyle={filterPanelPos}
+            t={t}
+            filters={filters}
+            setFilters={setFilters}
+            onClear={clearFilters}
+            onClose={() => setFilterOpen(false)}
+            shops={shops}
+          />,
+          document.body,
+        )}
 
       {/* ── Bulk action bar ── */}
       {selectedIds.length > 0 && (
@@ -811,11 +852,17 @@ function OrderRow({
         </div>
       </td>
 
-      {/* Product + order ID */}
-      <td className="px-4 py-4">
-        <div className="flex items-center gap-3">
+      {/* Product + order ID — whole cell opens chat */}
+      <td className="p-0">
+        <button
+          type="button"
+          onClick={() => onGoToChat(o)}
+          title={t('orders.goToChat')}
+          aria-label={`${t('orders.goToChat')} — ${o.product}`}
+          className="flex w-full min-w-0 items-center gap-3 px-4 py-4 text-left transition-colors hover:bg-brand-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-400 dark:hover:bg-brand-950/30 dark:focus-visible:ring-brand-500"
+        >
           <OrderProductThumb url={o.productImageUrl} />
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
               {o.product}
               {o.qty > 1 ? (
@@ -824,7 +871,7 @@ function OrderRow({
             </div>
             <div className="font-mono text-[11px] text-slate-400 dark:text-slate-500">{o.id}</div>
           </div>
-        </div>
+        </button>
       </td>
 
       {/* Status — high-contrast pill (primary scan target) */}
@@ -832,7 +879,7 @@ function OrderRow({
         <div className="flex flex-col items-start gap-1.5">
           <span
             className={
-              'inline-flex max-w-full items-center whitespace-nowrap rounded-full px-3 py-1.5 text-[13px] font-bold leading-none tracking-tight ' +
+              'inline-flex max-w-full items-center whitespace-nowrap rounded-md px-3 py-1.5 text-[13px] font-bold leading-none tracking-tight ' +
               STATUS_CONFIG[o.status].pillCls
             }
           >
@@ -875,6 +922,8 @@ function OrderRow({
 // ─── Advanced filter panel ────────────────────────────────────────────────────
 
 function FilterPanel({
+  panelRef,
+  fixedStyle,
   t,
   filters,
   setFilters,
@@ -882,6 +931,8 @@ function FilterPanel({
   onClose,
   shops,
 }: {
+  panelRef: RefObject<HTMLDivElement | null>;
+  fixedStyle: { top: number; right: number };
   t: (k: string, vars?: Record<string, string | number>) => string;
   filters: OrderFiltersState;
   setFilters: Dispatch<SetStateAction<OrderFiltersState>>;
@@ -894,7 +945,9 @@ function FilterPanel({
 
   return (
     <div
-      className="absolute right-0 z-[120] mt-2 w-[min(calc(100vw-2rem),20rem)] rounded-xl border border-slate-200 bg-white p-3 shadow-xl dark:border-slate-600 dark:bg-slate-900"
+      ref={panelRef}
+      style={{ top: fixedStyle.top, right: fixedStyle.right }}
+      className="fixed z-[195] w-[min(calc(100vw-2rem),20rem)] rounded-xl border border-slate-200 bg-white p-3 shadow-xl dark:border-slate-600 dark:bg-slate-900"
       role="dialog"
       aria-label={t('orders.filter')}
     >

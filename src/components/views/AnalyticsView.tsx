@@ -119,7 +119,7 @@ function FlipKPI({
           onTransitionEnd={onTransitionEnd}
           className={
             'relative h-full w-full [transform-style:preserve-3d] ' +
-            (transitionOn ? 'transition-transform duration-500 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)]' : '') +
+            (transitionOn ? 'transition-transform duration-1000 ease-in-out' : '') +
             (flipped ? ' [transform:rotateY(180deg)]' : '')
           }
         >
