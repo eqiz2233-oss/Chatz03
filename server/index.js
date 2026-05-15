@@ -60,13 +60,24 @@ const port = Number(process.env.PORT || process.env.BACKEND_PORT || 8787);
 
 const savedIntegrations = loadIntegrationsSync();
 
+// LINE channel config — env defaults can be overridden by the UI "Connect LINE"
+// form, which persists `{ channelSecret, channelAccessToken }` to kv under
+// `LINE_KV_KEY`. Hot-reloaded into `lineConfig` + `lineClient` so we never
+// have to restart the server when a shop owner pastes their credentials.
+const LINE_KV_KEY = 'line.config.v1';
 const lineConfig = {
   channelSecret: (process.env.LINE_CHANNEL_SECRET || '').trim(),
   channelAccessToken: (process.env.LINE_CHANNEL_ACCESS_TOKEN || '').trim(),
+  /** 'env' | 'ui' | null — where the currently-active credentials came from. */
+  source: null,
+  /** OA basicId + display name from /v2/bot/info, populated on successful save. */
+  botInfo: null,
 };
-
-const hasSecret = Boolean(lineConfig.channelSecret);
-const hasToken = Boolean(lineConfig.channelAccessToken);
+if (lineConfig.channelSecret || lineConfig.channelAccessToken) {
+  lineConfig.source = 'env';
+}
+function hasLineSecret() { return Boolean(lineConfig.channelSecret); }
+function hasLineToken() { return Boolean(lineConfig.channelAccessToken); }
 
 // App-level FB config (shared across all connected Pages). Re-read from process.env on each sync
 // so Railway / Docker env changes after boot (or any load-order quirk) still match the live process.
@@ -890,9 +901,82 @@ function pushEvent(item) {
 
 loadPersistedChatStateSync();
 
-const lineClient = hasToken
+let lineClient = lineConfig.channelAccessToken
   ? new line.messagingApi.MessagingApiClient({ channelAccessToken: lineConfig.channelAccessToken })
   : null;
+
+/** Rebuild the LINE messaging client when channelAccessToken changes. */
+function rebuildLineClient() {
+  if (lineConfig.channelAccessToken) {
+    lineClient = new line.messagingApi.MessagingApiClient({
+      channelAccessToken: lineConfig.channelAccessToken,
+    });
+  } else {
+    lineClient = null;
+  }
+}
+
+/** Ask LINE who the bot is (basicId + displayName + pictureUrl), to verify the
+ *  channel access token and to show the OA name in the UI. Returns null on failure. */
+async function fetchLineBotInfo(token) {
+  try {
+    const r = await fetch('https://api.line.me/v2/bot/info', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    if (!j?.userId) return null;
+    return {
+      userId: j.userId,
+      basicId: j.basicId || null,
+      displayName: j.displayName || null,
+      pictureUrl: j.pictureUrl || null,
+      chatMode: j.chatMode || null,
+      markAsReadMode: j.markAsReadMode || null,
+    };
+  } catch (e) {
+    console.warn('[LINE] fetchLineBotInfo failed:', e?.message || e);
+    return null;
+  }
+}
+
+/** Apply a new pair of secret + token, rebuild client. Also kicks an async
+ *  /bot/info fetch (non-blocking) so UI status reflects the OA identity. */
+async function applyLineConfig({ secret, token, source }) {
+  lineConfig.channelSecret = (secret || '').trim();
+  lineConfig.channelAccessToken = (token || '').trim();
+  lineConfig.source = source || null;
+  rebuildLineClient();
+  if (lineConfig.channelAccessToken) {
+    lineConfig.botInfo = await fetchLineBotInfo(lineConfig.channelAccessToken);
+  } else {
+    lineConfig.botInfo = null;
+  }
+}
+
+/** On boot, prefer the UI-saved config over env vars so the shop owner's
+ *  latest paste-and-save always wins after a redeploy. */
+async function loadPersistedLineConfig() {
+  try {
+    const saved = await kvGet(LINE_KV_KEY, null);
+    if (saved && typeof saved === 'object' && (saved.channelSecret || saved.channelAccessToken)) {
+      await applyLineConfig({
+        secret: saved.channelSecret,
+        token: saved.channelAccessToken,
+        source: 'ui',
+      });
+      // Re-fill cached bot info if it was persisted alongside
+      if (saved.botInfo && !lineConfig.botInfo) lineConfig.botInfo = saved.botInfo;
+      return;
+    }
+  } catch (e) {
+    console.warn('[LINE] loadPersistedLineConfig failed:', e?.message || e);
+  }
+  if (lineConfig.channelAccessToken) {
+    // env-only path — populate bot info opportunistically
+    lineConfig.botInfo = await fetchLineBotInfo(lineConfig.channelAccessToken);
+  }
+}
 
 function sourceKey(source) {
   if (!source) return null;
@@ -1195,8 +1279,8 @@ app.get('/api/health', (_req, res) => {
   const fbConversationsCount = Array.from(fbThreads.values()).filter((t) => t.messages.length > 0).length;
   res.json({
     ok: true,
-    lineConfigured: hasSecret,
-    lineReplyEnabled: hasToken,
+    lineConfigured: hasLineSecret(),
+    lineReplyEnabled: hasLineToken(),
     eventsBuffered: eventsBuffer.length,
     lineThreads: lineThreads.size,
     lineConversationsCount,
@@ -1313,13 +1397,24 @@ app.post('/api/line/send', express.json({ limit: '50kb' }), async (req, res) => 
   }
 });
 
+/** Dynamic LINE middleware — re-reads `lineConfig.channelSecret` on every
+ *  request so credentials pasted in the UI take effect without a restart. */
+function lineWebhookMiddleware(req, res, next) {
+  if (!lineConfig.channelSecret) {
+    // Allow request through; the handler will respond with 500 explaining
+    // that LINE isn't configured yet (clearer than a silent 401).
+    return next();
+  }
+  return line.middleware({ channelSecret: lineConfig.channelSecret })(req, res, next);
+}
+
 app.post(
   '/api/line/webhook',
   rateLimit({ bucket: 'line-webhook', limit: 120, windowMs: 60_000 }),
-  hasSecret ? line.middleware({ channelSecret: lineConfig.channelSecret }) : (_req, _res, next) => next(),
+  lineWebhookMiddleware,
   async (req, res) => {
-    if (!hasSecret) {
-      return res.status(500).json({ error: 'LINE_CHANNEL_SECRET is missing' });
+    if (!hasLineSecret()) {
+      return res.status(500).json({ error: 'LINE channel secret not configured yet — go to Settings → Connect → LINE.' });
     }
 
     const events = req.body?.events || [];
@@ -1427,6 +1522,97 @@ app.post(
     }
   },
 );
+
+// =====================================================================
+// LINE integration (Settings UI: paste channel secret + token, no env edit)
+// =====================================================================
+
+function lineWebhookUrlFor(req) {
+  return `${publicBaseUrl(req)}/api/line/webhook`;
+}
+
+/** Public-safe view of `lineConfig` — never includes the secret values. */
+function lineIntegrationStatusPayload(req) {
+  return {
+    configured: hasLineSecret(),
+    replyEnabled: hasLineToken(),
+    source: lineConfig.source,
+    botInfo: lineConfig.botInfo,
+    webhookUrl: lineWebhookUrlFor(req),
+    threadCount: lineThreads.size,
+    // Hint which env vars are present so the UI can show "using server env"
+    // vs "saved from Settings".
+    envPresent: {
+      LINE_CHANNEL_SECRET: Boolean((process.env.LINE_CHANNEL_SECRET || '').trim()),
+      LINE_CHANNEL_ACCESS_TOKEN: Boolean((process.env.LINE_CHANNEL_ACCESS_TOKEN || '').trim()),
+    },
+  };
+}
+
+app.get('/api/line/integration/status', (req, res) => {
+  res.json(lineIntegrationStatusPayload(req));
+});
+
+app.post(
+  '/api/line/integration/connect',
+  express.json({ limit: '8kb' }),
+  async (req, res) => {
+    const channelSecret = String(req.body?.channelSecret || '').trim();
+    const channelAccessToken = String(req.body?.channelAccessToken || '').trim();
+    if (!channelSecret || !channelAccessToken) {
+      return res.status(400).json({
+        error: 'ต้องกรอกทั้ง Channel Secret และ Channel Access Token',
+      });
+    }
+    // Basic shape check — LINE secrets are 32 hex chars, access tokens are
+    // long base64-ish strings. We don't want to block valid creds though, so
+    // only reject suspiciously short input.
+    if (channelSecret.length < 16 || channelAccessToken.length < 40) {
+      return res.status(400).json({
+        error: 'ข้อมูลที่กรอกดูสั้นเกินไป ตรวจสอบ Channel Secret และ Access Token อีกครั้ง',
+      });
+    }
+    // Validate the access token by calling /v2/bot/info before saving.
+    const botInfo = await fetchLineBotInfo(channelAccessToken);
+    if (!botInfo) {
+      return res.status(400).json({
+        error: 'เชื่อมไม่สำเร็จ — LINE ปฏิเสธ Access Token นี้ ตรวจสอบว่าคัดลอกมาจาก Channel ที่ถูกต้องและยัง active อยู่',
+      });
+    }
+    try {
+      await applyLineConfig({ secret: channelSecret, token: channelAccessToken, source: 'ui' });
+      lineConfig.botInfo = botInfo;
+      await kvSet(LINE_KV_KEY, {
+        channelSecret,
+        channelAccessToken,
+        botInfo,
+        savedAt: new Date().toISOString(),
+      });
+      return res.json({ ok: true, status: lineIntegrationStatusPayload(req) });
+    } catch (e) {
+      console.error('[LINE] connect failed:', e);
+      return res.status(500).json({ error: String(e?.message || e) });
+    }
+  },
+);
+
+app.post('/api/line/integration/disconnect', async (req, res) => {
+  try {
+    await kvSet(LINE_KV_KEY, null);
+    // Fall back to env if anything is set there; otherwise clear entirely.
+    const envSecret = (process.env.LINE_CHANNEL_SECRET || '').trim();
+    const envToken = (process.env.LINE_CHANNEL_ACCESS_TOKEN || '').trim();
+    await applyLineConfig({
+      secret: envSecret,
+      token: envToken,
+      source: envSecret || envToken ? 'env' : null,
+    });
+    return res.json({ ok: true, status: lineIntegrationStatusPayload(req) });
+  } catch (e) {
+    console.error('[LINE] disconnect failed:', e);
+    return res.status(500).json({ error: String(e?.message || e) });
+  }
+});
 
 // =====================================================================
 // Facebook Messenger
@@ -2834,6 +3020,7 @@ app.listen(port, '0.0.0.0', async () => {
   try {
     await initDb();
     await bootstrapAuth();
+    await loadPersistedLineConfig();
     console.log(`[db] persistence: ${hasPg ? 'Postgres (DATABASE_URL)' : 'JSON file (set DATABASE_URL for production)'}`);
   } catch (e) {
     console.error('[db] init failed:', e?.message || e);
@@ -2850,8 +3037,8 @@ app.listen(port, '0.0.0.0', async () => {
     '[FB env]',
     `verify=${fbHasVerify ? 1 : 0} pageTok=${fbConfig.fallbackPageAccessToken ? 1 : 0} appId=${fbConfig.appId ? 1 : 0} appSecret=${fbHasAppSecret ? 1 : 0}`,
   );
-  if (!hasSecret) console.warn('Missing LINE_CHANNEL_SECRET (LINE webhook + inbox sync disabled)');
-  if (!hasToken) console.warn('Missing LINE_CHANNEL_ACCESS_TOKEN (LINE push + profile disabled)');
+  if (!hasLineSecret()) console.warn('LINE channel secret not set yet — webhook + inbox sync disabled until paste-and-save in Settings → Connect.');
+  if (!hasLineToken()) console.warn('LINE channel access token not set yet — push + profile disabled until paste-and-save in Settings → Connect.');
   // Restored threads from chat-store may have null displayName — kick a
   // backfill pass so names show up before the first UI poll arrives.
   scheduleLineProfileBackfill();

@@ -1,51 +1,90 @@
 # Chatz — Product Context
 
 ## Product Purpose
-Chatz is a multi-channel chat aggregation inbox for Thai online sellers — small and medium businesses selling on LINE OA, Facebook Messenger, and Instagram DM. It lets a single admin (or small team) reply to all channels from one interface, create orders, verify payment slips, and use AI auto-replies.
+Chatz is a multi-channel chat hub for Thai online shops (Instagram, Facebook, and LINE) with AI that helps close sales end-to-end—by answering questions and verifying payment slips on your behalf.
 
-## Register
+It helps a solo admin or a small team:
+- Reply on every channel from one screen
+- Create orders
+- Auto-verify payment slips
+- Use AI to reply to customers and close sales
+
+## Document Type
 product
 
 ## Users
-- **Primary:** Thai online sellers (solopreneurs, small shops). Not developers. Typically women aged 22-40 running a health/beauty/fashion shop. Chat volume: 30-200 conversations/day. Often managing the shop from mobile + desktop simultaneously.
-- **Secondary:** Small team admins who handle overflow replies.
-- Competing against: **zaapi**, **zwiz.ai**, and LINE OA official tools.
+- **Primary:** Thai online shop owners (solo or small team), not developers. Mostly women around 22–40 selling health, beauty, and fashion products.
+- Roughly 30–200 chat rooms per day
+- Often use both mobile and desktop at the same time
 
-## Brand / Tone
-- Friendly, fast, trustworthy
-- Thai-first but not overly cutesy
-- Clean and professional — sellers want to look professional to their own customers
-- Anti-reference: cluttered, feature-cramped enterprise CRM feel
+- **Secondary:** Admin staff who help reply during peak traffic
 
-## Color strategy
-Restrained — brand purple/violet accent (Tailwind `brand-600` ≈ violet/indigo), tinted slate neutrals, emerald for online/positive states, amber for warnings, fuchsia for notification badges.
+Main competitors:
+- Zaapi
+- zwiz.ai
+- LINE OA tools
 
-## Current tech stack
+## Personality / Brand Tone
+- Friendly, approachable
+- Fast
+- Trustworthy
+- Thai-first language
+- Easy to use
+- Clean, professional look
+
+What we avoid:
+- Dense, enterprise CRM feel with too much data on screen
+
+## Color Direction
+Use a restrained palette:
+- Primary violet/purple (`brand-600`)
+- Slate blue-gray for surfaces
+- Emerald for online/success states
+- Amber for warnings
+- Fuchsia for notification badges
+
+## Current Tech Stack
 - React + TypeScript + Vite
-- Tailwind CSS (custom `brand-*` scale)
-- No external component library — fully hand-rolled
-- SSE for realtime, LINE/FB/IG APIs, Web Audio for notification sound
-- Thai + English i18n
+- Tailwind CSS (custom `brand-*`)
+- No external component library
+- SSE for realtime
+- LINE / FB / IG API integrations
+- Web Audio for notification sounds
+- Thai and English support
 
-## Key screens
-1. **Inbox** — ConversationList (360px left panel) + ChatThread (flex-1 right)
-2. **Orders** — table layout with status tabs (pending/paid/shipped/cancelled)
-3. **Settings** — LINE/FB config, AI brain, keyword rules
-4. **Analytics, Slips, Shop** — supporting views
+## Main Screens
+1. **Inbox**
+   - ConversationList on the left (360px)
+   - ChatThread on the right (flex-1)
 
-## Known UX problems (as of current version)
-- Visual hierarchy inside conversation rows is flat
-- No empty states that feel designed
-- Input composer row is plain — feels like a textarea in a box
-- Customer info panel (tags/notes) was always visible, now hidden behind button — good
-- Quick replies were always visible, now hidden behind ⚡ — good
-- No visible "loading" feedback beyond skeleton rows
-- Sidebar navigation is functional but not delightful
-- Mobile experience works but isn't optimized for thumb reach
-- No consistent spacing rhythm (some sections too tight, others too loose)
-- Chat bubble tails are rounded-br-md which is subtly mismatched with overall radius
+2. **Orders**
+   - Order table
+   - Status tabs:
+     pending / paid / shipped / cancelled
 
-## Anti-patterns to avoid
-- Enterprise CRM feel (too many columns, too much data density)
-- Overly gamified/cutesy (this is a work tool)
-- Dark-pattern upsells
+3. **Settings**
+   - LINE / FB setup
+   - AI
+   - Keyword rules
+   - And other options that feel like real settings—not “AI-generated” filler
+
+4. **Analytics / Slips / Shop**
+   - Other supporting screens
+
+## Current UX Issues
+- Visual hierarchy in conversation rows is still too flat
+- Empty states don’t feel designed yet
+- Message input still looks like a plain textarea
+- Customer info panel used to show always; now hidden behind a button (good)
+- Quick replies used to show always; now hidden behind ⚡ (good)
+- Loading feedback is still mostly skeletons
+- Sidebar works but doesn’t feel delightful yet
+- Mobile works but isn’t thumb-optimized
+- Spacing is still inconsistent
+- Chat bubble tails still use `rounded-br-md`, which doesn’t match the system’s main radius
+
+## Things to Avoid
+- Enterprise CRM feel
+- Overly dense information
+- Over-gamified or overly cute UI
+- Dark-pattern upsell

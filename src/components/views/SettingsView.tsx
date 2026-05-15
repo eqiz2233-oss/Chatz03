@@ -9,6 +9,12 @@ import {
   openFbConnectPopup,
   type FbIntegrationStatus,
 } from '../../lib/fbIntegration';
+import {
+  fetchLineStatus,
+  connectLine,
+  disconnectLine,
+  type LineIntegrationStatus,
+} from '../../lib/lineIntegration';
 import { useMutedState, playNotification } from '../../lib/inboxNotifications';
 
 /**
@@ -405,7 +411,6 @@ function ChannelsSection({ t }: { t: (k: string) => string }) {
     <div className="space-y-6">
       <MetaIntegrationSection t={t} />
       <LineIntegrationCard t={t} />
-      <EasySlipIntegrationCard t={t} />
     </div>
   );
 }
@@ -880,78 +885,230 @@ function useHealthSnapshot() {
   return health;
 }
 
-function LineIntegrationCard({ t }: { t: (k: string) => string }) {
-  const health = useHealthSnapshot();
-  const configured = !!health?.lineConfigured;
-  const reply = !!health?.lineReplyEnabled;
-  const count = health?.lineConversationsCount ?? 0;
-  const connected = configured && reply;
-  const partial = configured && !reply;
+function LineIntegrationCard(_props: { t: (k: string) => string }) {
+  const [status, setStatus] = useState<LineIntegrationStatus | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [showSteps, setShowSteps] = useState(false);
+  const [secret, setSecret] = useState('');
+  const [token, setToken] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      setStatus(await fetchLineStatus());
+    } catch (e) {
+      setErr(String((e as Error).message || e));
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const connected = !!status?.configured && !!status?.replyEnabled;
+  const partial = !!status?.configured && !status?.replyEnabled;
+  const oa = status?.botInfo;
+
+  async function onCopy(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    } catch {
+      setErr('คัดลอกไม่สำเร็จ ลองเลือกข้อความแล้วกด Ctrl/Cmd+C');
+    }
+  }
+
+  async function onSave(e: React.FormEvent) {
+    e.preventDefault();
+    setErr(null);
+    setBusy(true);
+    try {
+      const next = await connectLine({ channelSecret: secret.trim(), channelAccessToken: token.trim() });
+      setStatus(next);
+      setSecret('');
+      setToken('');
+      setShowForm(false);
+    } catch (e2) {
+      setErr(String((e2 as Error).message || e2));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onDisconnect() {
+    if (!window.confirm('ยืนยันการยกเลิกการเชื่อมต่อ LINE? ห้องแชทเดิมจะยังอยู่ แต่ระบบจะหยุดรับ-ส่งข้อความ')) return;
+    setErr(null);
+    setBusy(true);
+    try {
+      setStatus(await disconnectLine());
+    } catch (e2) {
+      setErr(String((e2 as Error).message || e2));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const desc =
+    !status ? '…'
+    : connected
+      ? oa?.displayName ? `เชื่อมแล้ว · ${oa.displayName}${oa.basicId ? ` (@${oa.basicId})` : ''}`
+      : `เชื่อมแล้ว · ${status.threadCount} ห้องแชท`
+    : partial ? 'ตั้งค่าบางส่วน — ใส่ Channel Access Token เพื่อให้ตอบกลับได้'
+    : 'เชื่อม LINE Official Account ของร้านเพื่อตอบลูกค้าผ่าน LINE';
 
   return (
     <div className="space-y-3">
       <p className="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">LINE</p>
+
       <IntegrationCard
         icon={<ChannelIcon channel="line" className="h-7 w-7" />}
         iconBg="bg-green-50 dark:bg-green-950/30"
         name="LINE Official Account"
-        desc={
-          !health ? '…'
-          : connected ? `${count} ห้องแชท`
-          : partial ? 'รับข้อความได้แล้ว แต่ยังตอบกลับไม่ได้'
-          : 'ตั้งค่า LINE_CHANNEL_SECRET ใน Railway Variables'
-        }
+        desc={desc}
         connected={connected}
         partial={partial}
         action={
-          <a
-            href="https://developers.line.biz/console/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn-secondary text-xs"
-          >
-            เปิด LINE Developers →
-          </a>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setShowForm((v) => !v)}
+              disabled={busy}
+              className={connected ? 'btn-secondary text-xs' : 'btn-primary text-xs'}
+            >
+              {connected ? 'แก้ไข' : 'เชื่อมต่อ'}
+            </button>
+            {connected && (
+              <button
+                type="button"
+                onClick={onDisconnect}
+                disabled={busy}
+                className="rounded-full border border-rose-300 bg-white px-3 py-1.5 text-xs font-semibold text-rose-600 transition hover:bg-rose-50 disabled:opacity-50 dark:border-rose-700/60 dark:bg-slate-900 dark:text-rose-400 dark:hover:bg-rose-950/40"
+              >
+                ยกเลิกการเชื่อม
+              </button>
+            )}
+          </div>
         }
       />
+
+      {/* Webhook URL — always visible because LINE Developers Console requires it */}
+      {status && (
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-700 dark:bg-slate-900/60">
+          <div className="mb-1.5 font-semibold text-slate-600 dark:text-slate-300">Webhook URL (ใส่ในหน้า LINE Developers)</div>
+          <div className="flex items-center gap-2">
+            <code className="block min-w-0 flex-1 truncate rounded-lg bg-white px-2.5 py-1.5 font-mono text-[11px] text-slate-700 dark:bg-slate-950 dark:text-slate-200">
+              {status.webhookUrl}
+            </code>
+            <button
+              type="button"
+              onClick={() => void onCopy(status.webhookUrl)}
+              className="rounded-lg bg-slate-200 px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+              title="คัดลอก"
+            >
+              {copied ? '✓' : 'คัดลอก'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Steps — collapsible */}
+      <button
+        type="button"
+        onClick={() => setShowSteps((v) => !v)}
+        className="text-xs font-semibold text-brand-600 underline-offset-2 hover:underline dark:text-brand-400"
+      >
+        {showSteps ? 'ซ่อนขั้นตอน' : 'ยังไม่รู้จะเริ่มยังไง? ดูขั้นตอน 4 ขั้น →'}
+      </button>
+      {showSteps && (
+        <ol className="space-y-2 rounded-2xl border border-slate-200 bg-white p-4 text-xs leading-relaxed text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+          <li>
+            <b>1.</b> เปิด{' '}
+            <a
+              href="https://developers.line.biz/console/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-semibold text-brand-600 hover:underline dark:text-brand-400"
+            >
+              LINE Developers Console
+            </a>
+            {' '}เลือก Provider ของร้าน แล้วกดสร้าง <b>Messaging API channel</b> ใหม่ (ถ้ายังไม่มี)
+          </li>
+          <li>
+            <b>2.</b> ในแท็บ <b>Basic settings</b> คัดลอก <b>Channel secret</b> มาวางช่องด้านล่าง
+          </li>
+          <li>
+            <b>3.</b> ในแท็บ <b>Messaging API</b> เลื่อนลงไปที่ Channel access token (long-lived) แล้วกด <b>Issue</b> → คัดลอกมาวางช่องด้านล่าง
+          </li>
+          <li>
+            <b>4.</b> ในหน้าเดียวกัน ใส่ Webhook URL ด้านบนลงในช่อง <b>Webhook URL</b> และเปิด <b>Use webhook</b> ON
+          </li>
+          <li className="pt-1 text-slate-400 dark:text-slate-500">
+            *แนะนำ: ปิด Auto-reply messages ของ LINE OA เพื่อให้ AI ของ Chatz ตอบแทน
+          </li>
+        </ol>
+      )}
+
+      {/* Paste form */}
+      {showForm && (
+        <form
+          onSubmit={onSave}
+          className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+        >
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold text-slate-700 dark:text-slate-200">
+              Channel Secret
+            </label>
+            <input
+              type="password"
+              autoComplete="off"
+              value={secret}
+              onChange={(e) => setSecret(e.target.value)}
+              placeholder="ตัวเลข+ตัวอักษร 32 ตัว"
+              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 font-mono text-xs text-slate-700 outline-none focus:border-brand-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+            />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold text-slate-700 dark:text-slate-200">
+              Channel Access Token (long-lived)
+            </label>
+            <textarea
+              rows={3}
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              placeholder="วาง access token จากแท็บ Messaging API ที่นี่"
+              className="w-full resize-none rounded-xl border border-slate-300 bg-white px-3 py-2 font-mono text-[11px] leading-relaxed text-slate-700 outline-none focus:border-brand-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+            />
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => { setShowForm(false); setErr(null); }}
+              className="btn-secondary text-xs"
+            >
+              ยกเลิก
+            </button>
+            <button
+              type="submit"
+              disabled={busy || !secret.trim() || !token.trim()}
+              className="btn-primary text-xs disabled:opacity-50"
+            >
+              {busy ? 'กำลังตรวจสอบ…' : 'บันทึกและเชื่อมต่อ'}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {err && (
+        <div className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+          {err}
+        </div>
+      )}
     </div>
   );
 }
-
-// ─── EasySlip card ───────────────────────────────────────────────────────────
-
-function EasySlipIntegrationCard({ t: _t }: { t: (k: string) => string }) {
-  const health = useHealthSnapshot();
-  const enabled = health ? Boolean(health?.slipChecker?.enabled) : null;
-
-  return (
-    <div className="space-y-3">
-      <p className="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">ตรวจสลิป</p>
-      <IntegrationCard
-        icon={<span className="text-2xl leading-none">📄</span>}
-        iconBg="bg-violet-50 dark:bg-violet-950/30"
-        name="EasySlip API"
-        desc={
-          enabled === null ? '…'
-          : enabled ? 'ตรวจสลิปกับธนาคารจริง — เชื่อมอยู่'
-          : 'โหมดสาธิต — ตั้งค่า EASYSLIP_TOKEN เพื่อใช้งานจริง'
-        }
-        connected={enabled === true}
-        action={
-          <a
-            href="https://developer.easyslip.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn-secondary text-xs"
-          >
-            สมัคร EasySlip →
-          </a>
-        }
-      />
-    </div>
-  );
-}
-
 
 interface KeywordRule {
   id: string;
