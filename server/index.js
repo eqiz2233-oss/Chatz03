@@ -2864,6 +2864,17 @@ const DEFAULT_BOT_SETTINGS = {
   autoFaq: true,
   autoSlipConfirm: true,
   shopProfile: { shopName: '', tagline: '' },
+  // Auto-reply page (new sidebar entry). Schema matches the front-end
+  // BotSettingsExt so the same /api/bot/settings GET/PUT round-trips it.
+  botPersona: 'friendly',
+  greetingMessage: '',
+  greetingEnabled: true,
+  fallbackMessage: '',
+  awayMessage: '',
+  awayEnabled: false,
+  awayStart: '22:00',
+  awayEnd: '07:00',
+  quickReplies: [],
 };
 
 app.get('/api/bot/settings', async (_req, res) => {

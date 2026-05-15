@@ -31,9 +31,10 @@ interface Item {
 }
 
 const items: Item[] = [
-  { key: 'inbox',  labelKey: 'nav.inbox',  icon: <I.Inbox className="h-5 w-5" /> },
-  { key: 'orders', labelKey: 'nav.orders', icon: <I.Box   className="h-5 w-5" /> },
-  { key: 'shop',   labelKey: 'nav.shop',   icon: <I.Store className="h-5 w-5" /> },
+  { key: 'inbox',     labelKey: 'nav.inbox',     icon: <I.Inbox className="h-5 w-5" /> },
+  { key: 'orders',    labelKey: 'nav.orders',    icon: <I.Box   className="h-5 w-5" /> },
+  { key: 'shop',      labelKey: 'nav.shop',      icon: <I.Store className="h-5 w-5" /> },
+  { key: 'autoReply', labelKey: 'nav.autoReply', icon: <I.Bot   className="h-5 w-5" /> },
 ];
 
 interface Props {

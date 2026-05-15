@@ -4,6 +4,7 @@ import { InboxView } from './components/inbox/InboxView';
 import { OrdersView } from './components/views/OrdersView';
 import { CommissionView } from './components/views/CommissionView';
 import { ShopBrainView } from './components/views/ShopBrainView';
+import { AutoReplyView } from './components/views/AutoReplyView';
 import { AnalyticsView } from './components/views/AnalyticsView';
 import { SettingsView } from './components/views/SettingsView';
 import { LoginView } from './components/views/LoginView';
@@ -47,6 +48,7 @@ export default function App() {
         />
       )}
       {view === 'shop' && <ShopBrainView />}
+      {view === 'autoReply' && <AutoReplyView />}
       {view === 'commission' && <CommissionView />}
       {view === 'analytics' && <AnalyticsView />}
       {view === 'settings' && <SettingsView />}

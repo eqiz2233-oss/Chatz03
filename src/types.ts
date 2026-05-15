@@ -79,7 +79,7 @@ export interface Order {
   productImageUrl?: string;
 }
 
-export type View = 'inbox' | 'orders' | 'slips' | 'shop' | 'commission' | 'analytics' | 'settings';
+export type View = 'inbox' | 'orders' | 'slips' | 'shop' | 'autoReply' | 'commission' | 'analytics' | 'settings';
 
 /** Open Inbox from Orders: prefer known id, else match by customer + channel on current list. */
 export interface InboxFocusRequest {
