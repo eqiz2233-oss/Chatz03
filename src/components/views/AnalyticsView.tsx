@@ -174,44 +174,56 @@ export function AnalyticsView() {
   }, []);
 
   const chart = useMemo(() => {
-    const days = summary?.chatsPerDay ?? [];
-    const values = days.length > 0 ? days.map((d) => d.count) : Array.from({ length: 30 }, () => 0);
-    const n = values.length;
-    const lineValues = values;
-    const igValues = Array.from({ length: n }, () => 0);
-    const fbValues = Array.from({ length: n }, () => 0);
-    const max = Math.max(...lineValues, ...igValues, ...fbValues, 1);
-    const raw = rollingDayLabels(values.length || 30, locale);
-    const labels = raw.map((lab, i) => (i % 5 === 0 || i === raw.length - 1 ? lab : ''));
-    const count = raw.length;
-    const stepX = 28;
-    const width = Math.max(760, (count - 1) * stepX + 24);
-    const height = 152;
-    const toPoints = (arr: number[]) =>
-      arr
-        .map((v, i) => {
-          const x = 12 + i * stepX;
-          const y = height - (v / max) * (height - 14);
-          return `${x},${Number.isFinite(y) ? y.toFixed(2) : height}`;
-        })
-        .join(' ');
+    const revenueTotal = summary?.kpis.revenue ?? 0;
+    const pctMap = new Map(summary?.channelMix?.map((c) => [c.channel, c.pct]) ?? []);
+
+    const linePct = pctMap.get('line') ?? 0;
+    const igPct = pctMap.get('ig') ?? 0;
+    const fbPct = pctMap.get('facebook') ?? 0;
+
+    // Fallback when backend pct doesn't sum to 100
+    const sumPct = linePct + igPct + fbPct;
+    const normalize = sumPct > 0 ? 100 / sumPct : 0;
+
+    const lineRevenue = revenueTotal * (linePct * normalize) / 100;
+    const igRevenue = revenueTotal * (igPct * normalize) / 100;
+    const fbRevenue = revenueTotal * (fbPct * normalize) / 100;
+
+    const maxRevenue = Math.max(lineRevenue, igRevenue, fbRevenue, 1);
 
     return {
-      lineValues,
-      igValues,
-      fbValues,
-      linePoints: toPoints(lineValues),
-      igPoints: toPoints(igValues),
-      fbPoints: toPoints(fbValues),
-      labels,
-      width,
-      height,
       titleKey: 'analytics.chartTitle30d' as const,
       subKey: 'analytics.chartSub30d' as const,
-      barTipKey: 'analytics.dailyBarTip' as const,
       ariaKey: 'analytics.chartAria30d' as const,
+      maxRevenue,
+      channels: [
+        {
+          key: 'line' as const,
+          label: 'LINE',
+          pct: linePct,
+          revenue: lineRevenue,
+          barFrom: 'from-emerald-500',
+          barTo: 'to-teal-600',
+        },
+        {
+          key: 'ig' as const,
+          label: 'Instagram',
+          pct: igPct,
+          revenue: igRevenue,
+          barFrom: 'from-fuchsia-500',
+          barTo: 'to-fuchsia-600',
+        },
+        {
+          key: 'facebook' as const,
+          label: 'Facebook',
+          pct: fbPct,
+          revenue: fbRevenue,
+          barFrom: 'from-blue-500',
+          barTo: 'to-indigo-600',
+        },
+      ],
     };
-  }, [locale, summary]);
+  }, [summary]);
 
   const chartMonthLabel = useMemo(() => {
     const loc = locale === 'th' ? 'th-TH' : 'en-US';
@@ -280,36 +292,28 @@ export function AnalyticsView() {
               {t(chart.subKey, { month: chartMonthLabel })}
             </div>
           </div>
-          <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] font-medium">
-            <span className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
-              <span className="h-1.5 w-4 rounded-full bg-emerald-500" />
-              LINE
-            </span>
-            <span className="inline-flex items-center gap-1.5 text-fuchsia-600 dark:text-fuchsia-400">
-              <span className="h-1.5 w-4 rounded-full bg-fuchsia-500" />
-              Instagram
-            </span>
-            <span className="inline-flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
-              <span className="h-1.5 w-4 rounded-full bg-blue-500" />
-              Facebook
-            </span>
-          </div>
-          <div className="mt-3 overflow-x-auto pb-1" role="img" aria-label={t(chart.ariaKey)}>
-            <div className="min-w-[760px]" style={{ width: `${chart.width}px` }}>
-              <svg width={chart.width} height={chart.height} className="block">
-                <line x1="0" y1={chart.height - 1} x2={chart.width} y2={chart.height - 1} className="stroke-slate-200 dark:stroke-slate-700" />
-                <polyline points={chart.linePoints} fill="none" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                <polyline points={chart.igPoints} fill="none" stroke="#d946ef" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                <polyline points={chart.fbPoints} fill="none" stroke="#3b82f6" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              <div className="mt-1 grid" style={{ gridTemplateColumns: `repeat(${chart.labels.length}, minmax(0, 1fr))` }}>
-                {chart.labels.map((lab, i) => (
-                  <div key={i} className="text-center text-[10px] tabular-nums leading-tight text-slate-400 dark:text-slate-500">
-                    {lab || '\u00a0'}
+          <div className="mt-3 space-y-3" role="img" aria-label={t(chart.ariaKey)}>
+            {chart.channels.map((ch) => {
+              const w = Math.round((ch.revenue / chart.maxRevenue) * 100);
+              return (
+                <div key={ch.key} className="space-y-1">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="inline-flex items-center gap-2 text-[11px] font-medium text-slate-600 dark:text-slate-300">
+                      <span className={`h-1.5 w-4 rounded-full bg-gradient-to-r ${ch.barFrom} ${ch.barTo}`} />
+                      {ch.label}
+                      {ch.pct > 0 && <span className="text-slate-400 dark:text-slate-500">({Math.round(ch.pct)}%)</span>}
+                    </span>
+                    <span className="text-[11px] font-bold tabular-nums text-slate-900 dark:text-white">{fmtBaht(ch.revenue)}</span>
                   </div>
-                ))}
-              </div>
-            </div>
+                  <div className="h-3 rounded-full bg-slate-100 dark:bg-slate-800/60 overflow-hidden">
+                    <div
+                      className={`h-full bg-gradient-to-r ${ch.barFrom} ${ch.barTo}`}
+                      style={{ width: `${w}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
 
