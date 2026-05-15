@@ -67,6 +67,7 @@ export function Sidebar({ active, onChange }: Props) {
   const { user, logout } = useAuth();
   const isMobile = useIsMobile();
   const [expanded, setExpanded] = useState(false);
+  const [pinned, setPinned] = useState(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearClose = useCallback(() => {
@@ -89,16 +90,30 @@ export function Sidebar({ active, onChange }: Props) {
   // Collapse when viewport changes
   useEffect(() => {
     setExpanded(false);
+    setPinned(false);
     clearClose();
   }, [isMobile, clearClose]);
 
   // ── Shared aside ─────────────────────────────────────────────────────────
   const lbl = labelStyle(expanded);
 
+  const togglePinned = useCallback(() => {
+    setPinned((v) => {
+      const next = !v;
+      // When pinning: keep expanded. When unpinning: collapse back to icons.
+      setExpanded(next);
+      return next;
+    });
+  }, []);
+
   const aside = (
     <aside
-      onMouseEnter={handleOpen}
-      onMouseLeave={() => handleClose(180)}
+      onMouseEnter={() => {
+        if (!pinned) handleOpen();
+      }}
+      onMouseLeave={() => {
+        if (!pinned) handleClose(180);
+      }}
       style={!isMobile ? { width: expanded ? W_EXPANDED : W_COLLAPSED } : undefined}
       className={[
         'flex h-screen shrink-0 flex-col overflow-hidden border-r border-slate-200/90 bg-white select-none',
@@ -127,6 +142,26 @@ export function Sidebar({ active, onChange }: Props) {
               {t('sidebar.workspace')}
             </div>
           </div>
+
+          {/* Pin / collapse button (always visible) */}
+          <button
+            type="button"
+            onClick={() => togglePinned()}
+            title={pinned ? 'เก็บ sidebar' : 'ดึง sidebar ออกมา'}
+            aria-label={pinned ? 'เก็บ sidebar' : 'ดึง sidebar ออกมา'}
+            className={[
+              'ml-auto grid h-8 w-8 place-items-center rounded-xl transition',
+              pinned
+                ? 'bg-brand-600 text-white shadow-sm'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700',
+            ].join(' ')}
+          >
+            {pinned ? (
+              <I.ChevronLeft className="h-4 w-4" />
+            ) : (
+              <I.ChevronRight className="h-4 w-4" />
+            )}
+          </button>
         </div>
       </div>
 
