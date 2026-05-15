@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
   type Dispatch,
-  type RefObject,
+  type Ref,
   type SetStateAction,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -931,7 +931,7 @@ function FilterPanel({
   onClose,
   shops,
 }: {
-  panelRef: RefObject<HTMLDivElement | null>;
+  panelRef: Ref<HTMLDivElement>;
   fixedStyle: { top: number; right: number };
   t: (k: string, vars?: Record<string, string | number>) => string;
   filters: OrderFiltersState;
