@@ -365,7 +365,6 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
             iconBg="bg-brand-50 ring-brand-200/80 dark:bg-brand-950/40 dark:ring-brand-800"
             label="ออเดอร์ทั้งหมด"
             value={countByStatus.all}
-            isActive={statusTab === 'all'}
             onClick={() => setStatusTab('all')}
           />
           <StatCard
@@ -374,7 +373,6 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
             label="จัดส่งแล้ว"
             value={paidShippedCount}
             valueClass="text-emerald-600 dark:text-emerald-400"
-            isActive={statusTab === 'shipped'}
             onClick={() => setStatusTab('shipped')}
           />
           <StatCard
@@ -383,7 +381,6 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
             label="ยังไม่จัดส่ง"
             value={paidNotShippedCount}
             valueClass={paidNotShippedCount > 0 ? 'text-amber-600 dark:text-amber-400' : undefined}
-            isActive={statusTab === 'paid'}
             onClick={() => setStatusTab('paid')}
           />
         </div>
@@ -551,7 +548,6 @@ function StatCard({
   label,
   value,
   valueClass,
-  isActive,
   onClick,
 }: {
   icon: React.ReactNode;
@@ -559,19 +555,13 @@ function StatCard({
   label: string;
   value: number;
   valueClass?: string;
-  isActive?: boolean;
   onClick?: () => void;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={
-        'flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left transition-all ' +
-        (isActive
-          ? 'border-brand-300 bg-brand-50/80 shadow-sm ring-1 ring-brand-200 dark:border-brand-700 dark:bg-brand-950/30 dark:ring-brand-800'
-          : 'border-slate-200/80 bg-slate-50/60 hover:border-slate-300 hover:bg-white hover:shadow-sm dark:border-slate-700 dark:bg-slate-800/40 dark:hover:bg-slate-800/70')
-      }
+      className="flex w-full items-center gap-3 rounded-xl border border-slate-200/80 bg-slate-50/60 px-4 py-3 text-left transition-all hover:border-slate-300 hover:bg-white hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 focus-visible:ring-offset-2 dark:border-slate-700 dark:bg-slate-800/40 dark:hover:bg-slate-800/70 dark:focus-visible:ring-brand-500 dark:focus-visible:ring-offset-slate-900"
     >
       <div className={'grid h-10 w-10 shrink-0 place-items-center rounded-xl shadow-sm ring-1 ' + (iconBg ?? 'bg-white ring-slate-200/80 dark:bg-slate-900 dark:ring-slate-700')}>
         {icon}
