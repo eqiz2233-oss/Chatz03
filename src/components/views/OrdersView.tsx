@@ -259,12 +259,39 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
   const searchFiltered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return baseFiltered;
-    return baseFiltered.filter(
-      (o) =>
+
+    // Amount range: "500-1000" or ">500" or "<1000"
+    const rangeMatch = q.match(/^([<>])\s*(\d[\d,]*)$/) ?? q.match(/^(\d[\d,]*)\s*-\s*(\d[\d,]*)$/);
+
+    return baseFiltered.filter((o) => {
+      // Order ID / customer / product text
+      if (
         o.customer.toLowerCase().includes(q) ||
         o.product.toLowerCase().includes(q) ||
-        o.id.toLowerCase().includes(q),
-    );
+        o.id.toLowerCase().includes(q) ||
+        o.shop.toLowerCase().includes(q)
+      ) return true;
+
+      // Exact amount or amount range  e.g. "890", ">500", "<2000", "500-1000"
+      const amt = o.amount;
+      const plain = q.replace(/[,฿\s]/g, '');
+      if (/^\d+$/.test(plain) && amt === Number(plain)) return true;
+      if (rangeMatch) {
+        if (rangeMatch[1] === '>') return amt > Number(rangeMatch[2].replace(/,/g, ''));
+        if (rangeMatch[1] === '<') return amt < Number(rangeMatch[2].replace(/,/g, ''));
+        // "min-max"
+        const lo = Number(rangeMatch[1].replace(/,/g, ''));
+        const hi = Number(rangeMatch[2].replace(/,/g, ''));
+        if (!Number.isNaN(lo) && !Number.isNaN(hi)) return amt >= lo && amt <= hi;
+      }
+
+      // Date: full "2026-05-10", partial month "05-10" or "05/10", or year "2026"
+      const dateStr = o.orderDate ?? o.createdAt?.slice(0, 10) ?? '';
+      if (dateStr && dateStr.includes(q.replace(/\//g, '-'))) return true;
+      if (/^\d{4}$/.test(q) && dateStr.startsWith(q)) return true;
+
+      return false;
+    });
   }, [baseFiltered, search]);
 
   const displayed = useMemo(() => {
@@ -471,8 +498,19 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={t('orders.search')}
-              className="w-56 rounded-lg border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-xs text-slate-900 outline-none focus:border-brand-400 focus:bg-white focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:bg-slate-900 dark:focus:ring-brand-900/40"
+              title="ค้นได้ด้วย: ชื่อลูกค้า · ชื่อสินค้า · เลขออเดอร์ · ร้าน · ยอดเงิน (890, >500, <2000, 500-1000) · วันที่ (2026-05-10, 05-10, 2026)"
+              className="w-64 rounded-lg border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-xs text-slate-900 outline-none focus:border-brand-400 focus:bg-white focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:bg-slate-900 dark:focus:ring-brand-900/40"
             />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                aria-label="ล้างค้นหา"
+              >
+                <I.X className="h-3 w-3" />
+              </button>
+            )}
           </div>
         </div>
       </div>

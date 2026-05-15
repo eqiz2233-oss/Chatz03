@@ -529,7 +529,7 @@ const thFlat: Record<string, string> = {
   'orders.filter.close': 'ปิด',
   'orders.filter.active': 'ใช้งาน {n} ตัวกรอง',
   'orders.tab.all': 'ทั้งหมด',
-  'orders.search': 'ค้นหาออเดอร์…',
+  'orders.search': 'ชื่อ, สินค้า, ยอด, วันที่…',
   'orders.th.id': 'เลขออเดอร์',
   'orders.th.customer': 'ลูกค้า',
   'orders.th.product': 'สินค้า',
