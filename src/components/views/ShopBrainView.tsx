@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { I } from '../Icons';
 
 export interface ProductOptionGroup {
@@ -206,14 +206,15 @@ function formatOptionSummary(groups: ProductOptionGroup[]): string {
   return groups.map((g) => `${g.label}: ${g.values.join(' ')}`).join(' · ');
 }
 
-type ShopMode = 'list' | 'add' | 'edit' | 'templates';
+type ShopMode = 'shop' | 'templates';
 
 export function ShopBrainView() {
   const [products, setProducts] = useState<Product[]>([]);
-  const [mode, setMode] = useState<ShopMode>('list');
+  const [mode, setMode] = useState<ShopMode>('shop');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(BLANK);
   const [templates, setTemplates] = useState<ProductTemplate[]>(loadTemplates);
+  const [search, setSearch] = useState('');
 
   useEffect(() => {
     persistTemplates(templates);
@@ -263,7 +264,11 @@ export function ShopBrainView() {
   const deleteTemplate = (id: string) => setTemplates((prev) => prev.filter((t) => t.id !== id));
 
   const slotsRemaining = Math.max(0, SHOP_PRODUCT_SLOT_LIMIT - products.length);
-  const canAddProduct = slotsRemaining > 0;
+
+  const resetForm = () => {
+    setForm(BLANK);
+    setEditingId(null);
+  };
 
   const handleSave = () => {
     const body = buildProductBody(form);
@@ -289,22 +294,12 @@ export function ShopBrainView() {
       setProducts((prev) => [...prev, fresh]);
       void syncProductToServer(fresh);
     }
-    setForm(BLANK);
-    setEditingId(null);
-    setMode('list');
-  };
-
-  const openAdd = () => {
-    if (!canAddProduct) return;
-    setEditingId(null);
-    setForm(BLANK);
-    setMode('add');
+    resetForm();
   };
 
   const openEdit = (p: Product) => {
     setEditingId(p.id);
     setForm(productToFormState(p));
-    setMode('edit');
   };
 
   const confirmDelete = (id: string, name: string) => {
@@ -312,7 +307,19 @@ export function ShopBrainView() {
     if (!ok) return;
     setProducts((prev) => prev.filter((p) => p.id !== id));
     void deleteProductOnServer(id);
+    if (editingId === id) resetForm();
   };
+
+  const filteredProducts = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return products;
+    return products.filter(
+      (p) =>
+        p.name.toLowerCase().includes(q) ||
+        p.description.toLowerCase().includes(q) ||
+        p.sellingPoints.toLowerCase().includes(q),
+    );
+  }, [products, search]);
 
   if (mode === 'templates') {
     return (
@@ -323,159 +330,177 @@ export function ShopBrainView() {
         }
         onUpdate={updateTemplate}
         onDelete={deleteTemplate}
-        onBack={() => setMode(editingId !== null || form.name || form.price ? 'add' : 'list')}
-      />
-    );
-  }
-
-  if (mode === 'add' || mode === 'edit') {
-    return (
-      <AddForm
-        form={form}
-        setForm={setForm}
-        isEdit={mode === 'edit'}
-        onSave={handleSave}
-        onBack={() => {
-          setForm(BLANK);
-          setEditingId(null);
-          setMode('list');
-        }}
-        slotsRemaining={slotsRemaining}
-        onSaveAsTemplate={saveCurrentAsTemplate}
+        onBack={() => setMode('shop')}
       />
     );
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col bg-slate-50 dark:bg-slate-950">
-      <div className="border-b border-slate-200 bg-white px-6 py-4 dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex items-center justify-between">
+    <div className="flex h-full min-h-0 flex-1 flex-col bg-[#f4f3f8] dark:bg-slate-950">
+      {/* Top bar */}
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-6 py-4 dark:border-slate-800 dark:bg-slate-900">
+        <div className="min-w-0">
           <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">ร้านของฉัน</h1>
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+            {products.length} ชิ้น · เหลือโควต้า {slotsRemaining} / {SHOP_PRODUCT_SLOT_LIMIT}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setMode('templates')}
+          className="btn-secondary text-sm"
+          title="จัดการแม่แบบสินค้า"
+        >
+          แม่แบบ
+          {templates.length > 0 && (
+            <span className="ml-1 rounded-full bg-brand-100 px-1.5 text-[10px] font-semibold text-brand-700 dark:bg-brand-900/60 dark:text-brand-200">
+              {templates.length}
+            </span>
+          )}
+        </button>
+      </header>
+
+      {/* 2-pane split */}
+      <div className="flex min-h-0 flex-1 flex-col gap-5 px-6 py-5 lg:flex-row lg:gap-6 lg:px-8 lg:py-6">
+        {/* LEFT — product list */}
+        <aside className="flex w-full shrink-0 flex-col gap-3 lg:w-[340px] xl:w-[360px]">
           <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <I.Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="ค้นหาสินค้า"
+                className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500"
+              />
+            </div>
             <button
               type="button"
-              onClick={() => setMode('templates')}
-              className="btn-secondary text-sm"
-              title="จัดการแม่แบบสินค้า"
+              onClick={resetForm}
+              disabled={editingId === null && !form.name && !form.price}
+              title="เริ่มเพิ่มสินค้าใหม่"
+              className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-600 text-white shadow-sm transition hover:bg-brand-700 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40 dark:bg-brand-500 dark:hover:bg-brand-400"
+              aria-label="เพิ่มสินค้าใหม่"
             >
-              📋 แม่แบบ
-              {templates.length > 0 && (
-                <span className="ml-1 rounded-full bg-brand-100 px-1.5 text-[10px] font-semibold text-brand-700 dark:bg-brand-900/60 dark:text-brand-200">
-                  {templates.length}
-                </span>
-              )}
-            </button>
-            <button onClick={openAdd} disabled={!canAddProduct} className="btn-primary gap-2 disabled:cursor-not-allowed disabled:opacity-40">
               <I.Plus className="h-4 w-4" />
-              เพิ่มสินค้า
             </button>
           </div>
-        </div>
-      </div>
 
-      <div className="flex-1 overflow-y-auto p-5">
-        <div className="space-y-2">
-          {products.map((p) => (
-            <ProductRow
-              key={p.id}
-              product={p}
-              slotsRemaining={slotsRemaining}
-              slotLimit={SHOP_PRODUCT_SLOT_LIMIT}
-              usedSlots={products.length}
-              onEdit={() => openEdit(p)}
-              onDelete={() => confirmDelete(p.id, p.name)}
-            />
-          ))}
-        </div>
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-0.5">
+            {filteredProducts.length === 0 ? (
+              <div className="grid h-full min-h-[200px] place-items-center rounded-2xl border border-dashed border-slate-200 bg-white/60 p-6 text-center dark:border-slate-700 dark:bg-slate-900/60">
+                <div>
+                  <I.Box className="mx-auto h-8 w-8 text-slate-300 dark:text-slate-600" />
+                  <p className="mt-2 text-sm font-medium text-slate-500 dark:text-slate-400">
+                    {search ? 'ไม่พบสินค้าที่ค้นหา' : 'ยังไม่มีสินค้า'}
+                  </p>
+                  {!search && (
+                    <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">เพิ่มสินค้าชิ้นแรกที่ฟอร์มทางขวา</p>
+                  )}
+                </div>
+              </div>
+            ) : (
+              filteredProducts.map((p) => (
+                <ShopListCard
+                  key={p.id}
+                  product={p}
+                  isActive={editingId === p.id}
+                  onClick={() => openEdit(p)}
+                  onDelete={() => confirmDelete(p.id, p.name)}
+                />
+              ))
+            )}
+          </div>
+        </aside>
+
+        {/* RIGHT — add/edit form */}
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-slate-700 dark:bg-slate-900 dark:shadow-none">
+          <AddForm
+            form={form}
+            setForm={setForm}
+            isEdit={editingId !== null}
+            onSave={handleSave}
+            onCancel={resetForm}
+            slotsRemaining={slotsRemaining}
+            onSaveAsTemplate={saveCurrentAsTemplate}
+          />
+        </main>
       </div>
     </div>
   );
 }
 
-function ProductRow({
+function ShopListCard({
   product: p,
-  slotsRemaining,
-  slotLimit,
-  usedSlots,
-  onEdit,
+  isActive,
+  onClick,
   onDelete,
 }: {
   product: Product;
-  slotsRemaining: number;
-  slotLimit: number;
-  usedSlots: number;
-  onEdit: () => void;
+  isActive: boolean;
+  onClick: () => void;
   onDelete: () => void;
 }) {
   const optLine = formatOptionSummary(p.optionGroups);
 
   return (
-    <div className="flex gap-4 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-      <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-slate-50 text-2xl ring-1 ring-slate-100 dark:bg-slate-800 dark:ring-slate-700">
+    <div
+      onClick={onClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+      className={
+        'group flex cursor-pointer gap-3 rounded-xl border p-3 text-left transition ' +
+        (isActive
+          ? 'border-brand-400 bg-brand-50/70 ring-2 ring-brand-100 dark:border-brand-500 dark:bg-brand-950/40 dark:ring-brand-900/60'
+          : 'border-slate-200 bg-white hover:border-brand-200 hover:bg-brand-50/30 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-brand-700 dark:hover:bg-brand-950/20')
+      }
+    >
+      <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-slate-50 text-xl ring-1 ring-slate-100 dark:bg-slate-800 dark:ring-slate-700">
         {p.imageEmoji}
       </div>
-      <div className="min-w-0 flex-1 space-y-2.5">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold leading-snug text-slate-900 dark:text-slate-100">{p.name}</h3>
-            <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
-              <span className="font-semibold tabular-nums text-slate-800 dark:text-slate-200">฿{p.price.toLocaleString()}</span>
-              {optLine && (
-                <>
-                  <span className="text-slate-300 dark:text-slate-600" aria-hidden>
-                    ·
-                  </span>
-                  <span className="min-w-0 truncate">{optLine}</span>
-                </>
-              )}
-              {p.stock != null && (
-                <>
-                  <span className="text-slate-300 dark:text-slate-600" aria-hidden>
-                    ·
-                  </span>
-                  <span>สต๊อก {p.stock}</span>
-                </>
-              )}
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-slate-100/90 p-0.5 ring-1 ring-slate-200/80 dark:bg-slate-800/80 dark:ring-slate-600">
-            <button
-              type="button"
-              onClick={onEdit}
-              aria-label="แก้ไขสินค้า"
-              title="แก้ไข"
-              className="grid h-8 w-8 place-items-center rounded-md text-slate-500 transition hover:bg-white hover:text-brand-600 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-brand-400"
-            >
-              <I.Pencil className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              onClick={onDelete}
-              aria-label="ลบสินค้า"
-              title="ลบ"
-              className="grid h-8 w-8 place-items-center rounded-md text-slate-400 transition hover:bg-rose-500/10 hover:text-rose-600 dark:text-slate-500 dark:hover:text-rose-400"
-            >
-              <I.Trash2 className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-2.5 dark:border-slate-800">
-          <span
-            className={
-              'text-[11px] leading-snug ' +
-              (slotsRemaining > 0 ? 'text-slate-500 dark:text-slate-400' : 'font-medium text-amber-600 dark:text-amber-400')
-            }
-          >
-            เพิ่มรายการได้อีก {slotsRemaining} ชิ้น ({usedSlots}/{slotLimit})
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start justify-between gap-2">
+          <h3 className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{p.name}</h3>
+          <span className="shrink-0 text-sm font-semibold tabular-nums text-slate-800 dark:text-slate-200">
+            ฿{p.price.toLocaleString()}
           </span>
+        </div>
+        <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+          {optLine ? (
+            <span className="min-w-0 flex-1 truncate">{optLine}</span>
+          ) : (
+            <span className="text-slate-400 dark:text-slate-500">ยังไม่มีตัวเลือก</span>
+          )}
+        </div>
+        <div className="mt-2 flex items-center justify-between gap-2">
           {p.aiReady ? (
-            <span className="chip bg-emerald-50 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
-              <I.Check className="h-3 w-3" />
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+              <I.Check className="h-2.5 w-2.5" />
               AI พร้อมตอบ
             </span>
           ) : (
-            <span className="chip bg-amber-50 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200">⚠️ ขาดข้อมูล</span>
+            <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-200">
+              ขาดข้อมูล
+            </span>
           )}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+            aria-label="ลบสินค้า"
+            title="ลบ"
+            className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-slate-400 opacity-0 transition group-hover:opacity-100 hover:bg-rose-500/10 hover:text-rose-600 dark:text-slate-500 dark:hover:text-rose-400"
+          >
+            <I.Trash2 className="h-3.5 w-3.5" />
+          </button>
         </div>
       </div>
     </div>
@@ -501,7 +526,7 @@ function AddForm({
   setForm,
   isEdit,
   onSave,
-  onBack,
+  onCancel,
   slotsRemaining,
   onSaveAsTemplate,
 }: {
@@ -509,7 +534,7 @@ function AddForm({
   setForm: React.Dispatch<React.SetStateAction<FormState>>;
   isEdit: boolean;
   onSave: () => void;
-  onBack: () => void;
+  onCancel: () => void;
   slotsRemaining: number;
   onSaveAsTemplate: (name: string, emoji: string) => void;
 }) {
@@ -555,26 +580,34 @@ function AddForm({
     form.price &&
     form.optionGroups.some((g) => g.label.trim() && parseValuesInput(g.valuesInput).length > 0);
 
-  const sectionClass =
-    'rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-slate-700 dark:bg-slate-900 dark:shadow-none';
+  const hasAnyContent =
+    form.name.trim() ||
+    form.price ||
+    form.description.trim() ||
+    form.sellingPoints.trim() ||
+    form.stock.trim() ||
+    optionsHaveContent;
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col bg-[#f4f3f8] dark:bg-slate-950">
-      {/* ── Header: title + Cancel/Save ─────────────────────────────── */}
-      <header className="flex shrink-0 flex-wrap items-center justify-between gap-4 bg-transparent px-6 pt-7 pb-5 md:px-10 md:pt-9">
+    <>
+      {/* Sticky header */}
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-3.5 dark:border-slate-800 dark:bg-slate-900">
         <div className="min-w-0">
-          <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">
+          <h2 className="text-base font-bold text-slate-900 dark:text-white">
             {isEdit ? 'แก้ไขสินค้า' : 'เพิ่มสินค้าใหม่'}
-          </h1>
-          <p className="mt-1.5 max-w-md text-sm text-slate-500 dark:text-slate-400">
-            กรอกข้อมูลให้ครบ AI จะได้ตอบลูกค้าและปิดการขายได้แม่นยำขึ้น
+          </h2>
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+            {isEdit
+              ? 'แก้แล้วกดบันทึก ข้อมูลจะอัปเดตให้ AI ทันที'
+              : 'กรอกข้อมูลให้ครบ AI จะได้ตอบลูกค้าได้แม่นยำขึ้น'}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2.5">
+        <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
-            onClick={onBack}
-            className="rounded-full border border-slate-300 bg-white px-6 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+            onClick={onCancel}
+            disabled={!isEdit && !hasAnyContent}
+            className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
           >
             ยกเลิก
           </button>
@@ -582,44 +615,190 @@ function AddForm({
             type="button"
             onClick={onSave}
             disabled={!hasValidCore || (!isEdit && slotsRemaining <= 0)}
-            className="rounded-full bg-brand-600 px-7 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 dark:bg-brand-500 dark:hover:bg-brand-400"
+            className="rounded-full bg-brand-600 px-5 py-1.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 dark:bg-brand-500 dark:hover:bg-brand-400"
           >
             บันทึก
           </button>
         </div>
-      </header>
+      </div>
 
-      {/* ── Body: 2-column layout ────────────────────────────────────── */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-10 md:px-10">
-        <div className="mx-auto flex max-w-6xl flex-col gap-6 lg:flex-row">
+      {/* Scrollable body */}
+      <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaff] dark:bg-slate-950/40">
+        <div className="space-y-4 p-5">
+          {/* Image upload */}
+          <section>
+            <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">รูปสินค้า</label>
+            <button
+              type="button"
+              className="flex h-32 w-full cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 bg-white text-slate-400 transition hover:border-brand-300 hover:bg-brand-50/40 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-brand-500 dark:hover:bg-brand-950/30 dark:hover:text-brand-300"
+            >
+              <I.Image className="h-6 w-6 opacity-80" />
+              <span className="text-sm font-medium">ลากมาวาง หรือคลิก</span>
+            </button>
+            <p className="mt-1.5 text-[11px] text-slate-400 dark:text-slate-500">
+              รองรับ .png, .jpg, .jpeg
+            </p>
+          </section>
 
-          {/* ── Left rail: thumbnail / stock (optional) ───────────────── */}
-          <aside className="w-full shrink-0 space-y-5 lg:w-[280px]">
+          {/* Name + Price */}
+          <section className="grid grid-cols-3 gap-3">
+            <div className="col-span-3 sm:col-span-2">
+              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">ชื่อสินค้า</label>
+              <input
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                placeholder="เช่น เสื้อ Oversize Cotton"
+                className={inputClass}
+              />
+            </div>
+            <div className="col-span-3 sm:col-span-1">
+              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">ราคา (฿)</label>
+              <input
+                type="number"
+                value={form.price}
+                onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
+                placeholder="350"
+                className={inputClass}
+              />
+            </div>
+          </section>
 
-            {/* Thumbnail */}
-            <div className={sectionClass}>
-              <h3 className="mb-4 text-base font-bold text-slate-900 dark:text-white">รูปสินค้า</h3>
+          {/* Description */}
+          <section>
+            <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">รายละเอียด</label>
+            <textarea
+              value={form.description}
+              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+              placeholder="เช่น ผ้านุ่ม ใส่สบาย ระบายอากาศดี"
+              rows={3}
+              className={'resize-none ' + inputClass}
+            />
+          </section>
+
+          {/* Variants */}
+          <section>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-200">ตัวเลือกสินค้า</label>
               <button
                 type="button"
-                className="flex aspect-square w-full flex-col items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50/70 text-slate-400 transition hover:border-brand-300 hover:bg-brand-50/40 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-800/40 dark:hover:border-brand-500 dark:hover:bg-brand-950/30 dark:hover:text-brand-300"
+                onClick={() => {
+                  if (!optionsHaveContent) return;
+                  setSaveTplOpen(true);
+                }}
+                disabled={!optionsHaveContent}
+                title={optionsHaveContent ? 'บันทึกชุดตัวเลือกนี้เป็นแม่แบบ' : 'กรอกตัวเลือกก่อน'}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600 transition hover:border-brand-300 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-brand-500"
               >
-                <I.Image className="h-10 w-10 opacity-80" />
-                <span className="text-xs font-medium">ลากมาวาง หรือคลิก</span>
+                บันทึกเป็นแม่แบบ
               </button>
-              <p className="mt-3 text-center text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
-                รองรับเฉพาะ .png, .jpg, .jpeg
-              </p>
             </div>
+            <div className="space-y-2">
+              {form.optionGroups.map((g, i) => (
+                <div key={g.id} className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">ชุดที่ {i + 1}</span>
+                    {form.optionGroups.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeOptionRow(g.id)}
+                        className="text-xs font-medium text-slate-400 transition hover:text-rose-600 dark:hover:text-rose-400"
+                      >
+                        ลบ
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <input
+                      value={g.label}
+                      onChange={(e) => updateOptionRow(g.id, { label: e.target.value })}
+                      placeholder="ประเภท เช่น สี"
+                      className={inputClass}
+                    />
+                    <input
+                      value={g.valuesInput}
+                      onChange={(e) => updateOptionRow(g.id, { valuesInput: e.target.value })}
+                      placeholder="ค่า เช่น ดำ, ขาว, เทา"
+                      className={inputClass}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={addOptionRow}
+              className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 px-4 py-2 text-sm font-medium text-slate-500 transition hover:border-brand-400 hover:bg-brand-50/40 hover:text-brand-600 dark:border-slate-700 dark:text-slate-400 dark:hover:border-brand-500 dark:hover:bg-brand-950/30 dark:hover:text-brand-300"
+            >
+              <I.Plus className="h-4 w-4" />
+              เพิ่มตัวเลือก
+            </button>
 
-            {/* Stock — optional */}
-            <div className={sectionClass}>
-              <h3 className="mb-1 text-base font-bold text-slate-900 dark:text-white">สต๊อก</h3>
-              <p className="mb-3 text-[11px] text-slate-400 dark:text-slate-500">ไม่บังคับ — เว้นว่างได้</p>
-              <label className="sr-only" htmlFor="shop-product-stock">
-                จำนวนสต๊อก
+            {saveTplOpen && (
+              <div className="mt-3 rounded-xl border border-brand-200 bg-brand-50/60 p-3 dark:border-brand-800 dark:bg-brand-950/40">
+                <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-200">ตั้งชื่อแม่แบบ</label>
+                <input
+                  autoFocus
+                  value={tplDraftName}
+                  onChange={(e) => setTplDraftName(e.target.value)}
+                  placeholder="เช่น เสื้อยืดของฉัน"
+                  className={'mb-2 ' + inputClass}
+                />
+                <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-200">ไอคอน</label>
+                <div className="mb-3 flex flex-wrap gap-1">
+                  {TEMPLATE_EMOJI_OPTIONS.map((em) => (
+                    <button
+                      key={em}
+                      type="button"
+                      onClick={() => setTplDraftEmoji(em)}
+                      className={
+                        'grid h-8 w-8 place-items-center rounded-lg border text-lg transition ' +
+                        (tplDraftEmoji === em
+                          ? 'border-brand-400 bg-white ring-2 ring-brand-200 dark:border-brand-500 dark:bg-slate-800 dark:ring-brand-900'
+                          : 'border-slate-200 bg-white hover:border-brand-300 dark:border-slate-700 dark:bg-slate-900')
+                      }
+                    >
+                      {em}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={closeSaveTpl}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                  >
+                    ยกเลิก
+                  </button>
+                  <button
+                    type="button"
+                    onClick={submitSaveTpl}
+                    disabled={!tplDraftName.trim()}
+                    className="rounded-lg bg-brand-600 px-4 py-1 text-xs font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-brand-500 dark:hover:bg-brand-400"
+                  >
+                    บันทึก
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* Selling points + stock */}
+          <section className="grid grid-cols-3 gap-3">
+            <div className="col-span-3 sm:col-span-2">
+              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">จุดเด่น</label>
+              <textarea
+                value={form.sellingPoints}
+                onChange={(e) => setForm((f) => ({ ...f, sellingPoints: e.target.value }))}
+                placeholder="เช่น ส่งไว, ผ้านุ่ม, กันน้ำ"
+                rows={2}
+                className={'resize-none ' + inputClass}
+              />
+            </div>
+            <div className="col-span-3 sm:col-span-1">
+              <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">
+                สต๊อก <span className="font-normal text-slate-400">(ไม่บังคับ)</span>
               </label>
               <input
-                id="shop-product-stock"
                 type="number"
                 min={0}
                 value={form.stock}
@@ -628,172 +807,10 @@ function AddForm({
                 className={inputClass}
               />
             </div>
-          </aside>
-
-          {/* ── Main content: stacked cards ─────────────────────────── */}
-          <div className="flex-1 space-y-5">
-
-            {/* General info */}
-            <section className={sectionClass}>
-              <h2 className="mb-5 text-lg font-bold text-slate-900 dark:text-white">ข้อมูลทั่วไป</h2>
-              <div className="space-y-4">
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="col-span-3 sm:col-span-2">
-                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">ชื่อสินค้า</label>
-                    <input
-                      value={form.name}
-                      onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                      placeholder="เช่น เสื้อ Oversize Cotton"
-                      className={inputClass}
-                    />
-                  </div>
-                  <div className="col-span-3 sm:col-span-1">
-                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">ราคา (฿)</label>
-                    <input
-                      type="number"
-                      value={form.price}
-                      onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
-                      placeholder="350"
-                      className={inputClass}
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">รายละเอียด</label>
-                  <textarea
-                    value={form.description}
-                    onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-                    placeholder="เช่น ผ้านุ่ม ใส่สบาย ระบายอากาศดี"
-                    rows={3}
-                    className={'resize-none ' + inputClass}
-                  />
-                </div>
-              </div>
-            </section>
-
-            {/* Variants */}
-            <section className={sectionClass}>
-              <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-                <h2 className="text-lg font-bold text-slate-900 dark:text-white">ตัวเลือกสินค้า</h2>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!optionsHaveContent) return;
-                    setSaveTplOpen(true);
-                  }}
-                  disabled={!optionsHaveContent}
-                  title={optionsHaveContent ? 'บันทึกชุดตัวเลือกนี้เป็นแม่แบบ' : 'กรอกตัวเลือกก่อน'}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-brand-300 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-brand-500"
-                >
-                  บันทึกเป็นแม่แบบ
-                </button>
-              </div>
-
-              <div className="grid gap-3 lg:grid-cols-2">
-                {form.optionGroups.map((g, i) => (
-                  <div key={g.id} className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 dark:border-slate-700 dark:bg-slate-800/40">
-                    <div className="mb-3 flex items-center justify-between">
-                      <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">ชุดที่ {i + 1}</span>
-                      {form.optionGroups.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => removeOptionRow(g.id)}
-                          className="text-xs font-medium text-slate-400 transition hover:text-rose-600 dark:hover:text-rose-400"
-                        >
-                          ลบ
-                        </button>
-                      )}
-                    </div>
-                    <input
-                      value={g.label}
-                      onChange={(e) => updateOptionRow(g.id, { label: e.target.value })}
-                      placeholder="ประเภท เช่น สี, ขนาด"
-                      className={'mb-2 ' + inputClass}
-                    />
-                    <input
-                      value={g.valuesInput}
-                      onChange={(e) => updateOptionRow(g.id, { valuesInput: e.target.value })}
-                      placeholder="ค่าที่เลือก เช่น ดำ, ขาว, เทา"
-                      className={inputClass}
-                    />
-                  </div>
-                ))}
-              </div>
-
-              <button
-                type="button"
-                onClick={addOptionRow}
-                className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-500 transition hover:border-brand-400 hover:bg-brand-50/40 hover:text-brand-600 dark:border-slate-700 dark:text-slate-400 dark:hover:border-brand-500 dark:hover:bg-brand-950/30 dark:hover:text-brand-300"
-              >
-                <I.Plus className="h-4 w-4" />
-                เพิ่มตัวเลือก
-              </button>
-
-              {saveTplOpen && (
-                <div className="mt-4 rounded-xl border border-brand-200 bg-brand-50/60 p-4 dark:border-brand-800 dark:bg-brand-950/40">
-                  <label className="mb-1.5 block text-xs font-medium text-slate-700 dark:text-slate-200">ตั้งชื่อแม่แบบ</label>
-                  <input
-                    autoFocus
-                    value={tplDraftName}
-                    onChange={(e) => setTplDraftName(e.target.value)}
-                    placeholder="เช่น เสื้อยืดของฉัน"
-                    className={'mb-3 ' + inputClass}
-                  />
-                  <label className="mb-1.5 block text-xs font-medium text-slate-700 dark:text-slate-200">เลือกไอคอน</label>
-                  <div className="mb-4 flex flex-wrap gap-1">
-                    {TEMPLATE_EMOJI_OPTIONS.map((em) => (
-                      <button
-                        key={em}
-                        type="button"
-                        onClick={() => setTplDraftEmoji(em)}
-                        className={
-                          'grid h-9 w-9 place-items-center rounded-lg border text-lg transition ' +
-                          (tplDraftEmoji === em
-                            ? 'border-brand-400 bg-white ring-2 ring-brand-200 dark:border-brand-500 dark:bg-slate-800 dark:ring-brand-900'
-                            : 'border-slate-200 bg-white hover:border-brand-300 dark:border-slate-700 dark:bg-slate-900')
-                        }
-                      >
-                        {em}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="flex justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={closeSaveTpl}
-                      className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-                    >
-                      ยกเลิก
-                    </button>
-                    <button
-                      type="button"
-                      onClick={submitSaveTpl}
-                      disabled={!tplDraftName.trim()}
-                      className="rounded-lg bg-brand-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-brand-500 dark:hover:bg-brand-400"
-                    >
-                      บันทึก
-                    </button>
-                  </div>
-                </div>
-              )}
-            </section>
-
-            {/* Extras: selling points */}
-            <section className={sectionClass}>
-              <h2 className="mb-5 text-lg font-bold text-slate-900 dark:text-white">จุดเด่น</h2>
-              <textarea
-                value={form.sellingPoints}
-                onChange={(e) => setForm((f) => ({ ...f, sellingPoints: e.target.value }))}
-                placeholder="เช่น ส่งไว, ผ้านุ่ม, กันน้ำ"
-                rows={2}
-                aria-label="จุดเด่น"
-                className={'resize-none ' + inputClass}
-              />
-            </section>
-          </div>
+          </section>
         </div>
       </div>
-    </div>
+    </>
   );
 }
 
