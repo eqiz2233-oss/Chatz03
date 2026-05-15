@@ -489,7 +489,6 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
                   { key: 'id' as SortKey,       label: t('orders.th.id'),       cls: 'w-32' },
                   { key: null,                  label: t('orders.th.product'),  cls: '' },
                   { key: 'status' as SortKey,   label: t('orders.th.status'),   cls: 'min-w-[10rem]' },
-                  { key: null,                  label: t('orders.th.channel'),  cls: 'w-20 text-center' },
                   { key: 'amount' as SortKey,   label: t('orders.th.amount'),   cls: 'w-28 text-right' },
                   { key: 'date' as SortKey,     label: t('orders.th.date'),     cls: 'w-28' },
                   { key: null,                  label: '',                       cls: 'w-24' },
@@ -517,7 +516,7 @@ export function OrdersView({ onGoToChat }: { onGoToChat: (req: InboxFocusRequest
           <tbody className="divide-y divide-slate-100 bg-white dark:divide-slate-800/60 dark:bg-slate-900">
             {displayed.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-4 py-16 text-center text-sm text-slate-400 dark:text-slate-500">
+                <td colSpan={8} className="px-4 py-16 text-center text-sm text-slate-400 dark:text-slate-500">
                   {t('orders.empty')}
                 </td>
               </tr>
@@ -615,7 +614,6 @@ function OrderRow({
   onSlipPreview: (url: string) => void;
 }) {
   const hasSlipImg = Boolean(o.slipImageUrl?.trim());
-  const color = avatarColor(o.customer);
   const cstId = shortId(o.customer + o.shop);
   const payBadge = PAYMENT_BADGE[o.status];
 
@@ -626,12 +624,18 @@ function OrderRow({
         {rowNum}
       </td>
 
-      {/* Customer */}
+      {/* Customer — channel icon opens chat */}
       <td className="px-4 py-4">
         <div className="flex items-center gap-3">
-          <span className={'grid h-9 w-9 shrink-0 place-items-center rounded-full text-[11px] font-bold text-white ' + color}>
-            {initials(o.customer)}
-          </span>
+          <button
+            type="button"
+            onClick={() => onGoToChat(o)}
+            title={t('orders.goToChat')}
+            aria-label={`${t('orders.goToChat')} — ${o.customer}`}
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 transition hover:bg-brand-100 hover:ring-2 hover:ring-brand-300 dark:bg-slate-800 dark:hover:bg-brand-900/50 dark:hover:ring-brand-700"
+          >
+            <ChannelIcon channel={o.channel} className="h-5 w-5" />
+          </button>
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{o.customer}</div>
             <div className="font-mono text-[11px] text-slate-400 dark:text-slate-500">{cstId}</div>
@@ -675,18 +679,6 @@ function OrderRow({
             </button>
           )}
         </div>
-      </td>
-
-      {/* Channel — click to open chat */}
-      <td className="px-4 py-4 text-center">
-        <button
-          type="button"
-          onClick={() => onGoToChat(o)}
-          title="ไปที่แชท"
-          className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 transition hover:bg-brand-100 hover:ring-2 hover:ring-brand-300 dark:bg-slate-800 dark:hover:bg-brand-900/50 dark:hover:ring-brand-700"
-        >
-          <ChannelIcon channel={o.channel} className="h-4 w-4" />
-        </button>
       </td>
 
       {/* Amount */}
