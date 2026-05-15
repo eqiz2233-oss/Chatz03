@@ -17,13 +17,16 @@ import {
   updateUserPasswordHash,
   kvGet,
   kvSet,
+  listShopsForUser,
+  isShopMember,
+  DEFAULT_SHOP_ID,
 } from './db.js';
 
 const COOKIE_NAME = 'chatz_sid';
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const SESSION_KV_KEY = 'auth.sessions.v1';
 
-/** @type {Map<string, { userId: string; createdAt: number; lastUsedAt: number }>} */
+/** @type {Map<string, { userId: string; createdAt: number; lastUsedAt: number; activeShopId?: string|null }>} */
 const sessions = new Map();
 
 let loadedSessionsOnce = false;
@@ -94,9 +97,13 @@ export async function login(username, password) {
   await lazyLoadSessions();
   const token = genToken();
   const now = Date.now();
-  sessions.set(token, { userId: user.id, createdAt: now, lastUsedAt: now });
+  // Pick the user's first shop as their active shop by default. New users
+  // typically have exactly one (the default shop they were seeded into).
+  const shops = await listShopsForUser(user.id);
+  const activeShopId = shops[0]?.id || DEFAULT_SHOP_ID;
+  sessions.set(token, { userId: user.id, createdAt: now, lastUsedAt: now, activeShopId });
   scheduleSaveSessions();
-  return { ok: true, token, user: publicUser(user) };
+  return { ok: true, token, user: publicUser(user), activeShopId };
 }
 
 export async function logout(token) {
@@ -121,16 +128,48 @@ export async function userFromRequest(req) {
   s.lastUsedAt = Date.now();
   const user = await findUserById(s.userId);
   if (!user) return null;
-  return publicUser(user);
+  return publicUser(user, { activeShopId: s.activeShopId || null });
 }
 
-export function publicUser(user) {
+/** Return the active shop id from the session cookie (or null). */
+export async function activeShopIdFromRequest(req) {
+  await lazyLoadSessions();
+  const cookies = parseCookies(req.headers.cookie);
+  const token = cookies[COOKIE_NAME];
+  if (!token) return null;
+  const s = sessions.get(token);
+  if (!s) return null;
+  if (s.activeShopId) return s.activeShopId;
+  // Lazy backfill if older sessions never recorded one.
+  const shops = await listShopsForUser(s.userId);
+  s.activeShopId = shops[0]?.id || DEFAULT_SHOP_ID;
+  scheduleSaveSessions();
+  return s.activeShopId;
+}
+
+/** Switch the session's active shop, after checking membership. */
+export async function setActiveShopForRequest(req, shopId) {
+  await lazyLoadSessions();
+  const cookies = parseCookies(req.headers.cookie);
+  const token = cookies[COOKIE_NAME];
+  if (!token) return { ok: false, reason: 'no_session' };
+  const s = sessions.get(token);
+  if (!s) return { ok: false, reason: 'no_session' };
+  const member = await isShopMember(shopId, s.userId);
+  if (!member) return { ok: false, reason: 'not_a_member' };
+  s.activeShopId = shopId;
+  scheduleSaveSessions();
+  return { ok: true, activeShopId: shopId };
+}
+
+export function publicUser(user, extras = {}) {
   if (!user) return null;
   return {
     id: user.id,
     username: user.username,
     role: user.role,
     displayName: user.display_name || user.displayName || null,
+    ...extras,
   };
 }
 

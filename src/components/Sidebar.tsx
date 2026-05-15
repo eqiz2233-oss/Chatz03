@@ -72,10 +72,11 @@ interface ProfileMenuProps {
   active: View;
   displayName: string;
   username: string;
+  shopName?: string | null;
   onLogout: () => void;
 }
 
-function ProfileMenu({ pos, onClose, onNavigate, active, displayName, username, onLogout }: ProfileMenuProps) {
+function ProfileMenu({ pos, onClose, onNavigate, active, displayName, username, shopName, onLogout }: ProfileMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
 
@@ -151,6 +152,17 @@ function ProfileMenu({ pos, onClose, onNavigate, active, displayName, username, 
         </div>
       </div>
 
+      {/* Active shop strip (Phase 1: display-only; shop switcher arrives in Phase 3) */}
+      {shopName && (
+        <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-2.5 dark:border-slate-800">
+          <I.Store className="h-4 w-4 text-slate-400 dark:text-slate-500" />
+          <div className="min-w-0 flex-1">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">ร้านที่กำลังใช้งาน</div>
+            <div className="truncate text-xs font-semibold text-slate-700 dark:text-slate-200">{shopName}</div>
+          </div>
+        </div>
+      )}
+
       {/* Menu items */}
       <div className="p-1.5">
         <MenuBtn
@@ -218,7 +230,7 @@ function MenuBtn({
 
 export function Sidebar({ active, onChange }: Props) {
   const { t } = useAppPreferences();
-  const { user, logout } = useAuth();
+  const { user, logout, activeShop } = useAuth();
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -458,6 +470,7 @@ export function Sidebar({ active, onChange }: Props) {
           active={active}
           displayName={user.displayName || user.username}
           username={user.username}
+          shopName={activeShop?.name || null}
           onLogout={() => void logout()}
         />
       )}

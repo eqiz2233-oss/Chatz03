@@ -38,6 +38,10 @@ import {
   chatEventsByDay,
   kvGet,
   kvSet,
+  listShops,
+  listShopsForUser,
+  findShopById,
+  DEFAULT_SHOP_ID,
 } from './db.js';
 import {
   bootstrapAuth,
@@ -49,6 +53,8 @@ import {
   getCookieToken,
   requireAuth,
   changePassword,
+  activeShopIdFromRequest,
+  setActiveShopForRequest,
 } from './auth.js';
 import { isAiEnabled, aiModel, generateReply, generateSlipThankYou } from './ai.js';
 
@@ -2649,8 +2655,37 @@ app.post('/api/auth/logout', async (req, res) => {
 app.get('/api/auth/me', async (req, res) => {
   try {
     const u = await userFromRequest(req);
-    if (!u) return res.json({ user: null });
-    res.json({ user: u });
+    if (!u) return res.json({ user: null, shops: [], activeShop: null });
+    const shops = await listShopsForUser(u.id);
+    const activeShopId = u.activeShopId || shops[0]?.id || DEFAULT_SHOP_ID;
+    const activeShop = shops.find((s) => s.id === activeShopId) || shops[0] || null;
+    res.json({ user: u, shops, activeShop });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+/** Switch the active shop for the current session. Body: { shopId }. */
+app.post('/api/auth/active-shop', express.json({ limit: '1kb' }), async (req, res) => {
+  const u = req.user;
+  if (!u) return res.status(401).json({ error: 'unauthorized' });
+  const shopId = String(req.body?.shopId || '').trim();
+  if (!shopId) return res.status(400).json({ error: 'shopId required' });
+  const result = await setActiveShopForRequest(req, shopId);
+  if (!result.ok) {
+    const code = result.reason === 'not_a_member' ? 403 : 400;
+    return res.status(code).json({ error: result.reason });
+  }
+  res.json({ ok: true, activeShopId: result.activeShopId });
+});
+
+/** Lightweight: list the current user's shops. */
+app.get('/api/shops', async (req, res) => {
+  const u = req.user;
+  if (!u) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const shops = await listShopsForUser(u.id);
+    res.json({ shops });
   } catch (e) {
     res.status(500).json({ error: String(e?.message || e) });
   }
