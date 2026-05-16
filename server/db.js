@@ -81,6 +81,7 @@ function loadJsonSync() {
     memo.users = Array.isArray(raw?.users) ? raw.users : [];
     memo.shops = Array.isArray(raw?.shops) ? raw.shops : [];
     memo.shopMembers = Array.isArray(raw?.shopMembers) ? raw.shopMembers : [];
+    memo.shopInvites = Array.isArray(raw?.shopInvites) ? raw.shopInvites : [];
     memo.products = Array.isArray(raw?.products) ? raw.products : [];
     memo.orders = Array.isArray(raw?.orders) ? raw.orders : [];
     memo.slipActions = Array.isArray(raw?.slipActions) ? raw.slipActions : [];
@@ -366,6 +367,156 @@ export async function isShopMember(shopId, userId) {
     return rows.length > 0;
   }
   return memo.shopMembers.some((m) => m.shop_id === shopId && m.user_id === userId);
+}
+
+/** List every user on this shop, joined with their public profile fields. */
+export async function listShopMembers(shopId) {
+  if (!shopId) return [];
+  if (pool) {
+    const { rows } = await pool.query(
+      `SELECT m.user_id, m.role, m.joined_at,
+              u.username, u.display_name, u.email, u.avatar_url
+         FROM shop_members m
+         JOIN users u ON u.id = m.user_id
+        WHERE m.shop_id = $1
+        ORDER BY m.joined_at ASC`,
+      [shopId],
+    );
+    return rows.map((r) => ({
+      id: r.user_id,
+      username: r.username,
+      displayName: r.display_name,
+      email: r.email,
+      avatarUrl: r.avatar_url,
+      role: r.role,
+      joinedAt: r.joined_at,
+    }));
+  }
+  return memo.shopMembers
+    .filter((m) => m.shop_id === shopId)
+    .map((m) => {
+      const u = memo.users.find((x) => x.id === m.user_id);
+      return u
+        ? {
+            id: u.id,
+            username: u.username,
+            displayName: u.display_name,
+            email: u.email,
+            avatarUrl: u.avatar_url,
+            role: m.role,
+            joinedAt: m.joined_at,
+          }
+        : null;
+    })
+    .filter(Boolean);
+}
+
+/** Kick a user out of a shop. No-op if they weren't a member. */
+export async function removeShopMember(shopId, userId) {
+  if (!shopId || !userId) return false;
+  if (pool) {
+    const r = await pool.query(
+      'DELETE FROM shop_members WHERE shop_id=$1 AND user_id=$2',
+      [shopId, userId],
+    );
+    return r.rowCount > 0;
+  }
+  const before = memo.shopMembers.length;
+  memo.shopMembers = memo.shopMembers.filter(
+    (m) => !(m.shop_id === shopId && m.user_id === userId),
+  );
+  const removed = memo.shopMembers.length < before;
+  if (removed) scheduleJsonSave();
+  return removed;
+}
+
+// --------------------------------------------------------------------------
+// SHOP INVITES — short-lived tokens an owner generates to bring a teammate
+// into their shop without needing the teammate to already exist as a user.
+//
+// Lifecycle: create → share URL → recipient signs up / logs in → accept →
+// row deleted. Tokens expire after 7 days; daily prune keeps the table tidy.
+// --------------------------------------------------------------------------
+
+const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+async function ensureShopInvitesTable() {
+  if (!pool) return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS shop_invites (
+      token TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+      role TEXT NOT NULL DEFAULT 'staff',
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS shop_invites_shop_idx ON shop_invites(shop_id);
+  `);
+}
+
+export async function createShopInvite({ shopId, token, role = 'staff', createdBy = null }) {
+  if (!shopId || !token) throw new Error('createShopInvite requires shopId + token');
+  await ensureShopInvitesTable();
+  const expiresAt = new Date(Date.now() + INVITE_TTL_MS).toISOString();
+  if (pool) {
+    await pool.query(
+      `INSERT INTO shop_invites (token, shop_id, role, created_by, expires_at)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [token, shopId, role, createdBy, expiresAt],
+    );
+    return { token, shopId, role, createdBy, expiresAt };
+  }
+  memo.shopInvites = memo.shopInvites || [];
+  const row = { token, shop_id: shopId, role, created_by: createdBy, created_at: new Date().toISOString(), expires_at: expiresAt };
+  memo.shopInvites.push(row);
+  scheduleJsonSave();
+  return { token, shopId, role, createdBy, expiresAt };
+}
+
+export async function findShopInvite(token) {
+  if (!token) return null;
+  await ensureShopInvitesTable();
+  if (pool) {
+    const { rows } = await pool.query(
+      `SELECT i.token, i.shop_id, i.role, i.created_by, i.expires_at,
+              s.name AS shop_name
+         FROM shop_invites i
+         JOIN shops s ON s.id = i.shop_id
+        WHERE i.token = $1 LIMIT 1`,
+      [token],
+    );
+    const r = rows[0];
+    if (!r) return null;
+    if (new Date(r.expires_at).getTime() < Date.now()) return null;
+    return { token: r.token, shopId: r.shop_id, role: r.role, createdBy: r.created_by, expiresAt: r.expires_at, shopName: r.shop_name };
+  }
+  const memoRow = (memo.shopInvites || []).find((x) => x.token === token);
+  if (!memoRow) return null;
+  if (new Date(memoRow.expires_at).getTime() < Date.now()) return null;
+  const shop = memo.shops.find((s) => s.id === memoRow.shop_id);
+  return {
+    token: memoRow.token,
+    shopId: memoRow.shop_id,
+    role: memoRow.role,
+    createdBy: memoRow.created_by,
+    expiresAt: memoRow.expires_at,
+    shopName: shop?.name || null,
+  };
+}
+
+export async function consumeShopInvite(token) {
+  if (!token) return false;
+  await ensureShopInvitesTable();
+  if (pool) {
+    const r = await pool.query('DELETE FROM shop_invites WHERE token=$1', [token]);
+    return r.rowCount > 0;
+  }
+  const before = (memo.shopInvites || []).length;
+  memo.shopInvites = (memo.shopInvites || []).filter((x) => x.token !== token);
+  const removed = memo.shopInvites.length < before;
+  if (removed) scheduleJsonSave();
+  return removed;
 }
 
 // --------------------------------------------------------------------------

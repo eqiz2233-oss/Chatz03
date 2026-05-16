@@ -41,6 +41,13 @@ import {
   listShops,
   listShopsForUser,
   findShopById,
+  listShopMembers,
+  removeShopMember,
+  addShopMember,
+  isShopMember,
+  createShopInvite,
+  findShopInvite,
+  consumeShopInvite,
   DEFAULT_SHOP_ID,
 } from './db.js';
 import {
@@ -1477,6 +1484,9 @@ const AUTH_ALLOWLIST = [
   '/api/auth/oauth-config',
   '/api/auth/oauth/google',
   '/api/auth/oauth/facebook',
+  '/api/shops/invites/', // GET preview is public; POST accept still checks req.user
+  '/invite/',            // SPA route — frontend renders the accept screen
+
   '/api/line/webhook',
   '/api/line/oauth/start',
   '/api/line/oauth/callback',
@@ -3220,6 +3230,138 @@ app.get('/api/shops', async (req, res) => {
   try {
     const shops = await listShopsForUser(u.id);
     res.json({ shops });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+// ─── Team / member management ────────────────────────────────────────────────
+//
+// Membership lives in shop_members; this section adds the actions a shop owner
+// needs to bring in collaborators (shareable invite link) and remove them
+// later. Permissions:
+//   - any member can list teammates (so they see who else has access)
+//   - only owner can create invites or remove members
+//   - members can leave themselves (remove their own row)
+
+async function requireShopOwner(req, res, shopId) {
+  const u = req.user;
+  if (!u) { res.status(401).json({ error: 'unauthorized' }); return null; }
+  const members = await listShopMembers(shopId);
+  const me = members.find((m) => m.id === u.id);
+  if (!me) { res.status(403).json({ error: 'not_a_member' }); return null; }
+  if (me.role !== 'owner') { res.status(403).json({ error: 'owner_only' }); return null; }
+  return { me, members };
+}
+
+app.get('/api/shops/:shopId/members', async (req, res) => {
+  const u = req.user;
+  if (!u) return res.status(401).json({ error: 'unauthorized' });
+  const shopId = String(req.params.shopId || '');
+  if (!(await isShopMember(shopId, u.id))) return res.status(403).json({ error: 'not_a_member' });
+  try {
+    const members = await listShopMembers(shopId);
+    res.json({ members });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+/**
+ * Owner generates a one-time invite token. Response includes the shareable
+ * URL the owner can paste into LINE / IG / wherever — Chatz doesn't need to
+ * send the email itself (avoids the SMTP provider dependency).
+ */
+app.post('/api/shops/:shopId/invites', express.json({ limit: '1kb' }), async (req, res) => {
+  const shopId = String(req.params.shopId || '');
+  const auth = await requireShopOwner(req, res, shopId);
+  if (!auth) return; // response already written
+  try {
+    const role = req.body?.role === 'owner' ? 'owner' : 'staff';
+    const token = crypto.randomBytes(24).toString('base64url');
+    const created = await createShopInvite({
+      shopId,
+      token,
+      role,
+      createdBy: auth.me.id,
+    });
+    const url = `${publicBaseUrl(req)}/invite/${encodeURIComponent(token)}`;
+    res.json({ invite: { ...created, url } });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+/**
+ * Public preview — anyone with the token can fetch shop name + role.
+ * Caller's auth state doesn't matter (they might still be on the sign-up
+ * page). Acceptance, however, is auth-required.
+ */
+app.get('/api/shops/invites/:token', async (req, res) => {
+  try {
+    const invite = await findShopInvite(String(req.params.token || ''));
+    if (!invite) return res.status(404).json({ error: 'invalid_or_expired' });
+    res.json({ invite: { shopId: invite.shopId, shopName: invite.shopName, role: invite.role, expiresAt: invite.expiresAt } });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+/**
+ * Current user accepts the invite — must be signed in first.
+ *
+ * Path lives under `/api/shops/invites/` which is in the auth allowlist
+ * (so the public preview endpoint stays reachable without login). That
+ * means req.user is NOT pre-populated; resolve the session by hand here.
+ */
+app.post('/api/shops/invites/:token/accept', async (req, res) => {
+  const u = await userFromRequest(req);
+  if (!u) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const invite = await findShopInvite(String(req.params.token || ''));
+    if (!invite) return res.status(404).json({ error: 'invalid_or_expired' });
+    if (await isShopMember(invite.shopId, u.id)) {
+      // Already a member — burn the token so it can't be reused.
+      await consumeShopInvite(invite.token);
+      return res.json({ ok: true, shopId: invite.shopId, alreadyMember: true });
+    }
+    await addShopMember({ shopId: invite.shopId, userId: u.id, role: invite.role });
+    await consumeShopInvite(invite.token);
+    res.json({ ok: true, shopId: invite.shopId });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+/**
+ * Owner removes a teammate, OR a non-owner removes themselves (leave shop).
+ * Last remaining owner can't be removed — guard against locking the shop out.
+ */
+app.delete('/api/shops/:shopId/members/:userId', async (req, res) => {
+  const u = req.user;
+  if (!u) return res.status(401).json({ error: 'unauthorized' });
+  const shopId = String(req.params.shopId || '');
+  const targetUserId = String(req.params.userId || '');
+  try {
+    const members = await listShopMembers(shopId);
+    const me = members.find((m) => m.id === u.id);
+    if (!me) return res.status(403).json({ error: 'not_a_member' });
+    const target = members.find((m) => m.id === targetUserId);
+    if (!target) return res.status(404).json({ error: 'not_a_member' });
+
+    // Permission: owner can remove anyone, members can only remove themselves.
+    if (me.role !== 'owner' && me.id !== targetUserId) {
+      return res.status(403).json({ error: 'owner_only' });
+    }
+    // Guard: can't remove the last owner (would lock the shop out).
+    if (target.role === 'owner') {
+      const otherOwners = members.filter((m) => m.role === 'owner' && m.id !== targetUserId);
+      if (otherOwners.length === 0) {
+        return res.status(409).json({ error: 'last_owner' });
+      }
+    }
+    await removeShopMember(shopId, targetUserId);
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: String(e?.message || e) });
   }
