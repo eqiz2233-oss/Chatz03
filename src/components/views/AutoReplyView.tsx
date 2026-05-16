@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAppPreferences } from '../../context/AppPreferencesContext';
 import type { Locale } from '../../i18n/messages';
 import { I } from '../Icons';
@@ -14,16 +14,14 @@ import { I } from '../Icons';
  *
  * Sections (top → bottom = least-touched → most-touched):
  *   1. บุคลิกของบอท (persona presets)
- *   2. น้ำเสียงของแบรนด์ (free-form brand voice)
- *   3. ข้อความทักทาย (greeting message — sent on first customer contact)
- *   4. ข้อความเมื่อไม่เข้าใจ (fallback message — bot can't answer)
- *   5. ข้อความเมื่อไม่อยู่ (away message — outside business hours)
- *   6. คำตอบสำเร็จรูป (quick replies — chips owner can tap to send)
- *   7. ตอบอัตโนมัติด้วยคำสำคัญ (keyword rules — first match wins, no AI tokens)
+ *   2. ข้อความทักทาย (greeting message — sent on first customer contact)
+ *   3. ข้อความเมื่อไม่เข้าใจ (fallback message — bot can't answer)
+ *   4. ข้อความเมื่อไม่อยู่ (away message — outside business hours)
+ *   5. คำตอบสำเร็จรูป (quick replies — chips owner can tap to send)
+ *   6. ตอบอัตโนมัติด้วยคำสำคัญ (keyword rules — first match wins, no AI tokens)
  */
 
 interface BotSettingsExt {
-  brandVoice: string;
   botPersona: 'friendly' | 'formal' | 'playful' | 'professional';
   greetingMessage: string;
   greetingEnabled: boolean;
@@ -36,7 +34,6 @@ interface BotSettingsExt {
 }
 
 const DEFAULT_EXT: BotSettingsExt = {
-  brandVoice: '',
   botPersona: 'friendly',
   greetingMessage: '',
   greetingEnabled: true,
@@ -49,7 +46,7 @@ const DEFAULT_EXT: BotSettingsExt = {
 };
 
 export function AutoReplyView() {
-  const { t, locale } = useAppPreferences();
+  const { locale } = useAppPreferences();
   const [settings, setSettings] = useState<BotSettingsExt>(DEFAULT_EXT);
   const [loaded, setLoaded] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -160,72 +157,51 @@ export function AutoReplyView() {
             </div>
           </SectionCard>
 
-          {/* 2. น้ำเสียงของแบรนด์ */}
+          {/* 2. ข้อความอัตโนมัติ */}
           <SectionCard
-            title={th ? 'น้ำเสียงของแบรนด์' : 'Brand voice'}
-            desc={th
-              ? 'อธิบายโทนการพูดและคำพูดที่อยากให้บอทใช้ (เพิ่มเติมจากบุคลิก)'
-              : 'Describe the brand-specific voice on top of the persona'}
+            title={th ? 'ข้อความอัตโนมัติ' : 'Auto messages'}
+            desc={th ? 'ข้อความที่บอทส่งในสถานการณ์ต่างๆ' : 'Messages the bot sends in different situations'}
           >
-            <textarea
-              className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:ring-brand-900/30"
-              rows={3}
-              value={settings.brandVoice}
-              onChange={(e) => set('brandVoice', e.target.value)}
-              placeholder={t('settings.brandVoicePlaceholder')}
-            />
+            <div className="space-y-4">
+              <div>
+                <div className="mb-1.5 flex items-center justify-between">
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                    {th ? 'ข้อความต้อนรับ' : 'Greeting'}
+                  </label>
+                  <Switch
+                    checked={settings.greetingEnabled}
+                    onChange={(v) => set('greetingEnabled', v)}
+                    label="enable greeting"
+                  />
+                </div>
+                <textarea
+                  className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:ring-brand-900/30 disabled:opacity-50"
+                  rows={2}
+                  disabled={!settings.greetingEnabled}
+                  value={settings.greetingMessage}
+                  onChange={(e) => set('greetingMessage', e.target.value)}
+                  placeholder={th ? 'สวัสดีค่ะ มีอะไรให้ช่วยไหมคะ 😊' : 'Hi! How can we help today? 😊'}
+                />
+              </div>
+              <div className="border-t border-slate-100 pt-4 dark:border-slate-800">
+                <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">
+                  {th ? 'ข้อความเมื่อบอทตอบไม่ได้' : 'Fallback'}
+                </label>
+                <textarea
+                  className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:ring-brand-900/30"
+                  rows={2}
+                  value={settings.fallbackMessage}
+                  onChange={(e) => set('fallbackMessage', e.target.value)}
+                  placeholder={th ? 'ขอโทษนะคะ จะเรียกแอดมินมาช่วยนะคะ 🙏' : "Let me get a human to help — one moment 🙏"}
+                />
+              </div>
+            </div>
           </SectionCard>
 
-          {/* 3. ข้อความทักทาย */}
+          {/* 3. เวลาทำการ */}
           <SectionCard
-            title={th ? 'ข้อความทักทาย' : 'Greeting message'}
-            desc={th
-              ? 'ข้อความแรกที่บอทส่งหาลูกค้าเมื่อเริ่มแชท'
-              : 'First message the bot sends when a customer starts a chat'}
-            accessory={
-              <Switch
-                checked={settings.greetingEnabled}
-                onChange={(v) => set('greetingEnabled', v)}
-                label="enable greeting"
-              />
-            }
-          >
-            <textarea
-              className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:ring-brand-900/30 disabled:opacity-50"
-              rows={3}
-              disabled={!settings.greetingEnabled}
-              value={settings.greetingMessage}
-              onChange={(e) => set('greetingMessage', e.target.value)}
-              placeholder={th
-                ? 'สวัสดีค่ะ ขอบคุณที่ทักเข้ามานะคะ มีอะไรให้ช่วยไหมคะ 😊'
-                : 'Hi! Thanks for reaching out — how can we help today? 😊'}
-            />
-          </SectionCard>
-
-          {/* 4. ข้อความเมื่อไม่เข้าใจ */}
-          <SectionCard
-            title={th ? 'ข้อความเมื่อไม่เข้าใจ' : 'Fallback message'}
-            desc={th
-              ? 'ใช้เมื่อบอทไม่เข้าใจคำถามและจะส่งต่อให้แอดมิน'
-              : 'Used when the bot cannot answer and is handing off to a human'}
-          >
-            <textarea
-              className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:ring-brand-900/30"
-              rows={2}
-              value={settings.fallbackMessage}
-              onChange={(e) => set('fallbackMessage', e.target.value)}
-              placeholder={th
-                ? 'ขอโทษนะคะ ขอเรียกแอดมินมาตอบให้นะคะ รอสักครู่ค่ะ 🙏'
-                : "I'll bring in a human to help you with that — one moment please 🙏"}
-            />
-          </SectionCard>
-
-          {/* 5. ข้อความเมื่อไม่อยู่ */}
-          <SectionCard
-            title={th ? 'ข้อความนอกเวลาทำการ' : 'Away message'}
-            desc={th
-              ? 'ส่งให้ลูกค้าทราบว่าตอนนี้นอกเวลา จะตอบกลับเมื่อไหร่'
-              : 'Tell customers when they will hear back after-hours'}
+            title={th ? 'เวลาทำการ' : 'Business hours'}
+            desc={th ? 'ตั้งเวลาและข้อความเมื่อนอกเวลาทำการ' : 'Set hours and an after-hours message'}
             accessory={
               <Switch
                 checked={settings.awayEnabled}
@@ -238,25 +214,25 @@ export function AutoReplyView() {
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
                   <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                    {th ? 'เริ่ม' : 'From'}
-                  </div>
-                  <input
-                    type="time"
-                    disabled={!settings.awayEnabled}
-                    value={settings.awayStart}
-                    onChange={(e) => set('awayStart', e.target.value)}
-                    className="input text-sm disabled:opacity-50"
-                  />
-                </label>
-                <label className="block">
-                  <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                    {th ? 'ถึง' : 'To'}
+                    {th ? 'เปิด' : 'Open'}
                   </div>
                   <input
                     type="time"
                     disabled={!settings.awayEnabled}
                     value={settings.awayEnd}
                     onChange={(e) => set('awayEnd', e.target.value)}
+                    className="input text-sm disabled:opacity-50"
+                  />
+                </label>
+                <label className="block">
+                  <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                    {th ? 'ปิด' : 'Close'}
+                  </div>
+                  <input
+                    type="time"
+                    disabled={!settings.awayEnabled}
+                    value={settings.awayStart}
+                    onChange={(e) => set('awayStart', e.target.value)}
                     className="input text-sm disabled:opacity-50"
                   />
                 </label>
@@ -268,21 +244,18 @@ export function AutoReplyView() {
                 value={settings.awayMessage}
                 onChange={(e) => set('awayMessage', e.target.value)}
                 placeholder={th
-                  ? 'ตอนนี้แอดมินยังไม่อยู่ค่ะ จะรีบกลับมาตอบในเช้าวันถัดไปนะคะ 🌙'
-                  : "We're away right now. We'll get back first thing in the morning 🌙"}
+                  ? 'ตอนนี้ปิดร้านแล้วค่ะ จะรีบตอบกลับในเช้าวันถัดไปนะคะ 🌙'
+                  : "We're closed right now — we'll reply first thing tomorrow 🌙"}
               />
             </div>
           </SectionCard>
 
-          {/* 6. คำตอบสำเร็จรูป */}
+          {/* 4. คำตอบสำเร็จรูป */}
           <QuickRepliesCard
             value={settings.quickReplies}
             onChange={(v) => set('quickReplies', v)}
             locale={locale}
           />
-
-          {/* 7. ตอบอัตโนมัติด้วยคำสำคัญ */}
-          <KeywordRulesCard locale={locale} />
         </div>
       </main>
     </div>
@@ -439,248 +412,5 @@ function QuickRepliesCard({
         </div>
       </div>
     </SectionCard>
-  );
-}
-
-// ─── Keyword auto-reply (moved here from Settings) ──────────────────────────
-
-interface KeywordRule {
-  id: string;
-  keywords: string[];
-  reply: string;
-  enabled: boolean;
-}
-
-function KeywordRulesCard({ locale }: { locale: Locale }) {
-  const [rules, setRules] = useState<KeywordRule[] | null>(null);
-  const [saving, setSaving] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingRef = useRef<KeywordRule[] | null>(null);
-  const th = locale === 'th';
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const r = await fetch('/api/bot/keyword-rules', { credentials: 'include' });
-        if (!r.ok) throw new Error(String(r.status));
-        const j = (await r.json()) as { rules: KeywordRule[] };
-        if (!cancelled) setRules(Array.isArray(j.rules) ? j.rules : []);
-      } catch {
-        if (!cancelled) setRules([]);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      const payload = pendingRef.current;
-      if (payload) {
-        void fetch('/api/bot/keyword-rules', {
-          method: 'PUT',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ rules: payload }),
-          keepalive: true,
-        });
-      }
-    };
-  }, []);
-
-  const writeServer = useCallback(async (payload: KeywordRule[]) => {
-    setSaving(true);
-    try {
-      await fetch('/api/bot/keyword-rules', {
-        method: 'PUT',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rules: payload }),
-      });
-    } catch {
-      /* user can retry */
-    } finally {
-      setSaving(false);
-    }
-  }, []);
-
-  const saveImmediate = useCallback(
-    (next: KeywordRule[]) => {
-      setRules(next);
-      pendingRef.current = null;
-      if (debounceRef.current) {
-        clearTimeout(debounceRef.current);
-        debounceRef.current = null;
-      }
-      void writeServer(next);
-    },
-    [writeServer],
-  );
-
-  const saveDebounced = useCallback(
-    (next: KeywordRule[]) => {
-      setRules(next);
-      pendingRef.current = next;
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => {
-        debounceRef.current = null;
-        const payload = pendingRef.current;
-        if (!payload) return;
-        pendingRef.current = null;
-        void writeServer(payload);
-      }, 600);
-    },
-    [writeServer],
-  );
-
-  const addRule = () => {
-    if (!rules) return;
-    const fresh: KeywordRule = {
-      id: `kr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      keywords: [],
-      reply: '',
-      enabled: true,
-    };
-    saveImmediate([...rules, fresh]);
-  };
-
-  const updateRule = (id: string, patch: Partial<KeywordRule>, immediate = false) => {
-    if (!rules) return;
-    const next = rules.map((r) => (r.id === id ? { ...r, ...patch } : r));
-    if (immediate) saveImmediate(next);
-    else saveDebounced(next);
-  };
-
-  const removeRule = (id: string) => {
-    if (!rules) return;
-    saveImmediate(rules.filter((r) => r.id !== id));
-  };
-
-  return (
-    <SectionCard
-      title={th ? 'ตอบอัตโนมัติด้วยคำสำคัญ' : 'Keyword auto-reply'}
-      desc={
-        th
-          ? 'ถ้าข้อความลูกค้าตรงกับคีย์เวิร์ดที่ตั้งไว้ ระบบจะตอบให้ทันที (ไม่ใช้ AI)'
-          : 'When a customer message contains any keyword, the bot replies instantly (no AI tokens used).'
-      }
-    >
-      <div className="space-y-3">
-        {rules === null && (
-          <div className="text-xs text-slate-400 dark:text-slate-500">
-            {th ? 'กำลังโหลด…' : 'Loading…'}
-          </div>
-        )}
-        {rules && rules.length === 0 && (
-          <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-center text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-400">
-            {th
-              ? 'ยังไม่มีกฎ — ลองเพิ่มกฎแรก เช่น keyword: "ราคา" → ตอบ: "ราคา 250 บาทค่ะ"'
-              : "No rules yet — try one like keyword: \"price\" → reply: \"It's 250 THB\""}
-          </div>
-        )}
-        {rules?.map((rule) => (
-          <KeywordRuleRow
-            key={rule.id}
-            rule={rule}
-            onChange={(patch, immediate) => updateRule(rule.id, patch, immediate)}
-            onRemove={() => removeRule(rule.id)}
-            locale={locale}
-          />
-        ))}
-        <div className="flex items-center justify-between">
-          <button type="button" onClick={addRule} className="btn-secondary text-xs">
-            <I.Plus className="h-3.5 w-3.5" />
-            {th ? 'เพิ่มกฎ' : 'Add rule'}
-          </button>
-          {saving && (
-            <span className="text-[11px] text-slate-400 dark:text-slate-500">
-              {th ? 'กำลังบันทึก…' : 'Saving…'}
-            </span>
-          )}
-        </div>
-      </div>
-    </SectionCard>
-  );
-}
-
-function KeywordRuleRow({
-  rule,
-  onChange,
-  onRemove,
-  locale,
-}: {
-  rule: KeywordRule;
-  onChange: (patch: Partial<KeywordRule>, immediate?: boolean) => void;
-  onRemove: () => void;
-  locale: Locale;
-}) {
-  const th = locale === 'th';
-  const kwInput = rule.keywords.join(', ');
-
-  return (
-    <div
-      className={
-        'rounded-xl border bg-white p-3 transition dark:bg-slate-900 ' +
-        (rule.enabled
-          ? 'border-slate-200 dark:border-slate-700'
-          : 'border-slate-200/60 opacity-60 dark:border-slate-800')
-      }
-    >
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
-          <input
-            type="checkbox"
-            checked={rule.enabled}
-            onChange={(e) => onChange({ enabled: e.target.checked }, true)}
-            className="h-3.5 w-3.5 rounded accent-brand-600"
-          />
-          {th ? 'ใช้งาน' : 'Enabled'}
-        </label>
-        <button
-          type="button"
-          onClick={onRemove}
-          className="rounded-md p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40 dark:hover:text-rose-300"
-          aria-label={th ? 'ลบกฎ' : 'Remove rule'}
-        >
-          <I.X className="h-3.5 w-3.5" />
-        </button>
-      </div>
-      <label className="mb-2 block">
-        <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
-          {th ? 'คีย์เวิร์ด (คั่นด้วย , )' : 'Keywords (comma-separated)'}
-        </div>
-        <input
-          type="text"
-          value={kwInput}
-          onChange={(e) =>
-            onChange({
-              keywords: e.target.value
-                .split(',')
-                .map((s) => s.trim())
-                .filter(Boolean),
-            })
-          }
-          placeholder={th ? 'ราคา, เท่าไหร่, ค่าส่ง' : 'price, how much, shipping'}
-          className="input text-sm"
-        />
-      </label>
-      <label className="block">
-        <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
-          {th ? 'ข้อความตอบกลับ' : 'Reply'}
-        </div>
-        <textarea
-          rows={2}
-          value={rule.reply}
-          onChange={(e) => onChange({ reply: e.target.value })}
-          placeholder={
-            th
-              ? 'ราคา 250 บาทค่ะ ส่งฟรีถ้าซื้อ 2 ชิ้นขึ้นไป'
-              : "It's 250 THB. Free shipping when you order 2+."
-          }
-          className="input resize-y text-sm"
-        />
-      </label>
-    </div>
   );
 }

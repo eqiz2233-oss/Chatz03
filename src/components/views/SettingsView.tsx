@@ -782,8 +782,8 @@ function AiBotSection({ t }: { t: (k: string) => string }) {
 
       <div className="rounded-xl border border-brand-100 bg-brand-50 px-4 py-3 text-xs text-brand-800 dark:border-brand-900/40 dark:bg-brand-950/30 dark:text-brand-200">
         {locale === 'th'
-          ? 'น้ำเสียงของแบรนด์ และ การตอบอัตโนมัติด้วยคำสำคัญ ย้ายไปที่เมนู "ตอบกลับอัตโนมัติ" แล้ว'
-          : 'Brand voice and keyword auto-reply have moved to the new "Auto-reply" menu.'}
+          ? 'การตอบอัตโนมัติด้วยคำสำคัญ ย้ายไปที่เมนู "ตอบกลับอัตโนมัติ" แล้ว'
+          : 'Keyword auto-reply has moved to the "Auto-reply" menu.'}
       </div>
 
       <SectionCard title={locale === 'th' ? 'ตรวจสลิปการโอนเงิน' : 'Slip verification'} desc={locale === 'th' ? 'ตั้งค่าบัญชีรับเงินและการตรวจสลิปอัตโนมัติ' : 'Bank account and automatic slip checking'}>
