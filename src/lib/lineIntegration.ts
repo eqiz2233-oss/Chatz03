@@ -22,14 +22,27 @@ export interface LineIntegrationStatus {
   configured: boolean;
   /** Channel access token present — we can call LINE push API. */
   replyEnabled: boolean;
-  /** 'env' when from server env vars, 'ui' when saved via this page, null when neither. */
-  source: 'env' | 'ui' | null;
+  /** Where the currently-active credentials came from. */
+  source: 'env' | 'ui' | 'oauth' | null;
   botInfo: LineBotInfo | null;
   /** Full webhook URL to copy into LINE Developers console. */
   webhookUrl: string;
   /** How many inbox threads we already have on disk. */
   threadCount: number;
+  /** True when the server has Module Channel env vars set, so the UI can
+   *  show a one-click "Connect with LINE" button instead of (or alongside)
+   *  the manual paste form. */
+  oauthAvailable: boolean;
   envPresent: LineEnvPresent;
+}
+
+/**
+ * Kick off the Module Channel OAuth flow. Navigates the whole page (not a
+ * popup) — LINE Manager renders better as a full page and the redirect-back
+ * pattern keeps things simpler than postMessage.
+ */
+export function connectLineOAuth(): void {
+  window.location.href = '/api/line/oauth/start';
 }
 
 export async function fetchLineStatus(): Promise<LineIntegrationStatus> {

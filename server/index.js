@@ -77,7 +77,7 @@ const LINE_KV_KEY = 'line.config.v1';
 const lineConfig = {
   channelSecret: (process.env.LINE_CHANNEL_SECRET || '').trim(),
   channelAccessToken: (process.env.LINE_CHANNEL_ACCESS_TOKEN || '').trim(),
-  /** 'env' | 'ui' | null — where the currently-active credentials came from. */
+  /** 'env' | 'ui' | 'oauth' | null — where the currently-active credentials came from. */
   source: null,
   /** OA basicId + display name from /v2/bot/info, populated on successful save. */
   botInfo: null,
@@ -87,6 +87,26 @@ if (lineConfig.channelSecret || lineConfig.channelAccessToken) {
 }
 function hasLineSecret() { return Boolean(lineConfig.channelSecret); }
 function hasLineToken() { return Boolean(lineConfig.channelAccessToken); }
+
+/**
+ * LINE Module Channel (OAuth-style connect, the same flow zwiz.ai uses).
+ * Lets shop owners click "Connect with LINE" instead of pasting Channel
+ * Secret + Access Token by hand. Requires both env vars to be set; without
+ * them the Settings UI falls back to the manual paste form.
+ */
+const LINE_MODULE_CHANNEL_ID = (process.env.LINE_MODULE_CHANNEL_ID || '').trim();
+const LINE_MODULE_CHANNEL_SECRET = (process.env.LINE_MODULE_CHANNEL_SECRET || '').trim();
+function lineOauthAvailable() {
+  return Boolean(LINE_MODULE_CHANNEL_ID && LINE_MODULE_CHANNEL_SECRET);
+}
+/** state → { userId, createdAt } — auto-pruned, max 5 min lifetime. */
+const lineOauthStates = new Map();
+function pruneLineOauthStates() {
+  const now = Date.now();
+  for (const [k, v] of lineOauthStates) {
+    if (now - v.createdAt > 5 * 60 * 1000) lineOauthStates.delete(k);
+  }
+}
 
 // App-level FB config (shared across all connected Pages). Re-read from process.env on each sync
 // so Railway / Docker env changes after boot (or any load-order quirk) still match the live process.
@@ -1277,6 +1297,8 @@ const AUTH_ALLOWLIST = [
   '/api/auth/oauth/google',
   '/api/auth/oauth/facebook',
   '/api/line/webhook',
+  '/api/line/oauth/start',
+  '/api/line/oauth/callback',
   '/api/fb/webhook',
   '/api/fb/oauth/start',
   '/api/fb/oauth/callback',
@@ -1553,6 +1575,9 @@ function lineIntegrationStatusPayload(req) {
     botInfo: lineConfig.botInfo,
     webhookUrl: lineWebhookUrlFor(req),
     threadCount: lineThreads.size,
+    /** When true, the Settings UI can show a "Connect with LINE" button
+     *  instead of (or alongside) the manual paste form. */
+    oauthAvailable: lineOauthAvailable(),
     // Hint which env vars are present so the UI can show "using server env"
     // vs "saved from Settings".
     envPresent: {
@@ -1624,6 +1649,144 @@ app.post('/api/line/integration/disconnect', async (req, res) => {
   } catch (e) {
     console.error('[LINE] disconnect failed:', e);
     return res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+// ─── LINE Module Channel OAuth (zwiz-style "Connect with LINE") ──────────────
+
+/**
+ * Kick off the Module Channel OAuth flow. We redirect the user's browser to
+ * LINE Manager's authorize URL with our Module Channel client_id; LINE then
+ * shows the user a "select OA → grant permissions" UI and bounces back to
+ * /api/line/oauth/callback with an authorization code.
+ *
+ * The shop owner never has to copy/paste a Channel Secret or Access Token.
+ */
+app.get('/api/line/oauth/start', (req, res) => {
+  if (!lineOauthAvailable()) {
+    return res.status(503).send('LINE OAuth is not configured on this server.');
+  }
+  pruneLineOauthStates();
+  const state = crypto.randomBytes(16).toString('base64url');
+  lineOauthStates.set(state, { userId: req.user?.id || null, createdAt: Date.now() });
+
+  const redirectUri = `${publicBaseUrl(req)}/api/line/oauth/callback`;
+  // Scopes mirror what zwiz / vbot request: read+send messages, get user
+  // profiles, manage webhook endpoint, basic account info. LINE silently
+  // ignores scopes our Module Channel isn't registered for, so being
+  // generous here doesn't hurt.
+  const scope = [
+    'account:basic_info',
+    'bot:read',
+    'bot:write',
+    'bot:webhook',
+    'bot:profile',
+    'message:send',
+    'message:receive',
+  ].join(' ');
+  const url =
+    `https://manager.line.biz/module/auth/v1/authorize` +
+    `?response_type=code` +
+    `&client_id=${encodeURIComponent(LINE_MODULE_CHANNEL_ID)}` +
+    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+    `&scope=${encodeURIComponent(scope)}` +
+    `&state=${encodeURIComponent(state)}`;
+  res.redirect(url);
+});
+
+/**
+ * Exchange the authorization code for an access token, validate it by
+ * calling /v2/bot/info, attempt to set the webhook URL on the user's behalf
+ * (so they don't have to paste it into LINE Developers either), then save
+ * the result to KV and redirect to /settings with a success flag.
+ */
+app.get('/api/line/oauth/callback', async (req, res) => {
+  const code = String(req.query?.code || '');
+  const state = String(req.query?.state || '');
+  const error = String(req.query?.error || '');
+
+  if (error) {
+    console.warn('[LINE OAuth] user denied:', error);
+    return res.redirect('/settings?lineConnect=denied');
+  }
+  if (!code || !state) {
+    return res.redirect('/settings?lineConnect=bad_request');
+  }
+  pruneLineOauthStates();
+  const stored = lineOauthStates.get(state);
+  if (!stored) {
+    return res.redirect('/settings?lineConnect=bad_state');
+  }
+  lineOauthStates.delete(state);
+
+  const redirectUri = `${publicBaseUrl(req)}/api/line/oauth/callback`;
+
+  try {
+    // 1. Exchange code → access_token.
+    const tokenBody = new URLSearchParams({
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: redirectUri,
+      client_id: LINE_MODULE_CHANNEL_ID,
+      client_secret: LINE_MODULE_CHANNEL_SECRET,
+    });
+    const tr = await fetch('https://api.line.me/oauth2/v2.1/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: tokenBody.toString(),
+    });
+    const td = await tr.json().catch(() => ({}));
+    if (!tr.ok || !td?.access_token) {
+      console.error('[LINE OAuth] token exchange failed:', td);
+      return res.redirect('/settings?lineConnect=token_failed');
+    }
+    const accessToken = String(td.access_token);
+
+    // 2. Confirm the token by fetching the OA profile.
+    const botInfo = await fetchLineBotInfo(accessToken);
+    if (!botInfo) {
+      return res.redirect('/settings?lineConnect=bot_info_failed');
+    }
+
+    // 3. Try to set the webhook URL automatically. Best-effort: if the
+    //    Module Channel doesn't have bot:webhook scope, this silently
+    //    fails and the user can still set it manually.
+    const webhookEndpoint = `${publicBaseUrl(req)}/api/line/webhook`;
+    try {
+      await fetch('https://api.line.me/v2/bot/channel/webhook/endpoint', {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ endpoint: webhookEndpoint }),
+      });
+    } catch (e) {
+      console.warn('[LINE OAuth] webhook endpoint update failed:', e?.message || e);
+    }
+
+    // 4. Persist. The Module Channel access_token is used like a normal
+    //    Channel Access Token everywhere we currently use channelAccessToken.
+    //    For webhook signature verification, LINE signs events with the
+    //    Module Channel's secret, so we store that as channelSecret.
+    await applyLineConfig({
+      secret: LINE_MODULE_CHANNEL_SECRET,
+      token: accessToken,
+      source: 'oauth',
+    });
+    lineConfig.botInfo = botInfo;
+    await kvSet(LINE_KV_KEY, {
+      channelSecret: LINE_MODULE_CHANNEL_SECRET,
+      channelAccessToken: accessToken,
+      botInfo,
+      source: 'oauth',
+      savedAt: new Date().toISOString(),
+    });
+
+    return res.redirect('/settings?lineConnect=ok');
+  } catch (e) {
+    console.error('[LINE OAuth] callback failed:', e);
+    return res.redirect('/settings?lineConnect=error');
   }
 });
 

@@ -12,6 +12,7 @@ import {
 import {
   fetchLineStatus,
   connectLine,
+  connectLineOAuth,
   disconnectLine,
   type LineIntegrationStatus,
 } from '../../lib/lineIntegration';
@@ -913,6 +914,9 @@ function LineIntegrationCard(_props: { t: (k: string) => string }) {
   const [secret, setSecret] = useState('');
   const [token, setToken] = useState('');
   const [copied, setCopied] = useState(false);
+  /** Surface the post-OAuth redirect result so users see a clear message
+   *  instead of having to read the URL bar. Banner clears itself after 8s. */
+  const [oauthBanner, setOauthBanner] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -926,9 +930,35 @@ function LineIntegrationCard(_props: { t: (k: string) => string }) {
     void refresh();
   }, [refresh]);
 
+  // Detect /settings?lineConnect=... from the OAuth callback.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('lineConnect');
+    if (!code) return;
+    const map: Record<string, { kind: 'ok' | 'err'; text: string }> = {
+      ok:                 { kind: 'ok',  text: 'เชื่อมต่อ LINE สำเร็จ' },
+      denied:             { kind: 'err', text: 'ผู้ใช้ปฏิเสธการเชื่อมต่อ' },
+      bad_request:        { kind: 'err', text: 'การเชื่อมต่อล้มเหลว (พารามิเตอร์ไม่ครบ)' },
+      bad_state:          { kind: 'err', text: 'การเชื่อมต่อหมดอายุ ลองเชื่อมต่อใหม่' },
+      token_failed:       { kind: 'err', text: 'แลก token ไม่สำเร็จ ลองอีกครั้ง' },
+      bot_info_failed:    { kind: 'err', text: 'อ่านข้อมูล OA ไม่สำเร็จ' },
+      error:              { kind: 'err', text: 'เกิดข้อผิดพลาดในการเชื่อมต่อ' },
+    };
+    if (map[code]) {
+      setOauthBanner(map[code]);
+      void refresh();
+      // Strip the query string so the banner doesn't reappear on reload.
+      window.history.replaceState({}, '', window.location.pathname);
+      const id = window.setTimeout(() => setOauthBanner(null), 8000);
+      return () => window.clearTimeout(id);
+    }
+  }, [refresh]);
+
   const connected = !!status?.configured && !!status?.replyEnabled;
   const partial = !!status?.configured && !status?.replyEnabled;
   const oa = status?.botInfo;
+  const oauthAvailable = !!status?.oauthAvailable;
+  const isOauthConnected = status?.source === 'oauth';
 
   async function onCopy(text: string) {
     try {
@@ -976,10 +1006,26 @@ function LineIntegrationCard(_props: { t: (k: string) => string }) {
       ? oa?.displayName ? `เชื่อมแล้ว · ${oa.displayName}${oa.basicId ? ` (@${oa.basicId})` : ''}`
       : `เชื่อมแล้ว · ${status.threadCount} ห้องแชท`
     : partial ? 'ตั้งค่าบางส่วน — ใส่ Channel Access Token เพื่อให้ตอบกลับได้'
-    : 'เชื่อม LINE Official Account ของร้านเพื่อตอบลูกค้าผ่าน LINE';
+    : oauthAvailable
+      ? 'กด "เชื่อมต่อด้วย LINE" แล้วเลือก OA ของร้าน — ไม่ต้องคัดลอกโทเค็นเอง'
+      : 'เชื่อม LINE Official Account ของร้านเพื่อตอบลูกค้าผ่าน LINE';
 
   return (
     <div className="space-y-3">
+      {oauthBanner && (
+        <div
+          role="status"
+          className={
+            'rounded-2xl border px-4 py-3 text-sm ' +
+            (oauthBanner.kind === 'ok'
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-200'
+              : 'border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-200')
+          }
+        >
+          {oauthBanner.text}
+        </div>
+      )}
+
       <IntegrationCard
         icon={<ChannelIcon channel="line" className="h-7 w-7" />}
         iconBg="bg-green-50 dark:bg-green-950/30"
@@ -989,14 +1035,27 @@ function LineIntegrationCard(_props: { t: (k: string) => string }) {
         partial={partial}
         action={
           <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => setShowForm((v) => !v)}
-              disabled={busy}
-              className={connected ? 'btn-secondary text-xs' : 'btn-primary text-xs'}
-            >
-              {connected ? 'แก้ไข' : 'เชื่อมต่อ'}
-            </button>
+            {/* Primary CTA — "Connect with LINE" when OAuth is set up, else the manual form toggle. */}
+            {!connected && oauthAvailable ? (
+              <button
+                type="button"
+                onClick={() => connectLineOAuth()}
+                disabled={busy}
+                className="inline-flex items-center gap-2 rounded-full bg-[#06C755] px-4 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-[#05b048] disabled:opacity-50"
+              >
+                <ChannelIcon channel="line" className="h-4 w-4" />
+                เชื่อมต่อด้วย LINE
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowForm((v) => !v)}
+                disabled={busy}
+                className={connected ? 'btn-secondary text-xs' : 'btn-primary text-xs'}
+              >
+                {connected ? 'แก้ไข' : 'เชื่อมต่อ'}
+              </button>
+            )}
             {connected && (
               <button
                 type="button"
@@ -1011,8 +1070,28 @@ function LineIntegrationCard(_props: { t: (k: string) => string }) {
         }
       />
 
-      {/* Webhook URL — always visible because LINE Developers Console requires it */}
-      {status && (
+      {/* "Advanced" link to manual paste form when OAuth is available but
+          the user wants to use their own token (e.g. dev/testing). */}
+      {!connected && oauthAvailable && !showForm && (
+        <button
+          type="button"
+          onClick={() => setShowForm(true)}
+          className="text-xs font-medium text-slate-500 underline-offset-2 hover:text-brand-600 hover:underline dark:text-slate-400 dark:hover:text-brand-400"
+        >
+          ผู้ใช้ขั้นสูง: ใส่ Channel Secret + Access Token เอง →
+        </button>
+      )}
+
+      {isOauthConnected && (
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          ✓ เชื่อมต่อผ่าน LINE Module Channel — webhook URL ตั้งให้อัตโนมัติแล้ว
+        </p>
+      )}
+
+      {/* Webhook URL + manual steps — hidden once OAuth has wired things up
+          for the user. They only need to see these when they're on the
+          manual paste path. */}
+      {status && !isOauthConnected && (
         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-700 dark:bg-slate-900/60">
           <div className="mb-1.5 font-semibold text-slate-600 dark:text-slate-300">Webhook URL (ใส่ในหน้า LINE Developers)</div>
           <div className="flex items-center gap-2">
@@ -1031,14 +1110,16 @@ function LineIntegrationCard(_props: { t: (k: string) => string }) {
         </div>
       )}
 
-      {/* Steps — collapsible */}
-      <button
-        type="button"
-        onClick={() => setShowSteps((v) => !v)}
-        className="text-xs font-semibold text-brand-600 underline-offset-2 hover:underline dark:text-brand-400"
-      >
-        {showSteps ? 'ซ่อนขั้นตอน' : 'ยังไม่รู้จะเริ่มยังไง? ดูขั้นตอน 4 ขั้น →'}
-      </button>
+      {/* Manual 4-step guide — only relevant for the paste path. */}
+      {!isOauthConnected && (
+        <button
+          type="button"
+          onClick={() => setShowSteps((v) => !v)}
+          className="text-xs font-semibold text-brand-600 underline-offset-2 hover:underline dark:text-brand-400"
+        >
+          {showSteps ? 'ซ่อนขั้นตอน' : 'ยังไม่รู้จะเริ่มยังไง? ดูขั้นตอน 4 ขั้น →'}
+        </button>
+      )}
       {showSteps && (
         <ol className="space-y-2 rounded-2xl border border-slate-200 bg-white p-4 text-xs leading-relaxed text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
           <li>
