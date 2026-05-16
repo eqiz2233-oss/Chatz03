@@ -35,7 +35,16 @@ import {
  *   ai-bot     → second priority: teach the bot what to say
  *   notifications, appearance, account → infrequent / one-time
  */
-type SettingsSection = 'channels' | 'ai-bot' | 'notifications' | 'appearance' | 'account';
+type SettingsSection =
+  | 'profile'      // display name, email, avatar
+  | 'shop'         // shop name, hours, contact (Business profile)
+  | 'channels'     // LINE / FB / IG / EasySlip
+  | 'ai-bot'       // brand voice, auto-reply, keyword rules
+  | 'notifications'
+  | 'appearance'   // theme + language
+  | 'privacy'      // read receipts, block list (future)
+  | 'security'     // password, sessions, delete account
+  | 'about';       // version, privacy policy, terms
 
 interface NavItem {
   key: SettingsSection;
@@ -45,37 +54,21 @@ interface NavItem {
 
 export function SettingsView() {
   const { t, theme, setTheme, locale, setLocale } = useAppPreferences();
-  const [section, setSection] = useState<SettingsSection>('channels');
+  const [section, setSection] = useState<SettingsSection>('profile');
 
-  // Section names mirror the standard Thai business terms used by zaapi /
-  // Lazada Seller / LINE Official Account, not literal translations of
-  // English UI labels. No emojis in the nav — real settings pages don't.
+  // Order mirrors the order in real chat apps (LINE, Messenger): profile
+  // and shop info first (identity), then channels, then bot, then operational
+  // (notifications / display), then trust (privacy / security), then about.
   const nav: NavItem[] = [
-    {
-      key: 'channels',
-      label: locale === 'th' ? 'การเชื่อมต่อ' : 'Integrations',
-      icon: <I.Plug className="h-[18px] w-[18px]" />,
-    },
-    {
-      key: 'ai-bot',
-      label: locale === 'th' ? 'การตั้งค่าบอท' : 'Bot settings',
-      icon: <I.Bot className="h-[18px] w-[18px]" />,
-    },
-    {
-      key: 'notifications',
-      label: locale === 'th' ? 'การแจ้งเตือน' : 'Notifications',
-      icon: <I.Bell className="h-[18px] w-[18px]" />,
-    },
-    {
-      key: 'appearance',
-      label: locale === 'th' ? 'การแสดงผล' : 'Display',
-      icon: <I.Palette className="h-[18px] w-[18px]" />,
-    },
-    {
-      key: 'account',
-      label: locale === 'th' ? 'บัญชี' : 'Account',
-      icon: <I.User className="h-[18px] w-[18px]" />,
-    },
+    { key: 'profile',       label: locale === 'th' ? 'โปรไฟล์' : 'Profile',            icon: <I.User className="h-[18px] w-[18px]" /> },
+    { key: 'shop',          label: locale === 'th' ? 'ข้อมูลร้าน' : 'Business profile', icon: <I.Store className="h-[18px] w-[18px]" /> },
+    { key: 'channels',      label: locale === 'th' ? 'การเชื่อมต่อ' : 'Integrations',   icon: <I.Plug className="h-[18px] w-[18px]" /> },
+    { key: 'ai-bot',        label: locale === 'th' ? 'การตั้งค่าบอท' : 'Bot settings',   icon: <I.Bot className="h-[18px] w-[18px]" /> },
+    { key: 'notifications', label: locale === 'th' ? 'การแจ้งเตือน' : 'Notifications',  icon: <I.Bell className="h-[18px] w-[18px]" /> },
+    { key: 'appearance',    label: locale === 'th' ? 'การแสดงผล' : 'Display',          icon: <I.Palette className="h-[18px] w-[18px]" /> },
+    { key: 'privacy',       label: locale === 'th' ? 'ความเป็นส่วนตัว' : 'Privacy',     icon: <I.Shield className="h-[18px] w-[18px]" /> },
+    { key: 'security',      label: locale === 'th' ? 'ความปลอดภัย' : 'Security',       icon: <I.Lock className="h-[18px] w-[18px]" /> },
+    { key: 'about',         label: locale === 'th' ? 'เกี่ยวกับ' : 'About',             icon: <I.Info className="h-[18px] w-[18px]" /> },
   ];
 
   return (
@@ -144,11 +137,15 @@ export function SettingsView() {
         {/* ── Content ── */}
         <main className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto max-w-2xl px-5 py-6 md:px-8 md:py-8">
+            {section === 'profile' && <ProfileSection locale={locale} />}
+            {section === 'shop' && <BusinessProfileSection locale={locale} />}
             {section === 'channels' && <ChannelsSection t={t} />}
             {section === 'ai-bot' && <AiBotSection t={t} />}
             {section === 'notifications' && <NotificationsSection locale={locale} />}
             {section === 'appearance' && <AppearanceSection t={t} theme={theme} setTheme={setTheme} locale={locale} setLocale={setLocale} />}
-            {section === 'account' && <AccountSection t={t} locale={locale} />}
+            {section === 'privacy' && <PrivacySection locale={locale} />}
+            {section === 'security' && <SecuritySection t={t} locale={locale} />}
+            {section === 'about' && <AboutSection locale={locale} />}
           </div>
         </main>
       </div>
@@ -200,11 +197,520 @@ function AppearanceSection({
 }
 
 /** Account section — wraps the existing AccountCard + adds the Team card. */
-function AccountSection({ t, locale }: { t: (k: string) => string; locale: Locale }) {
+/**
+ * ─── Profile section ─────────────────────────────────────────────────────
+ * Edit-in-place display name, email, and team membership. Profile is the
+ * "who am I" pane that every chat app puts first; security (password) is
+ * intentionally in a separate Security section so destructive actions
+ * don't sit next to common edits.
+ */
+function ProfileSection({ locale }: { locale: Locale }) {
+  const { user, updateProfile } = useAuth();
+  const th = locale === 'th';
+  const [displayName, setDisplayName] = useState(user?.displayName || '');
+  const [email, setEmail] = useState(user?.email || '');
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  useEffect(() => {
+    setDisplayName(user?.displayName || '');
+    setEmail(user?.email || '');
+  }, [user]);
+
+  const dirty = (displayName.trim() !== (user?.displayName || '')) || (email.trim() !== (user?.email || ''));
+
+  async function onSave(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setMsg(null);
+    const r = await updateProfile({
+      displayName: displayName.trim(),
+      email: email.trim(),
+    });
+    setSaving(false);
+    if (r.ok) {
+      setMsg({ kind: 'ok', text: th ? 'บันทึกแล้ว' : 'Saved' });
+    } else {
+      const code = r.error;
+      setMsg({
+        kind: 'err',
+        text: code === 'email_taken' ? (th ? 'อีเมลนี้ถูกใช้แล้ว' : 'Email already in use')
+            : code === 'bad_email' ? (th ? 'รูปแบบอีเมลไม่ถูกต้อง' : 'Invalid email format')
+            : (th ? 'บันทึกไม่สำเร็จ' : 'Save failed'),
+      });
+    }
+  }
+
+  const initials = (user?.displayName || user?.username || '?').slice(0, 2).toUpperCase();
+
+  return (
+    <div className="space-y-4">
+      <SectionCard
+        title={th ? 'โปรไฟล์ของฉัน' : 'My profile'}
+        desc={th ? 'ข้อมูลที่แสดงในร้านและให้ทีมเห็น' : 'How you appear to your team and customers'}
+      >
+        <form onSubmit={onSave} className="space-y-4">
+          {/* Avatar + initials. Real upload is on the roadmap; initials work as a
+              deterministic stable identity in the meantime. */}
+          <div className="flex items-center gap-4">
+            <div className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-brand-600 text-base font-bold text-white">
+              {initials}
+            </div>
+            <div className="text-xs text-slate-500 dark:text-slate-400">
+              {th
+                ? 'รูปโปรไฟล์ปัจจุบันใช้ตัวอักษรย่อ — รองรับการอัปโหลดในเร็วๆ นี้'
+                : 'Currently shown as initials — upload coming soon'}
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">
+              {th ? 'ชื่อที่แสดง' : 'Display name'}
+            </label>
+            <input
+              type="text"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder={th ? 'เช่น คุณเอก' : 'e.g. Alex'}
+              className={fieldInput}
+              maxLength={80}
+            />
+          </div>
+
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">
+              {th ? 'อีเมล' : 'Email'}
+            </label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+              className={fieldInput}
+            />
+            <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
+              {th
+                ? 'ใช้สำหรับรีเซ็ตรหัสและรับแจ้งเตือนสำคัญ'
+                : 'Used for password reset and important alerts'}
+            </p>
+          </div>
+
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">
+              {th ? 'ชื่อผู้ใช้' : 'Username'}
+            </label>
+            <div className="rounded-lg bg-slate-50 px-3.5 py-2.5 font-mono text-sm text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+              {user?.username}
+            </div>
+            <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
+              {th ? 'เปลี่ยนชื่อผู้ใช้ไม่ได้' : 'Username cannot be changed'}
+            </p>
+          </div>
+
+          {msg && (
+            <div
+              className={
+                'rounded-lg px-3 py-2 text-xs ' +
+                (msg.kind === 'ok'
+                  ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-200'
+                  : 'bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-200')
+              }
+            >
+              {msg.text}
+            </div>
+          )}
+
+          <div className="flex justify-end">
+            <button
+              type="submit"
+              disabled={saving || !dirty}
+              className="rounded-lg bg-brand-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-brand-500 dark:hover:bg-brand-400"
+            >
+              {saving ? (th ? 'กำลังบันทึก…' : 'Saving…') : (th ? 'บันทึก' : 'Save')}
+            </button>
+          </div>
+        </form>
+      </SectionCard>
+
+      <TeamCard locale={locale} />
+    </div>
+  );
+}
+
+const fieldInput =
+  'w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-brand-500 dark:focus:ring-brand-900/40';
+
+/**
+ * ─── Business profile ────────────────────────────────────────────────────
+ * Shop-level info the customer sees indirectly (AI uses these in replies)
+ * and that staff use to recognize the shop in their workspace. Persists
+ * via the existing bot.settings shop-scoped row.
+ */
+function BusinessProfileSection({ locale }: { locale: Locale }) {
+  const th = locale === 'th';
+  const [shopName, setShopName] = useState('');
+  const [tagline, setTagline] = useState('');
+  const [phone, setPhone] = useState('');
+  const [address, setAddress] = useState('');
+  const [hoursOpen, setHoursOpen] = useState('09:00');
+  const [hoursClose, setHoursClose] = useState('21:00');
+  const [hoursEnabled, setHoursEnabled] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const r = await fetch('/api/bot/settings', { credentials: 'include' });
+        if (!r.ok) throw new Error(String(r.status));
+        const j = (await r.json()) as { settings: Record<string, unknown> };
+        const s = j.settings || {};
+        const sp = (s.shopProfile as Record<string, unknown>) || {};
+        if (!cancelled) {
+          setShopName(String(sp.shopName || ''));
+          setTagline(String(sp.tagline || ''));
+          setPhone(String(sp.phone || ''));
+          setAddress(String(sp.address || ''));
+          setHoursOpen(String(sp.hoursOpen || '09:00'));
+          setHoursClose(String(sp.hoursClose || '21:00'));
+          setHoursEnabled(Boolean(sp.hoursEnabled));
+          setLoaded(true);
+        }
+      } catch {
+        if (!cancelled) setLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Debounced save — same pattern as the bot/keyword cards above.
+  useEffect(() => {
+    if (!loaded) return;
+    setSaveStatus('saving');
+    const id = window.setTimeout(async () => {
+      try {
+        const r = await fetch('/api/bot/settings', {
+          method: 'PUT',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            settings: {
+              shopProfile: {
+                shopName: shopName.trim(),
+                tagline: tagline.trim(),
+                phone: phone.trim(),
+                address: address.trim(),
+                hoursOpen,
+                hoursClose,
+                hoursEnabled,
+              },
+            },
+          }),
+        });
+        setSaveStatus(r.ok ? 'saved' : 'error');
+      } catch {
+        setSaveStatus('error');
+      }
+      window.setTimeout(() => setSaveStatus('idle'), 1500);
+    }, 600);
+    return () => window.clearTimeout(id);
+  }, [shopName, tagline, phone, address, hoursOpen, hoursClose, hoursEnabled, loaded]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-end gap-2 text-[11px] text-slate-400 dark:text-slate-500">
+        {saveStatus === 'saving' && <span>{th ? 'กำลังบันทึก…' : 'Saving…'}</span>}
+        {saveStatus === 'saved' && <span className="text-emerald-600 dark:text-emerald-400">{th ? 'บันทึกแล้ว ✓' : 'Saved ✓'}</span>}
+        {saveStatus === 'error' && <span className="text-rose-500">{th ? 'บันทึกไม่สำเร็จ' : 'Save failed'}</span>}
+      </div>
+
+      <SectionCard
+        title={th ? 'ข้อมูลร้าน' : 'Shop info'}
+        desc={th ? 'AI จะใช้ข้อมูลนี้ตอบลูกค้าและเป็นชื่อร้านที่แสดงให้ทีม' : 'AI uses this when replying; staff see it as the shop label'}
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">
+              {th ? 'ชื่อร้าน' : 'Shop name'}
+            </label>
+            <input value={shopName} onChange={(e) => setShopName(e.target.value)} placeholder={th ? 'เช่น Mint Skincare' : 'e.g. Mint Skincare'} className={fieldInput} />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">
+              {th ? 'คำโปรย' : 'Tagline'}
+            </label>
+            <input value={tagline} onChange={(e) => setTagline(e.target.value)} placeholder={th ? 'เช่น เครื่องสำอางออร์แกนิค 100%' : 'e.g. 100% organic skincare'} className={fieldInput} />
+          </div>
+        </div>
+      </SectionCard>
+
+      <SectionCard
+        title={th ? 'ติดต่อ' : 'Contact'}
+        desc={th ? 'ลูกค้าและทีมเห็นข้อมูลนี้ในโปรไฟล์ร้าน' : 'Shown on your shop profile to customers and team'}
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">
+              {th ? 'เบอร์โทร' : 'Phone'}
+            </label>
+            <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="081-234-5678" className={fieldInput} />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">
+              {th ? 'ที่อยู่' : 'Address'}
+            </label>
+            <textarea value={address} onChange={(e) => setAddress(e.target.value)} placeholder={th ? 'เช่น 123 ถ.รัชดา กรุงเทพฯ 10310' : 'e.g. 123 Sukhumvit, Bangkok 10110'} rows={2} className={'resize-none ' + fieldInput} />
+          </div>
+        </div>
+      </SectionCard>
+
+      <SectionCard
+        title={th ? 'เวลาทำการ' : 'Business hours'}
+        desc={th ? 'AI ส่งข้อความ "อยู่นอกเวลา" เมื่อลูกค้าทักนอกช่วงนี้' : 'AI tells customers "out of hours" when they message outside this window'}
+      >
+        <div className="space-y-4">
+          <SettingRow
+            label={th ? 'เปิดใช้งานเวลาทำการ' : 'Enable business hours'}
+            hint={th ? 'ปิดไว้ = AI ตอบ 24 ชม.' : 'Off = AI replies 24/7'}
+          >
+            <Switch checked={hoursEnabled} onChange={setHoursEnabled} label="enable hours" />
+          </SettingRow>
+          {hoursEnabled && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                  {th ? 'เปิด' : 'Open'}
+                </label>
+                <input type="time" value={hoursOpen} onChange={(e) => setHoursOpen(e.target.value)} className={fieldInput} />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                  {th ? 'ปิด' : 'Close'}
+                </label>
+                <input type="time" value={hoursClose} onChange={(e) => setHoursClose(e.target.value)} className={fieldInput} />
+              </div>
+            </div>
+          )}
+        </div>
+      </SectionCard>
+    </div>
+  );
+}
+
+/**
+ * ─── Privacy ─────────────────────────────────────────────────────────────
+ * Soft-launched: read-receipt toggle + data export placeholder. These are
+ * the trust-level controls every messenger app surfaces (LINE: "Provide
+ * read receipts", Messenger: "Active status"). Full implementation
+ * follows the public-API parity work.
+ */
+function PrivacySection({ locale }: { locale: Locale }) {
+  const th = locale === 'th';
+  return (
+    <div className="space-y-4">
+      <SectionCard
+        title={th ? 'การอ่านข้อความ' : 'Message reads'}
+        desc={th ? 'ลูกค้าจะเห็นว่าคุณอ่านข้อความแล้วหรือไม่' : 'Whether customers see "read" on their messages'}
+      >
+        <SettingRow
+          label={th ? 'แจ้งสถานะ "อ่านแล้ว"' : 'Send read receipts'}
+          hint={th ? 'ปิดได้เพื่อตอบช้าโดยไม่กดดัน' : 'Turn off if you want to reply without pressure'}
+        >
+          <ComingSoonChip locale={locale} />
+        </SettingRow>
+      </SectionCard>
+
+      <SectionCard
+        title={th ? 'การมองเห็นออนไลน์' : 'Active status'}
+        desc={th ? 'ลูกค้าเห็นจุดเขียวเมื่อคุณออนไลน์อยู่หรือไม่' : 'Whether customers see a green dot when you are online'}
+      >
+        <SettingRow label={th ? 'แสดงสถานะออนไลน์' : 'Show online status'}>
+          <ComingSoonChip locale={locale} />
+        </SettingRow>
+      </SectionCard>
+
+      <SectionCard
+        title={th ? 'รายชื่อบล็อก' : 'Blocked customers'}
+        desc={th ? 'ลูกค้าในรายการนี้จะส่งข้อความหาคุณไม่ได้' : 'Customers in this list cannot message you'}
+      >
+        <p className="text-sm text-slate-500 dark:text-slate-400">
+          {th ? 'ยังไม่มีลูกค้าที่บล็อก' : 'No blocked customers yet'}
+        </p>
+      </SectionCard>
+
+      <SectionCard
+        title={th ? 'ดาวน์โหลดข้อมูลของฉัน' : 'Download my data'}
+        desc={th ? 'ขอสำเนาข้อมูลทั้งหมดของบัญชีในรูปแบบ JSON' : 'Get a copy of all your account data as JSON'}
+      >
+        <SettingRow label={th ? 'ส่งคำขอข้อมูล' : 'Request data export'}>
+          <ComingSoonChip locale={locale} />
+        </SettingRow>
+      </SectionCard>
+    </div>
+  );
+}
+
+function ComingSoonChip({ locale }: { locale: Locale }) {
+  return (
+    <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+      {locale === 'th' ? 'เร็วๆ นี้' : 'Coming soon'}
+    </span>
+  );
+}
+
+/**
+ * ─── Security ────────────────────────────────────────────────────────────
+ * Password change, sign out, and the hard one: account deletion. Real chat
+ * apps put deletion at the very bottom with a destructive-styled button to
+ * prevent accidental clicks.
+ */
+function SecuritySection({ t, locale }: { t: (k: string) => string; locale: Locale }) {
+  const { user, deleteAccount } = useAuth();
+  const th = locale === 'th';
+  const [deleting, setDeleting] = useState(false);
+  const [delErr, setDelErr] = useState<string | null>(null);
+
+  async function onDelete() {
+    const phrase = th ? 'ลบบัญชี' : 'DELETE';
+    const typed = window.prompt(
+      th
+        ? `การลบบัญชีจะลบข้อมูลของคุณถาวร พิมพ์ "${phrase}" เพื่อยืนยัน`
+        : `Deleting your account is permanent. Type "${phrase}" to confirm.`,
+    );
+    if (typed !== phrase) return;
+    setDeleting(true);
+    setDelErr(null);
+    const r = await deleteAccount();
+    setDeleting(false);
+    if (!r.ok) {
+      setDelErr(
+        r.error === 'last_owner_of'
+          ? (th
+              ? 'คุณเป็นเจ้าของร้านเพียงคนเดียว — โอนความเป็นเจ้าของให้คนอื่นก่อน'
+              : 'You are the only owner of a shop — transfer ownership first')
+          : (th ? 'ลบบัญชีไม่สำเร็จ' : 'Account deletion failed'),
+      );
+    }
+  }
+
   return (
     <div className="space-y-4">
       <AccountCard t={t} locale={locale} />
-      <TeamCard locale={locale} />
+
+      <SectionCard
+        title={th ? 'อุปกรณ์ที่ลงชื่อเข้าใช้' : 'Active sessions'}
+        desc={th ? 'อุปกรณ์และเบราว์เซอร์ที่บัญชีนี้ใช้งานอยู่' : 'Devices and browsers currently signed in'}
+      >
+        <SettingRow
+          label={th ? 'ดูเซสชันทั้งหมด' : 'View all sessions'}
+          hint={th ? 'ออกจากระบบจากอุปกรณ์อื่น' : 'Sign out other devices'}
+        >
+          <ComingSoonChip locale={locale} />
+        </SettingRow>
+      </SectionCard>
+
+      <SectionCard
+        title={th ? 'การยืนยันตัวตน 2 ขั้นตอน (2FA)' : 'Two-factor authentication'}
+        desc={th ? 'เพิ่มชั้นความปลอดภัยด้วยรหัสจาก Authenticator' : 'Add an extra layer with Authenticator codes'}
+      >
+        <SettingRow label="2FA">
+          <ComingSoonChip locale={locale} />
+        </SettingRow>
+      </SectionCard>
+
+      <SectionCard
+        title={th ? 'ลบบัญชี' : 'Delete account'}
+        desc={th
+          ? 'ลบบัญชีและข้อมูลของคุณถาวร — กู้คืนไม่ได้'
+          : 'Permanently delete your account and data — cannot be undone'}
+      >
+        <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">
+          {th
+            ? `คุณ ${user?.displayName || user?.username || ''} แชทเก่า แม่แบบ และการตั้งค่าทั้งหมดจะถูกลบ ถ้าคุณเป็นเจ้าของร้านเพียงคนเดียว ต้องโอนความเป็นเจ้าของให้คนอื่นก่อน`
+            : `${user?.displayName || user?.username || 'You'} — all your chats, templates, and settings will be removed. If you're the only owner of a shop, you must transfer ownership first.`}
+        </p>
+        {delErr && (
+          <div className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-950/50 dark:text-rose-200">
+            {delErr}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => void onDelete()}
+          disabled={deleting}
+          className="rounded-lg border border-rose-300 bg-white px-4 py-2 text-sm font-semibold text-rose-700 transition hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/60 dark:bg-slate-900 dark:text-rose-300 dark:hover:bg-rose-950/40"
+        >
+          {deleting ? (th ? 'กำลังลบ…' : 'Deleting…') : (th ? 'ลบบัญชีถาวร' : 'Permanently delete account')}
+        </button>
+      </SectionCard>
+    </div>
+  );
+}
+
+/**
+ * ─── About ───────────────────────────────────────────────────────────────
+ * Version + legal links + support. Required for FB / Google app review
+ * (privacy policy + terms URLs).
+ */
+function AboutSection({ locale }: { locale: Locale }) {
+  const th = locale === 'th';
+  // Version is baked at build-time; for now this is the marketing string
+  // until we wire it to package.json via Vite define.
+  const version = '0.9.0-beta';
+  return (
+    <div className="space-y-4">
+      <SectionCard
+        title={th ? 'เกี่ยวกับ Chatz' : 'About Chatz'}
+        desc={th ? 'ข้อมูลแอปและเวอร์ชัน' : 'App info and version'}
+      >
+        <dl className="space-y-3 text-sm">
+          <div className="flex justify-between">
+            <dt className="text-slate-500 dark:text-slate-400">{th ? 'เวอร์ชัน' : 'Version'}</dt>
+            <dd className="font-mono text-slate-700 dark:text-slate-200">{version}</dd>
+          </div>
+          <div className="flex justify-between">
+            <dt className="text-slate-500 dark:text-slate-400">{th ? 'ช่องทาง' : 'Channels'}</dt>
+            <dd className="text-slate-700 dark:text-slate-200">LINE · Facebook · Instagram</dd>
+          </div>
+          <div className="flex justify-between">
+            <dt className="text-slate-500 dark:text-slate-400">{th ? 'AI' : 'AI'}</dt>
+            <dd className="text-slate-700 dark:text-slate-200">Anthropic Claude</dd>
+          </div>
+        </dl>
+      </SectionCard>
+
+      <SectionCard
+        title={th ? 'นโยบายและเงื่อนไข' : 'Legal'}
+        desc={th ? 'นโยบายความเป็นส่วนตัวและเงื่อนไขการใช้งาน' : 'Privacy policy and terms of service'}
+      >
+        <ul className="space-y-3 text-sm">
+          <li>
+            <a href="/api/privacy" target="_blank" rel="noopener noreferrer" className="font-medium text-brand-600 hover:underline dark:text-brand-400">
+              {th ? 'นโยบายความเป็นส่วนตัว →' : 'Privacy Policy →'}
+            </a>
+          </li>
+          <li>
+            <a href="/terms" target="_blank" rel="noopener noreferrer" className="font-medium text-brand-600 hover:underline dark:text-brand-400">
+              {th ? 'เงื่อนไขการใช้งาน →' : 'Terms of Service →'}
+            </a>
+          </li>
+          <li>
+            <a href="https://github.com/eqiz2233-oss/Chatz03" target="_blank" rel="noopener noreferrer" className="font-medium text-brand-600 hover:underline dark:text-brand-400">
+              {th ? 'ซอร์สโค้ดบน GitHub →' : 'Source code on GitHub →'}
+            </a>
+          </li>
+        </ul>
+      </SectionCard>
+
+      <SectionCard
+        title={th ? 'ความช่วยเหลือ' : 'Support'}
+        desc={th ? 'มีปัญหา? ติดต่อทีมงาน' : 'Need help? Reach out'}
+      >
+        <SettingRow label={th ? 'ติดต่อทีมสนับสนุน' : 'Contact support'}>
+          <ComingSoonChip locale={locale} />
+        </SettingRow>
+      </SectionCard>
     </div>
   );
 }

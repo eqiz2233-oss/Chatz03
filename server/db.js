@@ -639,6 +639,77 @@ export async function updateUserPasswordHash(userId, passwordHash) {
   }
 }
 
+/** Partial-update the public profile fields a user can edit themselves. */
+export async function updateUserProfile(userId, { displayName, email, avatarUrl } = {}) {
+  if (!userId) return null;
+  if (pool) {
+    await pool.query(
+      `UPDATE users SET
+         display_name = COALESCE($1, display_name),
+         email        = COALESCE($2, email),
+         avatar_url   = COALESCE($3, avatar_url)
+       WHERE id = $4`,
+      [
+        displayName ?? null,
+        email ? String(email).toLowerCase() : null,
+        avatarUrl ?? null,
+        userId,
+      ],
+    );
+    const { rows } = await pool.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [userId]);
+    return rows[0] || null;
+  }
+  const u = memo.users.find((x) => x.id === userId);
+  if (!u) return null;
+  if (displayName !== undefined) u.display_name = displayName;
+  if (email !== undefined) u.email = email ? String(email).toLowerCase() : null;
+  if (avatarUrl !== undefined) u.avatar_url = avatarUrl;
+  scheduleJsonSave();
+  return u;
+}
+
+/**
+ * Hard-delete a user and their direct rows (shop_members, sessions). Shop
+ * data isn't cascaded — owner has to either transfer or hand over their
+ * shops first. This function will refuse to delete users who are the
+ * last owner of any shop, with a `last_owner_of` payload so the UI can
+ * tell them which shop is blocking.
+ */
+export async function deleteUserAccount(userId) {
+  if (!userId) return { ok: false, reason: 'no_user' };
+  if (pool) {
+    // Find shops where this user is the only owner.
+    const blocked = await pool.query(
+      `SELECT m.shop_id
+         FROM shop_members m
+        WHERE m.user_id = $1 AND m.role = 'owner'
+          AND (SELECT COUNT(*) FROM shop_members m2
+                WHERE m2.shop_id = m.shop_id AND m2.role = 'owner') = 1`,
+      [userId],
+    );
+    if (blocked.rows.length > 0) {
+      return { ok: false, reason: 'last_owner_of', shopIds: blocked.rows.map((r) => r.shop_id) };
+    }
+    await pool.query('DELETE FROM shop_members WHERE user_id=$1', [userId]);
+    await pool.query('DELETE FROM users WHERE id=$1', [userId]);
+    return { ok: true };
+  }
+  // Memo path
+  const ownedSolo = memo.shopMembers
+    .filter((m) => m.user_id === userId && m.role === 'owner')
+    .filter((m) =>
+      memo.shopMembers.filter((x) => x.shop_id === m.shop_id && x.role === 'owner').length === 1,
+    )
+    .map((m) => m.shop_id);
+  if (ownedSolo.length > 0) {
+    return { ok: false, reason: 'last_owner_of', shopIds: ownedSolo };
+  }
+  memo.shopMembers = memo.shopMembers.filter((m) => m.user_id !== userId);
+  memo.users = memo.users.filter((u) => u.id !== userId);
+  scheduleJsonSave();
+  return { ok: true };
+}
+
 export async function countUsers() {
   if (pool) {
     const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM users');

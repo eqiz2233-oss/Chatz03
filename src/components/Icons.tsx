@@ -187,6 +187,25 @@ export const I = {
       <path d="M6 13V8h12v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4z" />
     </svg>
   ),
+  Lock: (p: SVGProps<SVGSVGElement>) => (
+    <svg {...base} {...p}>
+      <rect x="3" y="11" width="18" height="11" rx="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  ),
+  Info: (p: SVGProps<SVGSVGElement>) => (
+    <svg {...base} {...p}>
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" y1="16" x2="12" y2="12" />
+      <line x1="12" y1="8" x2="12.01" y2="8" />
+    </svg>
+  ),
+  Clock: (p: SVGProps<SVGSVGElement>) => (
+    <svg {...base} {...p}>
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </svg>
+  ),
   Palette: (p: SVGProps<SVGSVGElement>) => (
     <svg {...base} {...p}>
       <circle cx="13.5" cy="6.5" r="0.5" fill="currentColor" stroke="none" />

@@ -48,6 +48,10 @@ import {
   createShopInvite,
   findShopInvite,
   consumeShopInvite,
+  updateUserProfile,
+  deleteUserAccount,
+  findUserByEmail,
+  findUserByUsername,
   DEFAULT_SHOP_ID,
 } from './db.js';
 import {
@@ -3373,6 +3377,71 @@ app.post('/api/auth/change-password', express.json({ limit: '4kb' }), async (req
   const result = await changePassword(u.id, req.body?.currentPassword, req.body?.newPassword);
   if (!result.ok) return res.status(400).json({ error: result.reason });
   res.json({ ok: true });
+});
+
+/**
+ * Update the public profile (display name + email + avatar). Email collisions
+ * with other accounts are rejected so OAuth and password accounts on the same
+ * inbox can't accidentally merge.
+ */
+app.patch('/api/auth/profile', express.json({ limit: '8kb' }), async (req, res) => {
+  const u = req.user;
+  if (!u) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const body = req.body || {};
+    const patch = {};
+    if (typeof body.displayName === 'string') {
+      const v = body.displayName.trim().slice(0, 80);
+      patch.displayName = v;
+    }
+    if (typeof body.email === 'string') {
+      const v = body.email.trim().toLowerCase();
+      if (v && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) {
+        return res.status(400).json({ error: 'bad_email' });
+      }
+      if (v) {
+        const owner = await findUserByEmail(v);
+        if (owner && owner.id !== u.id) {
+          return res.status(409).json({ error: 'email_taken' });
+        }
+      }
+      patch.email = v || null;
+    }
+    if (typeof body.avatarUrl === 'string') {
+      patch.avatarUrl = body.avatarUrl.trim().slice(0, 2000) || null;
+    }
+    const updated = await updateUserProfile(u.id, patch);
+    if (!updated) return res.status(404).json({ error: 'not_found' });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[auth] profile update failed:', e?.message || e);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+/**
+ * Permanent account deletion — required by Google + Facebook policy and
+ * generally expected by a user who wants out. We block the call if the
+ * user is the only owner of any shop (they'd orphan that shop's data);
+ * the response includes the shop IDs so the UI can suggest transferring
+ * ownership first.
+ */
+app.delete('/api/auth/me', async (req, res) => {
+  const u = req.user;
+  if (!u) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const result = await deleteUserAccount(u.id);
+    if (!result.ok) {
+      return res.status(409).json({ error: result.reason, shopIds: result.shopIds || [] });
+    }
+    const tok = getCookieToken(req);
+    if (tok) await authLogout(tok);
+    clearSessionCookie(res);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[auth] account deletion failed:', e?.message || e);
+    res.status(500).json({ error: 'server_error' });
+  }
 });
 
 // =====================================================================

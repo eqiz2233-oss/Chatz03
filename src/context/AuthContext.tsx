@@ -40,6 +40,12 @@ export interface ShopMembership {
   created_at?: string;
 }
 
+export interface ProfilePatch {
+  displayName?: string;
+  email?: string;
+  avatarUrl?: string;
+}
+
 interface AuthValue {
   user: AuthUser | null;
   loading: boolean;
@@ -51,6 +57,10 @@ interface AuthValue {
   loginWithFacebook: (accessToken: string) => Promise<AuthResult>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
+  /** Edit the current user's profile (display name, email, avatar). */
+  updateProfile: (patch: ProfilePatch) => Promise<AuthResult>;
+  /** Permanently delete the current user. Resolves with last_owner_of error if blocked. */
+  deleteAccount: () => Promise<AuthResult>;
   /** Switch the current session's active shop. Resolves once the server confirms. */
   setActiveShop: (shopId: string) => Promise<AuthResult>;
 }
@@ -169,6 +179,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [postAuth],
   );
 
+  const updateProfile = useCallback(
+    async (patch: ProfilePatch): Promise<AuthResult> => {
+      try {
+        const r = await fetch('/api/auth/profile', {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        });
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}));
+          return { ok: false, error: j?.error || `HTTP ${r.status}` };
+        }
+        await refresh();
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: String((e as Error)?.message || e) };
+      }
+    },
+    [refresh],
+  );
+
+  const deleteAccount = useCallback(async (): Promise<AuthResult> => {
+    try {
+      const r = await fetch('/api/auth/me', { method: 'DELETE', credentials: 'include' });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        return { ok: false, error: j?.error || `HTTP ${r.status}` };
+      }
+      setUser(null);
+      setShops([]);
+      setActiveShopState(null);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String((e as Error)?.message || e) };
+    }
+  }, []);
+
   const logout = useCallback(async () => {
     try {
       await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
@@ -207,9 +255,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       user, loading, shops, activeShop,
       login, signup, loginWithGoogle, loginWithFacebook,
+      updateProfile, deleteAccount,
       logout, refresh, setActiveShop,
     }),
-    [user, loading, shops, activeShop, login, signup, loginWithGoogle, loginWithFacebook, logout, refresh, setActiveShop],
+    [user, loading, shops, activeShop, login, signup, loginWithGoogle, loginWithFacebook, updateProfile, deleteAccount, logout, refresh, setActiveShop],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
