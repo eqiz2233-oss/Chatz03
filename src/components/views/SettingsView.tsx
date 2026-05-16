@@ -691,7 +691,7 @@ function AboutSection({ locale }: { locale: Locale }) {
             </a>
           </li>
           <li>
-            <a href="/terms" target="_blank" rel="noopener noreferrer" className="font-medium text-brand-600 hover:underline dark:text-brand-400">
+            <a href="/api/terms" target="_blank" rel="noopener noreferrer" className="font-medium text-brand-600 hover:underline dark:text-brand-400">
               {th ? 'เงื่อนไขการใช้งาน →' : 'Terms of Service →'}
             </a>
           </li>

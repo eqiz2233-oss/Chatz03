@@ -20,12 +20,16 @@ import {
   ensureSeedOwner,
   addShopMember,
   updateUserPasswordHash,
+  createPasswordResetToken,
+  findPasswordResetToken,
+  consumePasswordResetToken,
   kvGet,
   kvSet,
   listShopsForUser,
   isShopMember,
   DEFAULT_SHOP_ID,
 } from './db.js';
+import { sendEmail, passwordResetEmail, isEmailEnabled } from './email.js';
 
 const COOKIE_NAME = 'chatz_sid';
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -441,6 +445,84 @@ export function requireAuth({ allowList }) {
     req.user = u;
     next();
   };
+}
+
+// ─── Password reset (email-based, 1-hour token) ─────────────────────────────
+
+/**
+ * Kick off a password reset. ALWAYS returns { ok: true } even when the
+ * identifier doesn't match — same shape as Google / Facebook / Apple —
+ * so a stranger can't probe the user table to learn which emails exist.
+ *
+ * `identifier` is either the user's username OR their email address.
+ * If they signed up with Google/Facebook only (no password), we still
+ * accept the reset and let them set a password — the OAuth login keeps
+ * working in parallel.
+ */
+export async function requestPasswordReset({ identifier, resetUrlBuilder }) {
+  const id = String(identifier || '').trim().toLowerCase();
+  if (!id) return { ok: true }; // silent — see comment above
+
+  // Try username first, then email. Either is fine for identifying the user.
+  const user = (await findUserByUsername(id)) || (await findUserByEmail(id));
+  if (!user) {
+    // Don't reveal that the identifier is unknown.
+    console.log(`[auth] password reset requested for unknown identifier: ${id}`);
+    return { ok: true };
+  }
+  if (!user.email) {
+    console.log(`[auth] password reset blocked — user ${user.id} has no email on file`);
+    return { ok: true, noEmail: true };
+  }
+
+  const token = crypto.randomBytes(24).toString('base64url');
+  await createPasswordResetToken(user.id, token);
+  const resetUrl = typeof resetUrlBuilder === 'function'
+    ? resetUrlBuilder(token)
+    : `/reset-password?token=${encodeURIComponent(token)}`;
+
+  const { html, text } = passwordResetEmail({
+    name: user.display_name || user.username,
+    resetUrl,
+  });
+  const sent = await sendEmail({
+    to: user.email,
+    subject: 'Reset your Chatz password',
+    html,
+    text,
+  });
+  return { ok: true, delivered: sent.ok, devLog: sent.dev || false, emailConfigured: isEmailEnabled() };
+}
+
+/** Returns user metadata for a valid token — frontend uses this to greet
+ *  the user by name on the reset page. Null = token unusable. */
+export async function previewPasswordReset(token) {
+  const row = await findPasswordResetToken(token);
+  if (!row) return null;
+  const user = await findUserById(row.userId);
+  if (!user) return null;
+  return {
+    token: row.token,
+    expiresAt: row.expiresAt,
+    user: {
+      username: user.username,
+      displayName: user.display_name || null,
+      email: user.email || null,
+    },
+  };
+}
+
+/** Set the new password using a valid reset token. Sets the bcrypt hash
+ *  and burns the token in one DB transaction (well, two awaited calls). */
+export async function completePasswordReset(token, newPassword) {
+  const np = String(newPassword || '');
+  if (np.length < 6) return { ok: false, reason: 'password_too_short' };
+  const row = await findPasswordResetToken(token);
+  if (!row) return { ok: false, reason: 'invalid_or_expired' };
+  const hash = await bcrypt.hash(np, 10);
+  await updateUserPasswordHash(row.userId, hash);
+  await consumePasswordResetToken(token);
+  return { ok: true, userId: row.userId };
 }
 
 export async function changePassword(userId, currentPassword, newPassword) {

@@ -61,6 +61,9 @@ import {
   signup as authSignup,
   loginWithGoogle,
   loginWithFacebook,
+  requestPasswordReset,
+  previewPasswordReset,
+  completePasswordReset,
   userFromRequest,
   setSessionCookie,
   clearSessionCookie,
@@ -70,6 +73,7 @@ import {
   activeShopIdFromRequest,
   setActiveShopForRequest,
 } from './auth.js';
+import { isEmailEnabled } from './email.js';
 import { isAiEnabled, aiModel, generateReply, generateSlipThankYou } from './ai.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1485,6 +1489,8 @@ const AUTH_ALLOWLIST = [
   '/api/auth/logout',
   '/api/auth/me',
   '/api/auth/signup',
+  '/api/auth/forgot-password',
+  '/api/auth/reset-password',
   '/api/auth/oauth-config',
   '/api/auth/oauth/google',
   '/api/auth/oauth/facebook',
@@ -1498,6 +1504,7 @@ const AUTH_ALLOWLIST = [
   '/api/fb/oauth/start',
   '/api/fb/oauth/callback',
   '/api/privacy',
+  '/api/terms',
   '/api/fb/data-deletion',
   '/api/fb/data-deletion/status',
 ];
@@ -3046,22 +3053,198 @@ app.post('/api/fb/sync-history', async (_req, res) => {
   res.json({ ok: true, results, totalThreads: fbThreads.size });
 });
 
+/**
+ * Static legal pages — rendered as HTML so they're indexable and the URL
+ * can be plugged directly into Facebook / Google App Review forms and into
+ * LINE Module Channel applications, all of which require these URLs.
+ *
+ * Both pages are intentionally one-file HTML rather than SPA routes so
+ * crawlers and policy reviewers see real content even before the JS bundle
+ * loads, and so they keep working if the SPA build is broken.
+ */
+function legalPage({ title, lastUpdated, body }) {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${title} · Chatz</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  body{font:15px/1.65 -apple-system,system-ui,sans-serif;max-width:760px;margin:0 auto;padding:48px 24px;color:#0f172a;background:#fafafa}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:32px}
+  .brand .logo{width:36px;height:36px;border-radius:10px;background:#7c3aed;display:grid;place-items:center;color:#fff;font-weight:700}
+  .brand b{font-size:18px}
+  article{background:#fff;border:1px solid #e2e8f0;border-radius:18px;padding:36px 40px;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+  h1{font-size:28px;font-weight:700;margin:0 0 6px}
+  .meta{color:#64748b;font-size:13px;margin-bottom:28px}
+  h2{font-size:18px;margin:32px 0 8px;font-weight:600}
+  h3{font-size:15px;margin:20px 0 6px;font-weight:600;color:#334155}
+  p,li{color:#1e293b}
+  code{background:#f1f5f9;padding:1px 6px;border-radius:4px;font-size:13px}
+  ul{padding-left:22px}
+  a{color:#7c3aed}
+  hr{border:0;border-top:1px solid #e2e8f0;margin:32px 0}
+  .footer{text-align:center;color:#94a3b8;font-size:12px;margin-top:32px}
+</style></head><body>
+<div class="brand"><div class="logo">⚡</div><b>Chatz</b></div>
+<article>
+<h1>${title}</h1>
+<p class="meta"><b>Last updated:</b> ${lastUpdated}</p>
+${body}
+</article>
+<p class="footer">Questions? Reach us at support@chatz.app</p>
+</body></html>`;
+}
+
 app.get('/api/privacy', (_req, res) => {
-  res.set('Content-Type', 'text/html; charset=utf-8').send(`<!doctype html><html><head><meta charset="utf-8"><title>Chatz Privacy Policy</title>
-<style>body{font:15px/1.6 system-ui,sans-serif;max-width:720px;margin:40px auto;padding:0 20px;color:#0f172a}h1{font-size:24px}h2{font-size:17px;margin-top:28px}code{background:#f1f5f9;padding:1px 6px;border-radius:4px}</style></head><body>
-<h1>Chatz — Privacy Policy</h1>
-<p><b>Effective date:</b> ${new Date().toISOString().slice(0, 10)}</p>
-<h2>What we collect</h2>
-<p>When you connect Facebook Pages or Instagram Business accounts to Chatz, we receive: your Page id/name/picture, the linked Instagram username/id, the messages your customers send to you, and the access tokens needed to reply. We do not collect your personal Facebook profile beyond your name and id used to authenticate.</p>
-<h2>How we use it</h2>
-<p>Solely to display your inbox and let you reply. We do not sell or share your data with third parties.</p>
-<h2>Storage</h2>
-<p>Tokens and messages are stored on the server you deploy. Disconnecting from <i>Settings → Integrations</i> deletes the stored token immediately.</p>
-<h2>Data deletion</h2>
-<p>To request deletion, disconnect from Settings, or send a request to the data-deletion endpoint at <code>/api/fb/data-deletion</code> (configured in your Meta App Settings → Data Deletion Callback URL).</p>
-<h2>Contact</h2>
-<p>support@chatz.local</p>
-</body></html>`);
+  const today = new Date().toISOString().slice(0, 10);
+  res.set('Content-Type', 'text/html; charset=utf-8').send(legalPage({
+    title: 'Privacy Policy',
+    lastUpdated: today,
+    body: `
+<p>This Privacy Policy describes how Chatz ("we", "us") collects, uses, and shares information when you create an account and use our multi-channel chat aggregator service.</p>
+
+<h2>1. Information we collect</h2>
+
+<h3>Account information</h3>
+<ul>
+  <li><b>You provide:</b> username, password (hashed with bcrypt), display name, and optionally an email address.</li>
+  <li><b>From OAuth providers (Google, Facebook):</b> if you sign in with one of these, we receive a stable user id, display name, email address, and profile photo URL.</li>
+</ul>
+
+<h3>Connected channel data</h3>
+<ul>
+  <li><b>LINE:</b> Channel access token, Channel secret, Official Account profile (id, name, picture).</li>
+  <li><b>Facebook Messenger / Instagram:</b> Page access token, Page id/name/picture, linked Instagram Business id/username, customer messages, message attachments (images, videos).</li>
+  <li><b>Customer profile data</b> for the people who message your connected channels: their platform-scoped id (PSID / LINE userId), display name, profile photo URL, and the message content.</li>
+</ul>
+
+<h3>Business data you create in Chatz</h3>
+<ul>
+  <li>Products, orders, payment slip records, tags you assign to customers, brand voice settings, keyword auto-reply rules.</li>
+</ul>
+
+<h3>Automatic / technical data</h3>
+<ul>
+  <li>Session cookie used to keep you signed in (httpOnly, 30-day expiry).</li>
+  <li>Request IP address for rate-limiting (not stored long-term).</li>
+  <li>Server error logs containing API responses from connected platforms.</li>
+</ul>
+
+<h2>2. How we use the information</h2>
+<p>We use the data <b>only</b> to provide the service:</p>
+<ul>
+  <li>Display your inbox and route replies to the correct channel.</li>
+  <li>Generate AI auto-replies and verify payment slips when you opt in to those features.</li>
+  <li>Authenticate you and remember which shop you're working on.</li>
+  <li>Send transactional emails: password reset, team invite confirmations.</li>
+</ul>
+<p>We do <b>not</b> sell your data. We do not use your conversations to train AI models for other customers.</p>
+
+<h2>3. Third-party processors</h2>
+<p>Service-critical data is shared with these processors only to the extent necessary to operate Chatz:</p>
+<ul>
+  <li><b>LINE Corporation</b> — to send/receive LINE messages on your behalf.</li>
+  <li><b>Meta Platforms (Facebook / Instagram)</b> — to send/receive Messenger and Instagram DMs.</li>
+  <li><b>Anthropic</b> — when AI auto-reply is enabled, message text is sent to the Claude API to generate a response. Anthropic's API does not train on customer inputs by default.</li>
+  <li><b>EasySlip</b> — when slip verification is enabled, payment slip images are sent to EasySlip's API to extract bank/amount/reference data.</li>
+  <li><b>Resend</b> — for transactional email delivery (password reset).</li>
+  <li><b>Hosting provider</b> (Railway / your chosen host) — runs the server and database.</li>
+</ul>
+
+<h2>4. Data retention</h2>
+<ul>
+  <li>Account data is retained until you delete your account (Settings → Security → Delete account).</li>
+  <li>Connected-channel tokens are deleted immediately when you disconnect a channel in Settings → Integrations.</li>
+  <li>Customer messages are retained as long as the corresponding chat thread exists in your inbox; deleting your account removes them.</li>
+  <li>Server-side logs are kept for at most 30 days for debugging.</li>
+</ul>
+
+<h2>5. Your rights</h2>
+<p>You can at any time:</p>
+<ul>
+  <li><b>Access &amp; export</b> your data via the API or by request to support@chatz.app.</li>
+  <li><b>Correct</b> profile information from Settings → Profile.</li>
+  <li><b>Delete</b> your account from Settings → Security → Delete account. This is irreversible.</li>
+  <li><b>Withdraw OAuth consent</b> from each provider's account settings (e.g. Google Account → Security → Third-party apps).</li>
+  <li><b>Request Meta data deletion</b> via <code>/api/fb/data-deletion</code> (the URL you registered in your Meta App Settings → Data Deletion Callback).</li>
+</ul>
+
+<h2>6. Security</h2>
+<p>Passwords are stored as bcrypt hashes; we never see your plaintext password. OAuth tokens are stored encrypted at rest where supported by the hosting database. Session cookies are httpOnly + SameSite=Lax + Secure in production.</p>
+
+<h2>7. Children</h2>
+<p>Chatz is intended for business users aged 18 and over. We do not knowingly collect data from anyone under 13.</p>
+
+<h2>8. Changes to this policy</h2>
+<p>If we materially change how we handle data, we'll update the "Last updated" date above and notify active users via the in-app banner.</p>
+
+<h2>9. Contact</h2>
+<p>Privacy questions or data-deletion requests: <b>support@chatz.app</b></p>
+    `,
+  }));
+});
+
+app.get('/api/terms', (_req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  res.set('Content-Type', 'text/html; charset=utf-8').send(legalPage({
+    title: 'Terms of Service',
+    lastUpdated: today,
+    body: `
+<p>By creating a Chatz account and using the service, you ("you", "the user") agree to these terms.</p>
+
+<h2>1. The service</h2>
+<p>Chatz is a multi-channel chat aggregator. It connects to your LINE Official Account, Facebook Page, and/or Instagram Business account so you can read and reply to customer conversations from a single inbox. Optional features include AI-generated reply suggestions and payment slip verification.</p>
+
+<h2>2. Account &amp; eligibility</h2>
+<ul>
+  <li>You must be at least 18 years old.</li>
+  <li>You're responsible for keeping your password and OAuth-linked accounts secure.</li>
+  <li>You may not create accounts using fraudulent information or impersonate another person or business.</li>
+</ul>
+
+<h2>3. Your content</h2>
+<p>You retain ownership of every product, conversation, image, and configuration you put into Chatz. You grant us a limited license to store and process this content solely to provide the service to you and the teammates you invite.</p>
+<p>You are responsible for ensuring you have the right to forward your customers' messages through Chatz (this is normally implicit when a customer messages your Page / LINE OA, but check your local data-protection laws).</p>
+
+<h2>4. Acceptable use</h2>
+<p>You agree NOT to use Chatz to:</p>
+<ul>
+  <li>Send unsolicited bulk messages or spam.</li>
+  <li>Send messages that violate LINE's, Meta's, or any other connected platform's policies — they enforce, and a violation can get the OA/Page banned regardless of what we do.</li>
+  <li>Send content that is illegal, harassing, deceptive, infringing, or harmful.</li>
+  <li>Reverse-engineer or attempt to extract source code from the hosted service.</li>
+  <li>Resell access to Chatz without our written permission.</li>
+</ul>
+<p>We may suspend or terminate accounts that violate these rules.</p>
+
+<h2>5. Third-party services</h2>
+<p>Chatz relies on LINE Corporation, Meta Platforms, Anthropic, EasySlip, and your hosting provider. Their terms also apply to your use of those features. Outages or policy changes on these platforms may affect Chatz functionality without notice.</p>
+
+<h2>6. AI replies</h2>
+<p>AI-generated reply suggestions are produced by a language model and may be inaccurate. <b>You are responsible for reviewing any AI-generated reply before sending it.</b> When you enable auto-reply, you accept that messages may be sent on your behalf without manual review.</p>
+
+<h2>7. Payment slip verification</h2>
+<p>Slip verification is a convenience tool, not a substitute for confirming payment yourself. Always verify high-value transactions against your bank account directly. Chatz is not a payment processor and does not handle funds.</p>
+
+<h2>8. Pricing &amp; payment</h2>
+<p>The current version of Chatz is offered as-is. If we introduce paid plans, we'll give you 30 days' notice before charging an account that wasn't on a paid plan before.</p>
+
+<h2>9. Termination</h2>
+<p>You can terminate your account at any time via Settings → Security → Delete account. We may terminate your account if you materially breach these terms; we'll try to give you notice and a chance to fix the issue first when reasonable.</p>
+
+<h2>10. Disclaimer of warranties</h2>
+<p>Chatz is provided "as is" without warranties of any kind. We don't guarantee that the service will be uninterrupted, that messages will always be delivered, or that AI replies will be correct.</p>
+
+<h2>11. Limitation of liability</h2>
+<p>To the maximum extent permitted by law, Chatz and its operators are not liable for any indirect, incidental, special, consequential, or punitive damages, or any loss of profits, data, or revenue, arising from your use of the service.</p>
+
+<h2>12. Changes</h2>
+<p>We may update these terms; the updated version is posted at this URL with a new "Last updated" date. Continued use after a change means you accept the new terms.</p>
+
+<h2>13. Governing law</h2>
+<p>These terms are governed by the laws of Thailand. Disputes will be resolved in the courts of Bangkok, unless another forum is required by your local consumer-protection law.</p>
+
+<h2>14. Contact</h2>
+<p>Questions about these terms: <b>support@chatz.app</b></p>
+    `,
+  }));
 });
 
 app.post('/api/fb/data-deletion', express.urlencoded({ extended: false }), async (req, res) => {
@@ -3148,6 +3331,58 @@ app.post('/api/auth/signup', rateLimit({ bucket: 'auth-signup', limit: 5, window
     res.json({ user: result.user });
   } catch (e) {
     console.error('[auth] signup failed:', e?.message || e);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+/**
+ * Kick off the password reset flow. Body: { identifier } where identifier
+ * is either the user's username or email. Always returns 200 with the same
+ * shape — never confirms whether the account exists (prevents user-table
+ * enumeration). Rate-limited tightly so attackers can't brute-force.
+ *
+ * If RESEND_API_KEY is set, an email is sent. Otherwise the reset URL is
+ * logged to the server console so an operator can relay it manually.
+ */
+app.post('/api/auth/forgot-password', rateLimit({ bucket: 'auth-forgot', limit: 3, windowMs: 60_000 }), express.json({ limit: '2kb' }), async (req, res) => {
+  try {
+    const identifier = String(req.body?.identifier || '').trim();
+    if (!identifier) return res.json({ ok: true }); // silent on empty input
+    await requestPasswordReset({
+      identifier,
+      resetUrlBuilder: (token) => `${publicBaseUrl(req)}/?reset=${encodeURIComponent(token)}`,
+    });
+    res.json({ ok: true, emailConfigured: isEmailEnabled() });
+  } catch (e) {
+    console.error('[auth] forgot-password failed:', e?.message || e);
+    res.json({ ok: true }); // still don't leak the failure mode
+  }
+});
+
+/** Preview a reset token before showing the new-password form. */
+app.get('/api/auth/reset-password/:token', async (req, res) => {
+  try {
+    const preview = await previewPasswordReset(String(req.params.token || ''));
+    if (!preview) return res.status(404).json({ error: 'invalid_or_expired' });
+    res.json({ preview });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+/** Set the new password. Burns the token. */
+app.post('/api/auth/reset-password', rateLimit({ bucket: 'auth-reset', limit: 10, windowMs: 60_000 }), express.json({ limit: '2kb' }), async (req, res) => {
+  try {
+    const token = String(req.body?.token || '');
+    const newPassword = String(req.body?.newPassword || '');
+    const result = await completePasswordReset(token, newPassword);
+    if (!result.ok) {
+      const code = result.reason === 'password_too_short' ? 400 : 401;
+      return res.status(code).json({ error: result.reason });
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[auth] reset-password failed:', e?.message || e);
     res.status(500).json({ error: 'server_error' });
   }
 });

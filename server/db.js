@@ -82,6 +82,7 @@ function loadJsonSync() {
     memo.shops = Array.isArray(raw?.shops) ? raw.shops : [];
     memo.shopMembers = Array.isArray(raw?.shopMembers) ? raw.shopMembers : [];
     memo.shopInvites = Array.isArray(raw?.shopInvites) ? raw.shopInvites : [];
+    memo.passwordResetTokens = Array.isArray(raw?.passwordResetTokens) ? raw.passwordResetTokens : [];
     memo.products = Array.isArray(raw?.products) ? raw.products : [];
     memo.orders = Array.isArray(raw?.orders) ? raw.orders : [];
     memo.slipActions = Array.isArray(raw?.slipActions) ? raw.slipActions : [];
@@ -637,6 +638,91 @@ export async function updateUserPasswordHash(userId, passwordHash) {
       scheduleJsonSave();
     }
   }
+}
+
+// --------------------------------------------------------------------------
+// PASSWORD RESET TOKENS — short-lived (1 hour), one-time-use links that let
+// a user prove email ownership in exchange for setting a new password.
+// Pattern matches every big platform (Facebook, LINE, Google Workspace).
+// --------------------------------------------------------------------------
+
+const PASSWORD_RESET_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+async function ensurePasswordResetTable() {
+  if (!pool) return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      token TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      used_at TIMESTAMPTZ
+    );
+    CREATE INDEX IF NOT EXISTS password_reset_tokens_user_idx
+      ON password_reset_tokens(user_id);
+  `);
+}
+
+export async function createPasswordResetToken(userId, token) {
+  if (!userId || !token) return null;
+  await ensurePasswordResetTable();
+  const expiresAt = new Date(Date.now() + PASSWORD_RESET_TTL_MS).toISOString();
+  if (pool) {
+    // Invalidate any prior unused tokens for this user — only one valid
+    // link at a time, so a stolen older email can't be redeemed later.
+    await pool.query(
+      'DELETE FROM password_reset_tokens WHERE user_id=$1 AND used_at IS NULL',
+      [userId],
+    );
+    await pool.query(
+      'INSERT INTO password_reset_tokens (token, user_id, expires_at) VALUES ($1,$2,$3)',
+      [token, userId, expiresAt],
+    );
+    return { token, userId, expiresAt };
+  }
+  memo.passwordResetTokens = (memo.passwordResetTokens || []).filter((t) => !(t.user_id === userId && !t.used_at));
+  memo.passwordResetTokens.push({ token, user_id: userId, expires_at: expiresAt, used_at: null });
+  scheduleJsonSave();
+  return { token, userId, expiresAt };
+}
+
+/** Look up a token. Returns null when missing, expired, or already used. */
+export async function findPasswordResetToken(token) {
+  if (!token) return null;
+  await ensurePasswordResetTable();
+  if (pool) {
+    const { rows } = await pool.query(
+      'SELECT token, user_id, expires_at, used_at FROM password_reset_tokens WHERE token=$1 LIMIT 1',
+      [token],
+    );
+    const r = rows[0];
+    if (!r) return null;
+    if (r.used_at) return null;
+    if (new Date(r.expires_at).getTime() < Date.now()) return null;
+    return { token: r.token, userId: r.user_id, expiresAt: r.expires_at };
+  }
+  const r = (memo.passwordResetTokens || []).find((x) => x.token === token);
+  if (!r) return null;
+  if (r.used_at) return null;
+  if (new Date(r.expires_at).getTime() < Date.now()) return null;
+  return { token: r.token, userId: r.user_id, expiresAt: r.expires_at };
+}
+
+/** Mark a reset token as consumed so it can't be redeemed twice. */
+export async function consumePasswordResetToken(token) {
+  if (!token) return false;
+  await ensurePasswordResetTable();
+  if (pool) {
+    const r = await pool.query(
+      'UPDATE password_reset_tokens SET used_at = NOW() WHERE token=$1 AND used_at IS NULL',
+      [token],
+    );
+    return r.rowCount > 0;
+  }
+  const r = (memo.passwordResetTokens || []).find((x) => x.token === token && !x.used_at);
+  if (!r) return false;
+  r.used_at = new Date().toISOString();
+  scheduleJsonSave();
+  return true;
 }
 
 /** Partial-update the public profile fields a user can edit themselves. */
