@@ -898,8 +898,12 @@ function loadPersistedChatStateSync() {
       const kind = t?.kind === 'group' || t?.kind === 'room' ? t.kind : 'user';
       const targetId = String(t?.targetId || '');
       if (!targetId) continue;
-      const key = `${kind}:${targetId}`;
+      // Existing snapshots predate per-shop thread keys — default them to the
+      // legacy single shop so they keep showing up after upgrade.
+      const shopId = typeof t?.shopId === 'string' && t.shopId ? t.shopId : DEFAULT_SHOP_ID;
+      const key = `${shopId}::${kind}:${targetId}`;
       lineThreads.set(key, {
+        shopId,
         kind,
         targetId,
         key,
@@ -1162,10 +1166,22 @@ function sourceKey(source) {
   return null;
 }
 
-function getOrCreateThread(kind, targetId) {
-  const key = `${kind}:${targetId}`;
+/**
+ * Get-or-create a LINE thread. `shopId` is required so threads stay isolated
+ * between tenants — two shops talking to the same person (same LINE userId)
+ * each get their own thread row, and the inbox API filters by the caller's
+ * active shop.
+ *
+ * Key format intentionally embeds shopId so a JSON snapshot of `lineThreads`
+ * round-trips correctly without us having to remember to set thread.shopId
+ * on every write site.
+ */
+function getOrCreateThread(kind, targetId, shopId) {
+  const sid = shopId || DEFAULT_SHOP_ID;
+  const key = `${sid}::${kind}:${targetId}`;
   if (!lineThreads.has(key)) {
     lineThreads.set(key, {
+      shopId: sid,
       kind,
       targetId,
       key,
@@ -1491,10 +1507,13 @@ app.get('/api/line/events', (_req, res) => {
   res.json({ events: eventsBuffer });
 });
 
-app.get('/api/line/conversations', (_req, res) => {
+app.get('/api/line/conversations', async (req, res) => {
+  // Scope to the caller's active shop so admin of Shop A only sees Shop A's
+  // threads, not the merged firehose of every shop on this deployment.
+  const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
   scheduleLineProfileBackfill();
   const arr = Array.from(lineThreads.values())
-    .filter((t) => t.messages.length > 0)
+    .filter((t) => (t.shopId || DEFAULT_SHOP_ID) === shopId && t.messages.length > 0)
     .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
     .map(threadToApiConversation);
   res.json({ conversations: arr, count: arr.length });
@@ -1535,8 +1554,13 @@ app.get('/api/inbox/stream', (req, res) => {
 });
 
 app.post('/api/line/send', express.json({ limit: '50kb' }), async (req, res) => {
-  if (!lineClient) {
-    return res.status(503).json({ error: 'LINE_CHANNEL_ACCESS_TOKEN is missing (push disabled)' });
+  const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
+  // Per-shop token: pull the active shop's LINE config and build a temporary
+  // client so Shop A's reply never goes out from Shop B's OA.
+  const entry = await loadLineConfigForShop(shopId);
+  const accessToken = entry?.channelAccessToken || lineConfig.channelAccessToken;
+  if (!accessToken) {
+    return res.status(503).json({ error: 'LINE not connected for this shop yet — go to Settings → Channels.' });
   }
   const { conversationId, text, asAi } = req.body || {};
   const body = typeof text === 'string' ? text.trim() : '';
@@ -1551,11 +1575,12 @@ app.post('/api/line/send', express.json({ limit: '50kb' }), async (req, res) => 
   const targetId = m[2];
   const sender = asAi ? 'ai' : 'agent';
   try {
-    await lineClient.pushMessage({
+    const shopClient = new line.messagingApi.MessagingApiClient({ channelAccessToken: accessToken });
+    await shopClient.pushMessage({
       to: targetId,
       messages: [{ type: 'text', text: body }],
     });
-    const thread = getOrCreateThread(kind, targetId);
+    const thread = getOrCreateThread(kind, targetId, shopId);
     const now = new Date().toISOString();
     thread.messages.push({
       id: crypto.randomUUID(),
@@ -1594,7 +1619,12 @@ app.post(
     }
 
     const events = req.body?.events || [];
-    console.log('[LINE webhook]', new Date().toISOString(), 'events=', events.length, events.map((e) => e.type).join(',') || '(none)');
+    // LINE puts the receiving OA's userId on the top-level body — every event
+    // in this batch belongs to the same OA. Look that up to figure out which
+    // shop owns this webhook so each event lands in the right tenant's inbox.
+    const destination = req.body?.destination ? String(req.body.destination) : null;
+    const eventShopId = shopIdForLineDestination(destination) || DEFAULT_SHOP_ID;
+    console.log('[LINE webhook]', new Date().toISOString(), 'shop=', eventShopId, 'events=', events.length, events.map((e) => e.type).join(',') || '(none)');
 
     try {
       for (const event of events) {
@@ -1613,7 +1643,7 @@ app.post(
 
         const src = sourceKey(event.source);
         if (event.type === 'message' && src && event.message) {
-          const thread = getOrCreateThread(src.kind, src.targetId);
+          const thread = getOrCreateThread(src.kind, src.targetId, eventShopId);
           const mid = event.message.id || crypto.randomUUID();
           const media = extractLineMedia(event.message);
           let textOut = null;
@@ -2264,26 +2294,41 @@ function isLineRetryable(e) {
   return true; // network error, no status — retry
 }
 
-async function sendLineMessage({ conversationId, text, asAi }) {
-  if (!lineClient) {
-    return { status: 503, error: 'LINE_CHANNEL_ACCESS_TOKEN is missing (push disabled)' };
-  }
+async function sendLineMessage({ conversationId, text, asAi, shopId }) {
+  // Resolve the OA whose token to use. Caller passes shopId from the request;
+  // we fall back to whatever shop already owns this conversation thread.
+  let sid = shopId || null;
   const body = typeof text === 'string' ? text.trim() : '';
   if (!conversationId || !body) return { status: 400, error: 'conversationId and text are required' };
   const m = /^line:(user|group|room):(.+)$/.exec(String(conversationId));
   if (!m) return { status: 400, error: 'invalid conversationId (expected line:user|group|room:<id>)' };
   const kind = m[1];
   const targetId = m[2];
+
+  if (!sid) {
+    // Find an existing thread for this customer to learn which shop owns it.
+    for (const t of lineThreads.values()) {
+      if (t.kind === kind && t.targetId === targetId) { sid = t.shopId; break; }
+    }
+    sid = sid || DEFAULT_SHOP_ID;
+  }
+
+  const entry = await loadLineConfigForShop(sid);
+  const accessToken = entry?.channelAccessToken || lineConfig.channelAccessToken;
+  if (!accessToken) {
+    return { status: 503, error: 'LINE not connected for this shop yet.' };
+  }
   if (asAi && !isBotEnabled(conversationId)) {
     return { status: 409, error: 'Bot is turned off for this conversation' };
   }
   const sender = asAi ? 'ai' : 'agent';
+  const shopClient = new line.messagingApi.MessagingApiClient({ channelAccessToken: accessToken });
   try {
     await retryWithBackoff(
-      () => lineClient.pushMessage({ to: targetId, messages: [{ type: 'text', text: body }] }),
+      () => shopClient.pushMessage({ to: targetId, messages: [{ type: 'text', text: body }] }),
       { tries: 3, shouldRetry: isLineRetryable, label: `LINE push ${targetId.slice(-6)}` },
     );
-    const thread = getOrCreateThread(kind, targetId);
+    const thread = getOrCreateThread(kind, targetId, sid);
     const now = new Date().toISOString();
     thread.messages.push({ id: crypto.randomUUID(), receivedAt: now, sender, text: body });
     thread.updatedAt = now;
@@ -2461,8 +2506,9 @@ async function tryAutoReply({ channel, conversationId, thread, customerText }) {
 app.post('/api/messages/send', express.json({ limit: '50kb' }), async (req, res) => {
   const { conversationId } = req.body || {};
   const id = String(conversationId || '');
+  const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
   let result;
-  if (id.startsWith('line:')) result = await sendLineMessage(req.body || {});
+  if (id.startsWith('line:')) result = await sendLineMessage({ ...(req.body || {}), shopId });
   else if (id.startsWith('fb:') || id.startsWith('ig:')) result = await sendMetaMessage(req.body || {});
   else result = { status: 400, error: 'unknown conversationId prefix (expected line:/fb:/ig:)' };
   if (result.status >= 400) return res.status(result.status).json({ error: result.error });
