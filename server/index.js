@@ -358,19 +358,27 @@ const MAX_EVENTS = 200;
 const CHAT_STORE_FILE = path.join(__dirname, 'chat-store.json');
 
 /**
- * Per-conversation auto-reply (bot) toggle. Conversations default to ON; the
- * UI can flip them off when a human takeover is needed. Any AI auto-reply path
- * (currently the `asAi` send flag, future webhook-driven autoresponders) must
- * check `isBotEnabled(conversationId)` before firing.
+ * Per-conversation auto-reply (bot) toggle, scoped to the shop that owns
+ * the thread. Conversations default to ON; the UI flips it off when a
+ * human takes over. Storage key is `${shopId}::${conversationId}` so two
+ * shops talking to the same customer (same LINE userId / FB PSID) keep
+ * independent bot states.
+ *
+ * The legacy chat-store.json might contain unscoped keys (just
+ * `line:user:Uxxx`); the loader rewrites those to DEFAULT_SHOP_ID at
+ * boot, so existing single-tenant installs upgrade silently.
  */
-const botStates = new Map(); // conversationId -> boolean
-function isBotEnabled(conversationId) {
+const botStates = new Map(); // `${shopId}::${conversationId}` -> boolean
+function botStateKey(conversationId, shopId) {
+  return `${shopId || DEFAULT_SHOP_ID}::${String(conversationId || '')}`;
+}
+function isBotEnabled(conversationId, shopId) {
   if (!conversationId) return true;
-  const v = botStates.get(String(conversationId));
+  const v = botStates.get(botStateKey(conversationId, shopId));
   return v === undefined ? true : Boolean(v);
 }
-function setBotEnabled(conversationId, enabled) {
-  botStates.set(String(conversationId), Boolean(enabled));
+function setBotEnabled(conversationId, enabled, shopId) {
+  botStates.set(botStateKey(conversationId, shopId), Boolean(enabled));
   markChatStateDirty();
 }
 
@@ -820,7 +828,7 @@ function fbThreadToApiConversation(thread) {
     updatedAt: thread.updatedAt,
     unread: 0,
     online: false,
-    botEnabled: isBotEnabled(id),
+    botEnabled: isBotEnabled(id, thread.shopId),
     messages: thread.messages.map((m) => ({
       id: m.id,
       sender: m.sender,
@@ -972,7 +980,11 @@ function loadPersistedChatStateSync() {
     const botObj = raw?.botStates && typeof raw.botStates === 'object' ? raw.botStates : null;
     if (botObj) {
       for (const [k, v] of Object.entries(botObj)) {
-        botStates.set(String(k), Boolean(v));
+        // Pre-shop snapshots stored keys like 'line:user:Uxxx' directly.
+        // Auto-migrate by prepending DEFAULT_SHOP_ID so existing single-tenant
+        // installs keep their bot toggles after upgrade.
+        const key = k.includes('::') ? k : botStateKey(k, DEFAULT_SHOP_ID);
+        botStates.set(key, Boolean(v));
       }
     }
     console.log(
@@ -1377,10 +1389,25 @@ function lastSnippetFromMessage(m) {
   return '';
 }
 
+/**
+ * Build a Messaging API client for the THREAD'S shop, not whichever shop
+ * the global compat happens to hold right now. With multiple shops on one
+ * deployment, the global token could be Shop A's while a Shop B webhook is
+ * being processed — that would hit /getProfile with the wrong OA's token
+ * and return 401 (or worse, leak Shop A's customer data).
+ */
+async function lineClientForShop(shopId) {
+  const entry = await loadLineConfigForShop(shopId || DEFAULT_SHOP_ID);
+  const token = entry?.channelAccessToken || lineConfig.channelAccessToken;
+  if (!token) return null;
+  return new line.messagingApi.MessagingApiClient({ channelAccessToken: token });
+}
+
 async function enrichUserProfile(userId, thread) {
-  if (!lineClient) return;
+  const client = await lineClientForShop(thread.shopId);
+  if (!client) return;
   try {
-    const p = await lineClient.getProfile(userId);
+    const p = await client.getProfile(userId);
     thread.displayName = p.displayName;
     thread.pictureUrl = p.pictureUrl;
     thread.updatedAt = new Date().toISOString();
@@ -1391,9 +1418,10 @@ async function enrichUserProfile(userId, thread) {
 }
 
 async function enrichGroupSummary(groupId, thread) {
-  if (!lineClient) return;
+  const client = await lineClientForShop(thread.shopId);
+  if (!client) return;
   try {
-    const p = await lineClient.getGroupSummary(groupId);
+    const p = await client.getGroupSummary(groupId);
     if (p?.groupName) thread.displayName = p.groupName;
     if (p?.pictureUrl) thread.pictureUrl = p.pictureUrl;
     thread.updatedAt = new Date().toISOString();
@@ -1491,6 +1519,9 @@ async function maybeAttachSlip({
       customerName: thread.displayName || conversationId,
       customerAvatar: thread.pictureUrl || '',
       imageUrl: imageUrl || null,
+      // Stamp the receiving shop so /api/slips can filter and slip pages
+      // never leak between tenants.
+      shopId: thread.shopId || DEFAULT_SHOP_ID,
     });
     // Only attach the slip card to the chat message when verification
     // actually produced useful info. `failed` = it wasn't a slip → leave
@@ -1509,7 +1540,7 @@ async function maybeAttachSlip({
       result?.status === 'verified' &&
       !result?.mock &&
       isAiEnabled() &&
-      isBotEnabled(conversationId)
+      isBotEnabled(conversationId, thread.shopId)
     ) {
       void (async () => {
         try {
@@ -1559,7 +1590,7 @@ function threadToApiConversation(thread) {
     updatedAt: thread.updatedAt,
     unread: 0,
     online: false,
-    botEnabled: isBotEnabled(id),
+    botEnabled: isBotEnabled(id, thread.shopId),
     messages: thread.messages.map((m) => ({
       id: m.id,
       sender: m.sender,
@@ -2130,33 +2161,37 @@ app.get('/api/line/oauth/callback', async (req, res) => {
 // Bot on/off (per-conversation auto-reply switch)
 // =====================================================================
 
-app.get('/api/bot/state', (req, res) => {
+app.get('/api/bot/state', async (req, res) => {
   const id = String(req.query?.conversationId || '').trim();
   if (!id) return res.status(400).json({ error: 'conversationId required' });
-  res.json({ conversationId: id, enabled: isBotEnabled(id) });
+  const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
+  res.json({ conversationId: id, enabled: isBotEnabled(id, shopId) });
 });
 
-app.post('/api/bot/state', express.json({ limit: '4kb' }), (req, res) => {
+app.post('/api/bot/state', express.json({ limit: '4kb' }), async (req, res) => {
   const id = String(req.body?.conversationId || '').trim();
   if (!id) return res.status(400).json({ error: 'conversationId required' });
+  const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
   const enabled = req.body?.enabled !== false; // default true if not boolean
-  setBotEnabled(id, enabled);
-  res.json({ conversationId: id, enabled: isBotEnabled(id) });
+  setBotEnabled(id, enabled, shopId);
+  res.json({ conversationId: id, enabled: isBotEnabled(id, shopId) });
 });
 
 // =====================================================================
 // Slip verification dashboard
 // =====================================================================
 
-app.get('/api/slips', (_req, res) => {
+app.get('/api/slips', async (req, res) => {
+  const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
   res.json({
-    slips: listSlips(),
-    stats: slipStats(),
+    slips: listSlips(shopId),
+    stats: slipStats(shopId),
   });
 });
 
-app.get('/api/slips/:id', (req, res) => {
-  const s = getSlip(String(req.params.id || ''));
+app.get('/api/slips/:id', async (req, res) => {
+  const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
+  const s = getSlip(String(req.params.id || ''), shopId);
   if (!s) return res.status(404).json({ error: 'not found' });
   res.json({ slip: s });
 });
@@ -2470,7 +2505,7 @@ async function sendLineMessage({ conversationId, text, asAi, shopId }) {
   if (!accessToken) {
     return { status: 503, error: 'LINE not connected for this shop yet.' };
   }
-  if (asAi && !isBotEnabled(conversationId)) {
+  if (asAi && !isBotEnabled(conversationId, sid)) {
     return { status: 409, error: 'Bot is turned off for this conversation' };
   }
   const sender = asAi ? 'ai' : 'agent';
@@ -2528,7 +2563,10 @@ async function sendMetaMessage({ conversationId, text, asAi, shopId }) {
     }
     pageToken = primaryPageAccessToken();
   }
-  if (asAi && !isBotEnabled(conversationId)) {
+  // Resolve the shop the bot toggle should be checked against — fall back
+  // to whatever shop the resolved page or thread says it belongs to.
+  const botShopId = (resolvedPage?.shopId) || shopId || DEFAULT_SHOP_ID;
+  if (asAi && !isBotEnabled(conversationId, botShopId)) {
     return { status: 409, error: 'Bot is turned off for this conversation' };
   }
   const sender = asAi ? 'ai' : 'agent';
@@ -2601,7 +2639,7 @@ async function sendMetaMessage({ conversationId, text, asAi, shopId }) {
  */
 async function tryKeywordReply({ channel, conversationId, customerText, shopId }) {
   if (!customerText || !String(customerText).trim()) return false;
-  if (!isBotEnabled(conversationId)) return false;
+  if (!isBotEnabled(conversationId, shopId)) return false;
   let rules;
   try {
     rules = await getKeywordRulesForShop(shopId || DEFAULT_SHOP_ID);
@@ -2635,10 +2673,9 @@ async function tryKeywordReply({ channel, conversationId, customerText, shopId }
 
 async function tryAutoReply({ channel, conversationId, thread, customerText, shopId }) {
   if (!customerText || !String(customerText).trim()) return;
-  if (!isBotEnabled(conversationId)) return;
-
   // Threads carry their shopId now — fall back to it if the caller didn't pass one.
   const sid = shopId || thread?.shopId || DEFAULT_SHOP_ID;
+  if (!isBotEnabled(conversationId, sid)) return;
 
   // Keyword rules first — they're cheap, deterministic, and don't need an AI key.
   if (await tryKeywordReply({ channel, conversationId, customerText, shopId: sid })) return;
@@ -3876,8 +3913,9 @@ app.delete('/api/orders/:id', async (req, res) => {
 
 app.post('/api/slips/:id/confirm', async (req, res) => {
   try {
+    const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
     const id = String(req.params.id || '');
-    const slip = getSlip(id);
+    const slip = getSlip(id, shopId);
     if (!slip) return res.status(404).json({ error: 'not_found' });
     const action = await recordSlipAction({
       slipId: id,
@@ -3892,8 +3930,9 @@ app.post('/api/slips/:id/confirm', async (req, res) => {
 
 app.post('/api/slips/:id/reject', express.json({ limit: '4kb' }), async (req, res) => {
   try {
+    const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
     const id = String(req.params.id || '');
-    const slip = getSlip(id);
+    const slip = getSlip(id, shopId);
     if (!slip) return res.status(404).json({ error: 'not_found' });
     const action = await recordSlipAction({
       slipId: id,
@@ -3906,9 +3945,12 @@ app.post('/api/slips/:id/reject', express.json({ limit: '4kb' }), async (req, re
   }
 });
 
-app.post('/api/slips/reverify-all', async (_req, res) => {
+app.post('/api/slips/reverify-all', async (req, res) => {
   try {
-    const all = listSlips();
+    // Re-verify only the caller's shop slips. Otherwise one shop could
+    // burn another shop's EasySlip API quota by triggering a global reverify.
+    const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
+    const all = listSlips(shopId);
     const targets = all.filter((s) => s?.imageUrl && s?.result?.status !== 'verified');
     const results = [];
     for (const s of targets) {
@@ -3927,9 +3969,10 @@ app.post('/api/slips/reverify-all', async (_req, res) => {
 
 // Annotate /api/slips list with last action so the dashboard can mark
 // already-confirmed/rejected rows.
-app.get('/api/slips/actions', async (_req, res) => {
+app.get('/api/slips/actions', async (req, res) => {
   try {
-    const slips = listSlips();
+    const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
+    const slips = listSlips(shopId);
     const ids = slips.map((s) => s.id);
     const m = await listSlipActionsBySlipIds(ids);
     const out = {};
@@ -4092,10 +4135,11 @@ app.put('/api/bot/keyword-rules', express.json({ limit: '128kb' }), async (req, 
 
 app.get('/api/analytics/summary', async (req, res) => {
   try {
+    const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
     const days = Math.max(1, Math.min(180, Number(req.query?.days || 30)));
     const events = await chatEventsByDay(days);
-    const slips = listSlips();
-    const orders = await dbListOrders();
+    const slips = listSlips(shopId);
+    const orders = await dbListOrders(shopId);
     const today = new Date().toISOString().slice(0, 10);
     const sinceMs = Date.now() - days * 86400_000;
 

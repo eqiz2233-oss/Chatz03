@@ -4,6 +4,7 @@ import type { Conversation, Message } from '../../types';
 import { ChannelIcon, I } from '../Icons';
 import { SlipCard } from './SlipCard';
 import { useAppPreferences } from '../../context/AppPreferencesContext';
+import { useAuth } from '../../context/AuthContext';
 import {
   addQuickReply,
   getQuickReplies,
@@ -486,19 +487,24 @@ function CustomerInfoPanel({
   onClose: () => void;
   t: TFn;
 }) {
-  const [meta, setMeta] = useState<CustomerMeta>(() => getCustomerMeta(conversation.id));
+  // The active shop scopes notes — two shops talking to the same customer
+  // keep their own tags/notes even though the conversation.id is identical.
+  const { activeShop } = useAuth();
+  const shopId = activeShop?.id || null;
+
+  const [meta, setMeta] = useState<CustomerMeta>(() => getCustomerMeta(conversation.id, shopId));
   const [tagDraft, setTagDraft] = useState('');
   const [tagEditing, setTagEditing] = useState(false);
 
   useEffect(() => {
-    setMeta(getCustomerMeta(conversation.id));
+    setMeta(getCustomerMeta(conversation.id, shopId));
     setTagDraft('');
     setTagEditing(false);
-  }, [conversation.id]);
+  }, [conversation.id, shopId]);
 
   const commitTag = () => {
     const v = tagDraft.trim();
-    if (v) setMeta(addTag(conversation.id, v));
+    if (v) setMeta(addTag(conversation.id, v, shopId));
     setTagDraft('');
     setTagEditing(false);
   };
@@ -569,7 +575,7 @@ function CustomerInfoPanel({
                   <span className="py-0.5 pl-2.5 pr-1.5">{tag}</span>
                   <button
                     type="button"
-                    onClick={() => setMeta(removeTag(conversation.id, tag))}
+                    onClick={() => setMeta(removeTag(conversation.id, tag, shopId))}
                     aria-label={t('chat.tagRemove')}
                     className="grid place-items-center px-1.5 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-600 dark:hover:text-white"
                   >
@@ -615,7 +621,7 @@ function CustomerInfoPanel({
             <textarea
               value={meta.note}
               maxLength={NOTE_MAX_LEN}
-              onChange={(e) => setMeta(setNote(conversation.id, e.target.value))}
+              onChange={(e) => setMeta(setNote(conversation.id, e.target.value, shopId))}
               rows={4}
               placeholder={t('chat.notePlaceholder')}
               className="w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-800 placeholder:text-slate-400 focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:ring-brand-900/30"

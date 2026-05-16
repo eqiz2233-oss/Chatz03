@@ -235,7 +235,12 @@ export async function verifySlipBytes(opts) {
 export function recordSlip(verified, ctx) {
   let result = { ...verified };
   if (result.status === 'verified' && result.ref) {
-    const firstId = refToFirstId.get(result.ref);
+    // Dedupe is scoped to the SAME shop — a slip with the same transRef
+    // showing up in Shop A and Shop B is two independent slips, not a
+    // duplicate of one another. Cross-shop dedupe would also leak Shop A's
+    // customer name into Shop B's "this slip is a duplicate" message.
+    const sameShopRefKey = `${ctx.shopId || 'default'}::${result.ref}`;
+    const firstId = refToFirstId.get(sameShopRefKey);
     if (firstId && firstId !== ctx.messageId) {
       const original = slipsById.get(firstId);
       result = {
@@ -246,13 +251,14 @@ export function recordSlip(verified, ctx) {
           : 'พบสลิปเดียวกันก่อนหน้านี้',
       };
     } else {
-      refToFirstId.set(result.ref, ctx.messageId);
+      refToFirstId.set(sameShopRefKey, ctx.messageId);
     }
   }
 
   const record = {
     id: ctx.messageId,
     channel: ctx.channel,
+    shopId: ctx.shopId || null,
     conversationId: ctx.conversationId,
     messageId: ctx.messageId,
     customerName: ctx.customerName,
@@ -271,18 +277,27 @@ export function recordSlip(verified, ctx) {
   return result;
 }
 
-export function getSlip(id) {
-  return slipsById.get(id) || null;
+/**
+ * Get a single slip by id, optionally checking shop ownership. Callers
+ * with a shopId should always pass it so a guessed messageId from another
+ * tenant returns null instead of leaking that shop's slip record.
+ */
+export function getSlip(id, shopId = null) {
+  const row = slipsById.get(id) || null;
+  if (!row) return null;
+  if (shopId && row.shopId && row.shopId !== shopId) return null;
+  return row;
 }
 
-export function listSlips() {
-  return Array.from(slipsById.values()).sort(
-    (a, b) => new Date(b.receivedAt) - new Date(a.receivedAt),
-  );
+/** List slips, optionally filtered to the given shop. */
+export function listSlips(shopId = null) {
+  let all = Array.from(slipsById.values());
+  if (shopId) all = all.filter((s) => (s.shopId || null) === shopId);
+  return all.sort((a, b) => new Date(b.receivedAt) - new Date(a.receivedAt));
 }
 
-export function slipStats() {
-  const all = listSlips();
+export function slipStats(shopId = null) {
+  const all = listSlips(shopId);
   const today = new Date().toISOString().slice(0, 10);
   const todayCount = all.filter((s) => s.receivedAt.slice(0, 10) === today).length;
   return {
