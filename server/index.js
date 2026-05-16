@@ -1380,7 +1380,9 @@ async function maybeAttachSlip({
     ) {
       void (async () => {
         try {
-          const settings = await kvGet('bot.settings.v1', {});
+          // Use the THREAD'S shop, not whatever shop the global compat has
+          // loaded — slip thank-yous must follow the OA that received the slip.
+          const settings = await getBotSettingsForShop(thread.shopId || DEFAULT_SHOP_ID);
           if (settings && settings.autoSlipConfirm === false) return;
           const text = await generateSlipThankYou({
             customerName: thread.displayName || '',
@@ -2423,12 +2425,12 @@ async function sendMetaMessage({ conversationId, text, asAi }) {
  * fixed reply. Matching is case-insensitive substring, first match wins.
  * Returns true if a reply was sent so the caller can skip the AI step.
  */
-async function tryKeywordReply({ channel, conversationId, customerText }) {
+async function tryKeywordReply({ channel, conversationId, customerText, shopId }) {
   if (!customerText || !String(customerText).trim()) return false;
   if (!isBotEnabled(conversationId)) return false;
   let rules;
   try {
-    rules = await kvGet('bot.keywordRules.v1', []);
+    rules = await getKeywordRulesForShop(shopId || DEFAULT_SHOP_ID);
   } catch {
     rules = [];
   }
@@ -2457,18 +2459,21 @@ async function tryKeywordReply({ channel, conversationId, customerText }) {
   }
 }
 
-async function tryAutoReply({ channel, conversationId, thread, customerText }) {
+async function tryAutoReply({ channel, conversationId, thread, customerText, shopId }) {
   if (!customerText || !String(customerText).trim()) return;
   if (!isBotEnabled(conversationId)) return;
 
+  // Threads carry their shopId now — fall back to it if the caller didn't pass one.
+  const sid = shopId || thread?.shopId || DEFAULT_SHOP_ID;
+
   // Keyword rules first — they're cheap, deterministic, and don't need an AI key.
-  if (await tryKeywordReply({ channel, conversationId, customerText })) return;
+  if (await tryKeywordReply({ channel, conversationId, customerText, shopId: sid })) return;
 
   // Fall through to AI for everything not covered by an explicit rule.
   if (!isAiEnabled()) return;
   let settings;
   try {
-    settings = await kvGet('bot.settings.v1', {});
+    settings = await getBotSettingsForShop(sid);
   } catch {
     settings = {};
   }
@@ -3310,7 +3315,34 @@ app.get('/api/slips/actions', async (_req, res) => {
 // Bot / Shop settings (brand voice, payment info, auto-reply toggles)
 // =====================================================================
 
+// Legacy global keys — read once on migration, then writes go to the
+// per-shop variant. New shops always write to *.shop.<shopId>.
 const BOT_SETTINGS_KEY = 'bot.settings.v1';
+const BOT_SETTINGS_KEY_PREFIX = 'bot.settings.v1.shop.';
+function botSettingsKeyForShop(shopId) {
+  return `${BOT_SETTINGS_KEY_PREFIX}${shopId}`;
+}
+
+/**
+ * Read bot settings for a specific shop. Auto-migrates from the legacy
+ * global key on first read for the default shop, so existing deployments
+ * upgrade without losing their brand voice / payment info.
+ */
+async function getBotSettingsForShop(shopId) {
+  const sid = shopId || DEFAULT_SHOP_ID;
+  const key = botSettingsKeyForShop(sid);
+  let v = await kvGet(key, null);
+  if (!v && sid === DEFAULT_SHOP_ID) {
+    // Migration: copy legacy global once.
+    const legacy = await kvGet(BOT_SETTINGS_KEY, null);
+    if (legacy && typeof legacy === 'object') {
+      await kvSet(key, legacy);
+      v = legacy;
+    }
+  }
+  return { ...DEFAULT_BOT_SETTINGS, ...(v || {}) };
+}
+
 const DEFAULT_BOT_SETTINGS = {
   brandVoice: '',
   paymentInfo: { kbankAccount: '', promptPay: '' },
@@ -3331,10 +3363,11 @@ const DEFAULT_BOT_SETTINGS = {
   quickReplies: [],
 };
 
-app.get('/api/bot/settings', async (_req, res) => {
+app.get('/api/bot/settings', async (req, res) => {
   try {
-    const v = await kvGet(BOT_SETTINGS_KEY, DEFAULT_BOT_SETTINGS);
-    res.json({ settings: { ...DEFAULT_BOT_SETTINGS, ...(v || {}) } });
+    const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
+    const merged = await getBotSettingsForShop(shopId);
+    res.json({ settings: merged });
   } catch (e) {
     res.status(500).json({ error: String(e?.message || e) });
   }
@@ -3342,10 +3375,11 @@ app.get('/api/bot/settings', async (_req, res) => {
 
 app.put('/api/bot/settings', express.json({ limit: '32kb' }), async (req, res) => {
   try {
+    const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
     const incoming = req.body?.settings && typeof req.body.settings === 'object' ? req.body.settings : {};
-    const current = (await kvGet(BOT_SETTINGS_KEY, DEFAULT_BOT_SETTINGS)) || {};
+    const current = await getBotSettingsForShop(shopId);
     const merged = { ...DEFAULT_BOT_SETTINGS, ...current, ...incoming };
-    await kvSet(BOT_SETTINGS_KEY, merged);
+    await kvSet(botSettingsKeyForShop(shopId), merged);
     res.json({ settings: merged });
   } catch (e) {
     res.status(500).json({ error: String(e?.message || e) });
@@ -3356,6 +3390,24 @@ app.put('/api/bot/settings', express.json({ limit: '32kb' }), async (req, res) =
 // Stored as an ordered array; first matching rule wins. Each rule:
 //   { id, keywords: string[], reply: string, enabled: boolean }
 const KEYWORD_RULES_KEY = 'bot.keywordRules.v1';
+const KEYWORD_RULES_KEY_PREFIX = 'bot.keywordRules.v1.shop.';
+function keywordRulesKeyForShop(shopId) {
+  return `${KEYWORD_RULES_KEY_PREFIX}${shopId}`;
+}
+async function getKeywordRulesForShop(shopId) {
+  const sid = shopId || DEFAULT_SHOP_ID;
+  const key = keywordRulesKeyForShop(sid);
+  let v = await kvGet(key, null);
+  if (v === null && sid === DEFAULT_SHOP_ID) {
+    // One-time migration from the legacy global key.
+    const legacy = await kvGet(KEYWORD_RULES_KEY, null);
+    if (Array.isArray(legacy) && legacy.length > 0) {
+      await kvSet(key, legacy);
+      v = legacy;
+    }
+  }
+  return Array.isArray(v) ? v : [];
+}
 const MAX_KEYWORD_RULES = 100;
 const MAX_KEYWORDS_PER_RULE = 20;
 const MAX_KEYWORD_LEN = 80;
@@ -3384,10 +3436,11 @@ function sanitizeKeywordRules(raw) {
   return out;
 }
 
-app.get('/api/bot/keyword-rules', async (_req, res) => {
+app.get('/api/bot/keyword-rules', async (req, res) => {
   try {
-    const rules = await kvGet(KEYWORD_RULES_KEY, []);
-    res.json({ rules: Array.isArray(rules) ? rules : [] });
+    const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
+    const rules = await getKeywordRulesForShop(shopId);
+    res.json({ rules });
   } catch (e) {
     res.status(500).json({ error: String(e?.message || e) });
   }
@@ -3395,8 +3448,9 @@ app.get('/api/bot/keyword-rules', async (_req, res) => {
 
 app.put('/api/bot/keyword-rules', express.json({ limit: '128kb' }), async (req, res) => {
   try {
+    const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
     const clean = sanitizeKeywordRules(req.body?.rules);
-    await kvSet(KEYWORD_RULES_KEY, clean);
+    await kvSet(keywordRulesKeyForShop(shopId), clean);
     res.json({ rules: clean });
   } catch (e) {
     res.status(500).json({ error: String(e?.message || e) });
