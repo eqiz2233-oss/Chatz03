@@ -12,8 +12,13 @@ import bcrypt from 'bcryptjs';
 import {
   findUserByUsername,
   findUserById,
+  findUserByEmail,
+  findUserByOauth,
   countUsers,
+  createUser,
+  linkOauthToUser,
   ensureSeedOwner,
+  addShopMember,
   updateUserPasswordHash,
   kvGet,
   kvSet,
@@ -92,8 +97,21 @@ export async function bootstrapAuth() {
 export async function login(username, password) {
   const user = await findUserByUsername(username);
   if (!user) return { ok: false, reason: 'invalid' };
+  if (!user.password_hash) {
+    // OAuth-only account — no password to compare.
+    return { ok: false, reason: 'oauth_only' };
+  }
   const ok = await bcrypt.compare(String(password || ''), String(user.password_hash || ''));
   if (!ok) return { ok: false, reason: 'invalid' };
+  return await establishSession(user);
+}
+
+/**
+ * Create a session for a known user. Used by every successful-auth path
+ * (password login, signup, Google, Facebook) so cookie + shop-binding logic
+ * lives in one place.
+ */
+async function establishSession(user) {
   await lazyLoadSessions();
   const token = genToken();
   const now = Date.now();
@@ -104,6 +122,210 @@ export async function login(username, password) {
   sessions.set(token, { userId: user.id, createdAt: now, lastUsedAt: now, activeShopId });
   scheduleSaveSessions();
   return { ok: true, token, user: publicUser(user), activeShopId };
+}
+
+// ─── Signup (password) ───────────────────────────────────────────────────────
+
+const USERNAME_REGEX = /^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$/;
+
+/**
+ * Create a new password-based account and auto-sign-in.
+ *   - Username: 2-32 chars, lowercase alphanumeric + . _ -
+ *   - Password: at least 6 chars
+ *   - Email optional, but if given must be unique
+ * Returns the same shape as login() so callers can treat them uniformly.
+ */
+export async function signup({ username, password, displayName, email }) {
+  const uRaw = String(username || '').trim().toLowerCase();
+  const p = String(password || '');
+  const dn = displayName ? String(displayName).trim().slice(0, 80) : null;
+  const e = email ? String(email).trim().toLowerCase() : null;
+
+  if (!USERNAME_REGEX.test(uRaw)) return { ok: false, reason: 'bad_username' };
+  if (p.length < 6) return { ok: false, reason: 'password_too_short' };
+  if (e && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return { ok: false, reason: 'bad_email' };
+
+  if (await findUserByUsername(uRaw)) return { ok: false, reason: 'username_taken' };
+  if (e && (await findUserByEmail(e))) return { ok: false, reason: 'email_taken' };
+
+  const hash = await bcrypt.hash(p, 10);
+  const id = crypto.randomUUID();
+  const user = await createUser({
+    id,
+    username: uRaw,
+    passwordHash: hash,
+    role: 'owner',
+    displayName: dn,
+    email: e,
+  });
+  // Every new account gets its own slot in the default shop. Multi-shop
+  // is wired but the signup flow keeps it simple: one shop per account
+  // until the user explicitly creates more.
+  await addShopMember({ shopId: DEFAULT_SHOP_ID, userId: id, role: 'owner' });
+  return await establishSession(user);
+}
+
+// ─── OAuth: Google ───────────────────────────────────────────────────────────
+
+const GOOGLE_TOKENINFO_URL = 'https://oauth2.googleapis.com/tokeninfo';
+
+/**
+ * Verify a Google Identity Services credential (ID token) and either log the
+ * user in (existing oauth or matching email) or create a new account.
+ *
+ * The tokeninfo endpoint does the JWT signature check + audience match for
+ * us, so we don't need a JWT library on the server. The check requires
+ * GOOGLE_CLIENT_ID to match.
+ */
+export async function loginWithGoogle(credential) {
+  const expectedClientId = (process.env.GOOGLE_CLIENT_ID || '').trim();
+  if (!expectedClientId) return { ok: false, reason: 'google_not_configured' };
+  if (!credential) return { ok: false, reason: 'no_credential' };
+
+  let profile;
+  try {
+    const r = await fetch(`${GOOGLE_TOKENINFO_URL}?id_token=${encodeURIComponent(credential)}`);
+    profile = await r.json();
+    if (!r.ok || profile?.error) {
+      return { ok: false, reason: 'invalid_google_token' };
+    }
+  } catch (e) {
+    console.warn('[auth] google tokeninfo failed:', e?.message || e);
+    return { ok: false, reason: 'google_unreachable' };
+  }
+
+  // Audience must match our client id, otherwise this token wasn't meant for us.
+  if (profile.aud !== expectedClientId) {
+    return { ok: false, reason: 'wrong_audience' };
+  }
+  if (profile.email_verified !== 'true' && profile.email_verified !== true) {
+    return { ok: false, reason: 'email_not_verified' };
+  }
+
+  return await upsertOauthUser({
+    provider: 'google',
+    sub: profile.sub,
+    email: profile.email || null,
+    displayName: profile.name || null,
+    avatarUrl: profile.picture || null,
+  });
+}
+
+// ─── OAuth: Facebook ─────────────────────────────────────────────────────────
+
+/**
+ * Verify a Facebook user access token (from FB.login on the client) and
+ * either log the user in or create a new account.
+ *
+ * Two-step verification:
+ *   1. debug_token confirms the token was issued for our app and not expired.
+ *   2. /me?fields=id,name,email,picture returns the user profile.
+ *
+ * Requires FB_APP_ID and FB_APP_SECRET in env (same vars already used by
+ * the Page-OAuth flow).
+ */
+export async function loginWithFacebook(accessToken) {
+  const appId = (process.env.FB_APP_ID || '').trim();
+  const appSecret = (process.env.FB_APP_SECRET || '').trim();
+  if (!appId || !appSecret) return { ok: false, reason: 'facebook_not_configured' };
+  if (!accessToken) return { ok: false, reason: 'no_token' };
+
+  // 1. Sanity-check the token belongs to our app.
+  try {
+    const debugUrl =
+      `https://graph.facebook.com/debug_token?input_token=${encodeURIComponent(accessToken)}` +
+      `&access_token=${encodeURIComponent(`${appId}|${appSecret}`)}`;
+    const dr = await fetch(debugUrl);
+    const dd = await dr.json();
+    if (!dr.ok || dd?.error || !dd?.data?.is_valid || String(dd.data.app_id) !== appId) {
+      return { ok: false, reason: 'invalid_fb_token' };
+    }
+  } catch (e) {
+    console.warn('[auth] FB debug_token failed:', e?.message || e);
+    return { ok: false, reason: 'facebook_unreachable' };
+  }
+
+  // 2. Fetch profile.
+  let profile;
+  try {
+    const r = await fetch(
+      `https://graph.facebook.com/me?fields=id,name,email,picture.type(large){url}` +
+      `&access_token=${encodeURIComponent(accessToken)}`,
+    );
+    profile = await r.json();
+    if (!r.ok || profile?.error || !profile?.id) {
+      return { ok: false, reason: 'fb_profile_failed' };
+    }
+  } catch (e) {
+    return { ok: false, reason: 'facebook_unreachable' };
+  }
+
+  return await upsertOauthUser({
+    provider: 'facebook',
+    sub: profile.id,
+    email: profile.email || null,
+    displayName: profile.name || null,
+    avatarUrl: profile?.picture?.data?.url || null,
+  });
+}
+
+// ─── OAuth: shared "find or create" ──────────────────────────────────────────
+
+/**
+ * Match an OAuth identity to a Chatz user, in priority order:
+ *   1. Exact (provider, sub) match → returning OAuth user, just log in.
+ *   2. Email match on an existing password user → link the OAuth identity
+ *      to that account (so the user can use either method going forward).
+ *   3. None → create a new account with a username derived from email/name.
+ */
+async function upsertOauthUser({ provider, sub, email, displayName, avatarUrl }) {
+  let user = await findUserByOauth(provider, sub);
+  if (user) {
+    return await establishSession(user);
+  }
+
+  if (email) {
+    const byEmail = await findUserByEmail(email);
+    if (byEmail) {
+      user = await linkOauthToUser(byEmail.id, {
+        oauthProvider: provider,
+        oauthSub: sub,
+        email,
+        avatarUrl,
+      });
+      return await establishSession(user || byEmail);
+    }
+  }
+
+  // Fresh account. Derive a username — start from email local-part or
+  // displayName, sanitize, then disambiguate with a random suffix on collision.
+  const seed = (email && email.split('@')[0])
+    || (displayName && displayName.toLowerCase().replace(/\s+/g, '.'))
+    || provider;
+  const baseUsername = String(seed)
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, '')
+    .replace(/^[._-]+|[._-]+$/g, '')
+    .slice(0, 24)
+    || provider;
+  let username = baseUsername;
+  for (let i = 0; i < 10 && await findUserByUsername(username); i++) {
+    username = `${baseUsername}.${crypto.randomBytes(2).toString('hex')}`;
+  }
+
+  const id = crypto.randomUUID();
+  user = await createUser({
+    id,
+    username,
+    role: 'owner',
+    displayName: displayName || null,
+    email: email || null,
+    oauthProvider: provider,
+    oauthSub: String(sub),
+    avatarUrl: avatarUrl || null,
+  });
+  await addShopMember({ shopId: DEFAULT_SHOP_ID, userId: id, role: 'owner' });
+  return await establishSession(user);
 }
 
 export async function logout(token) {
@@ -169,6 +391,9 @@ export function publicUser(user, extras = {}) {
     username: user.username,
     role: user.role,
     displayName: user.display_name || user.displayName || null,
+    email: user.email || null,
+    avatarUrl: user.avatar_url || user.avatarUrl || null,
+    oauthProvider: user.oauth_provider || user.oauthProvider || null,
     ...extras,
   };
 }

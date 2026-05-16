@@ -13,9 +13,22 @@ export interface AuthUser {
   username: string;
   role: string;
   displayName: string | null;
+  email?: string | null;
+  avatarUrl?: string | null;
+  /** Which OAuth provider seeded this account (if any). */
+  oauthProvider?: 'google' | 'facebook' | null;
   /** The active shop id stored in the session cookie (server-side). */
   activeShopId?: string | null;
 }
+
+export interface SignupInput {
+  username: string;
+  password: string;
+  displayName?: string;
+  email?: string;
+}
+
+type AuthResult = { ok: true } | { ok: false; error: string };
 
 /** One row from `/api/auth/me`'s `shops` array — a shop the current user is a member of. */
 export interface ShopMembership {
@@ -32,11 +45,14 @@ interface AuthValue {
   loading: boolean;
   shops: ShopMembership[];
   activeShop: ShopMembership | null;
-  login: (username: string, password: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  login: (username: string, password: string) => Promise<AuthResult>;
+  signup: (input: SignupInput) => Promise<AuthResult>;
+  loginWithGoogle: (credential: string) => Promise<AuthResult>;
+  loginWithFacebook: (accessToken: string) => Promise<AuthResult>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
   /** Switch the current session's active shop. Resolves once the server confirms. */
-  setActiveShop: (shopId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  setActiveShop: (shopId: string) => Promise<AuthResult>;
 }
 
 interface MeResponse {
@@ -79,27 +95,49 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
-  const login = useCallback(
-    async (username: string, password: string) => {
+  /** Shared "POST a body, expect a session cookie, refresh state" helper for
+   *  the four auth-entry endpoints (login, signup, google, facebook). */
+  const postAuth = useCallback(
+    async (path: string, body: object): Promise<AuthResult> => {
       try {
-        const r = await fetch('/api/auth/login', {
+        const r = await fetch(path, {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username, password }),
+          body: JSON.stringify(body),
         });
         if (!r.ok) {
           const j = await r.json().catch(() => ({}));
-          return { ok: false as const, error: j?.error || `HTTP ${r.status}` };
+          return { ok: false, error: j?.error || `HTTP ${r.status}` };
         }
         // Refresh from /api/auth/me so we get user + shops + activeShop in one shot.
         await refresh();
-        return { ok: true as const };
+        return { ok: true };
       } catch (e) {
-        return { ok: false as const, error: String((e as Error)?.message || e) };
+        return { ok: false, error: String((e as Error)?.message || e) };
       }
     },
     [refresh],
+  );
+
+  const login = useCallback(
+    (username: string, password: string) => postAuth('/api/auth/login', { username, password }),
+    [postAuth],
+  );
+
+  const signup = useCallback(
+    (input: SignupInput) => postAuth('/api/auth/signup', input),
+    [postAuth],
+  );
+
+  const loginWithGoogle = useCallback(
+    (credential: string) => postAuth('/api/auth/oauth/google', { credential }),
+    [postAuth],
+  );
+
+  const loginWithFacebook = useCallback(
+    (accessToken: string) => postAuth('/api/auth/oauth/facebook', { accessToken }),
+    [postAuth],
   );
 
   const logout = useCallback(async () => {
@@ -137,8 +175,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo<AuthValue>(
-    () => ({ user, loading, shops, activeShop, login, logout, refresh, setActiveShop }),
-    [user, loading, shops, activeShop, login, logout, refresh, setActiveShop],
+    () => ({
+      user, loading, shops, activeShop,
+      login, signup, loginWithGoogle, loginWithFacebook,
+      logout, refresh, setActiveShop,
+    }),
+    [user, loading, shops, activeShop, login, signup, loginWithGoogle, loginWithFacebook, logout, refresh, setActiveShop],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

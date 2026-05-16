@@ -123,9 +123,13 @@ export async function initDb() {
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       username TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
+      password_hash TEXT,
       role TEXT NOT NULL DEFAULT 'owner',
       display_name TEXT,
+      email TEXT,
+      oauth_provider TEXT,
+      oauth_sub TEXT,
+      avatar_url TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS shops (
@@ -184,6 +188,22 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS orders_shop_idx       ON orders(shop_id, updated_at DESC);
     CREATE INDEX IF NOT EXISTS slip_actions_shop_idx ON slip_actions(shop_id);
     CREATE INDEX IF NOT EXISTS chat_events_shop_idx  ON chat_events(shop_id, at DESC);
+  `);
+
+  // Phase 2 migration: OAuth + email fields on users.
+  // password_hash is now nullable (OAuth users don't have a password).
+  await pool.query(`
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS oauth_provider TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS oauth_sub TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+    ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS users_oauth_unique_idx
+      ON users(oauth_provider, oauth_sub)
+      WHERE oauth_provider IS NOT NULL AND oauth_sub IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS users_email_idx
+      ON users(email)
+      WHERE email IS NOT NULL;
   `);
 
   await runMigrations();
@@ -371,26 +391,89 @@ export async function findUserById(id) {
   return memo.users.find((x) => x.id === id) || null;
 }
 
-export async function createUser({ id, username, passwordHash, role = 'owner', displayName = null }) {
+export async function createUser({
+  id,
+  username,
+  passwordHash = null,
+  role = 'owner',
+  displayName = null,
+  email = null,
+  oauthProvider = null,
+  oauthSub = null,
+  avatarUrl = null,
+}) {
   const u = String(username || '').trim().toLowerCase();
+  const e = email ? String(email).trim().toLowerCase() : null;
   const row = {
     id,
     username: u,
     password_hash: passwordHash,
     role,
     display_name: displayName,
+    email: e,
+    oauth_provider: oauthProvider,
+    oauth_sub: oauthSub,
+    avatar_url: avatarUrl,
     created_at: new Date().toISOString(),
   };
   if (pool) {
     await pool.query(
-      'INSERT INTO users (id, username, password_hash, role, display_name) VALUES ($1,$2,$3,$4,$5)',
-      [id, u, passwordHash, role, displayName],
+      `INSERT INTO users (id, username, password_hash, role, display_name, email, oauth_provider, oauth_sub, avatar_url)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [id, u, passwordHash, role, displayName, e, oauthProvider, oauthSub, avatarUrl],
     );
   } else {
     memo.users.push(row);
     scheduleJsonSave();
   }
   return row;
+}
+
+export async function findUserByEmail(email) {
+  const e = email ? String(email).trim().toLowerCase() : '';
+  if (!e) return null;
+  if (pool) {
+    const { rows } = await pool.query('SELECT * FROM users WHERE LOWER(email)=$1 LIMIT 1', [e]);
+    return rows[0] || null;
+  }
+  return memo.users.find((x) => (x.email || '').toLowerCase() === e) || null;
+}
+
+export async function findUserByOauth(provider, sub) {
+  if (!provider || !sub) return null;
+  if (pool) {
+    const { rows } = await pool.query(
+      'SELECT * FROM users WHERE oauth_provider=$1 AND oauth_sub=$2 LIMIT 1',
+      [provider, String(sub)],
+    );
+    return rows[0] || null;
+  }
+  return memo.users.find((x) => x.oauth_provider === provider && String(x.oauth_sub) === String(sub)) || null;
+}
+
+/** Attach OAuth identity to an existing password user (e.g. linking Google to an existing account). */
+export async function linkOauthToUser(userId, { oauthProvider, oauthSub, email = null, avatarUrl = null }) {
+  if (!userId || !oauthProvider || !oauthSub) return null;
+  if (pool) {
+    await pool.query(
+      `UPDATE users
+         SET oauth_provider=$1, oauth_sub=$2,
+             email=COALESCE($3, email),
+             avatar_url=COALESCE($4, avatar_url)
+       WHERE id=$5`,
+      [oauthProvider, String(oauthSub), email, avatarUrl, userId],
+    );
+    const { rows } = await pool.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [userId]);
+    return rows[0] || null;
+  }
+  const u = memo.users.find((x) => x.id === userId);
+  if (!u) return null;
+  u.oauth_provider = oauthProvider;
+  u.oauth_sub = String(oauthSub);
+  if (email && !u.email) u.email = email;
+  if (avatarUrl && !u.avatar_url) u.avatar_url = avatarUrl;
+  scheduleJsonSave();
+  return u;
 }
 
 export async function updateUserPasswordHash(userId, passwordHash) {

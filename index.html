@@ -15,6 +15,16 @@
       Weight map: 400 body · 500 medium · 600 semibold · 700 bold · 800 headings
     -->
     <link href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet" />
+
+    <!--
+      OAuth providers. Both scripts are tiny and only do work when their
+      respective JS APIs are actually called from the Login screen, so it's
+      safe to load them on every page.
+        - Google Identity Services: `google.accounts.id.*`
+        - Facebook JS SDK: `FB.login`, etc.
+    -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script async defer src="https://connect.facebook.net/en_US/sdk.js"></script>
   </head>
   <body>
     <div id="root"></div>

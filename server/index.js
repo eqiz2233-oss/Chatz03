@@ -47,6 +47,9 @@ import {
   bootstrapAuth,
   login as authLogin,
   logout as authLogout,
+  signup as authSignup,
+  loginWithGoogle,
+  loginWithFacebook,
   userFromRequest,
   setSessionCookie,
   clearSessionCookie,
@@ -1269,6 +1272,10 @@ const AUTH_ALLOWLIST = [
   '/api/auth/login',
   '/api/auth/logout',
   '/api/auth/me',
+  '/api/auth/signup',
+  '/api/auth/oauth-config',
+  '/api/auth/oauth/google',
+  '/api/auth/oauth/facebook',
   '/api/line/webhook',
   '/api/fb/webhook',
   '/api/fb/oauth/start',
@@ -2638,6 +2645,83 @@ app.post('/api/auth/login', rateLimit({ bucket: 'auth-login', limit: 10, windowM
     res.json({ user: result.user });
   } catch (e) {
     console.error('[auth] login failed:', e?.message || e);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+/**
+ * Public OAuth config — the frontend reads this to know whether to render
+ * the "Sign in with Google / Facebook" buttons and what client IDs to use.
+ * Client IDs are public; nothing sensitive returned.
+ */
+app.get('/api/auth/oauth-config', (_req, res) => {
+  res.json({
+    google: {
+      enabled: Boolean((process.env.GOOGLE_CLIENT_ID || '').trim()),
+      clientId: (process.env.GOOGLE_CLIENT_ID || '').trim() || null,
+    },
+    facebook: {
+      enabled: Boolean((process.env.FB_APP_ID || '').trim() && (process.env.FB_APP_SECRET || '').trim()),
+      appId: (process.env.FB_APP_ID || '').trim() || null,
+    },
+  });
+});
+
+/** Create a new password-based account. Auto-signs the user in on success. */
+app.post('/api/auth/signup', rateLimit({ bucket: 'auth-signup', limit: 5, windowMs: 60_000 }), express.json({ limit: '4kb' }), async (req, res) => {
+  try {
+    const result = await authSignup({
+      username: req.body?.username,
+      password: req.body?.password,
+      displayName: req.body?.displayName,
+      email: req.body?.email,
+    });
+    if (!result.ok) {
+      const code = result.reason === 'username_taken' || result.reason === 'email_taken' ? 409 : 400;
+      return res.status(code).json({ error: result.reason });
+    }
+    setSessionCookie(res, result.token);
+    res.json({ user: result.user });
+  } catch (e) {
+    console.error('[auth] signup failed:', e?.message || e);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+/** Sign in / sign up via Google Identity Services. Body: { credential }. */
+app.post('/api/auth/oauth/google', rateLimit({ bucket: 'auth-oauth', limit: 10, windowMs: 60_000 }), express.json({ limit: '8kb' }), async (req, res) => {
+  try {
+    const credential = String(req.body?.credential || '');
+    const result = await loginWithGoogle(credential);
+    if (!result.ok) {
+      const code = result.reason === 'google_not_configured' ? 503
+        : result.reason === 'invalid_google_token' || result.reason === 'wrong_audience' ? 401
+        : 400;
+      return res.status(code).json({ error: result.reason });
+    }
+    setSessionCookie(res, result.token);
+    res.json({ user: result.user });
+  } catch (e) {
+    console.error('[auth] google login failed:', e?.message || e);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+/** Sign in / sign up via Facebook Login. Body: { accessToken }. */
+app.post('/api/auth/oauth/facebook', rateLimit({ bucket: 'auth-oauth', limit: 10, windowMs: 60_000 }), express.json({ limit: '8kb' }), async (req, res) => {
+  try {
+    const accessToken = String(req.body?.accessToken || '');
+    const result = await loginWithFacebook(accessToken);
+    if (!result.ok) {
+      const code = result.reason === 'facebook_not_configured' ? 503
+        : result.reason === 'invalid_fb_token' ? 401
+        : 400;
+      return res.status(code).json({ error: result.reason });
+    }
+    setSessionCookie(res, result.token);
+    res.json({ user: result.user });
+  } catch (e) {
+    console.error('[auth] facebook login failed:', e?.message || e);
     res.status(500).json({ error: 'server_error' });
   }
 });
