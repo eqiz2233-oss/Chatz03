@@ -986,16 +986,108 @@ function loadPersistedChatStateSync() {
   }
 }
 
+/**
+ * Chat-state persistence — durable when Postgres is wired up, file-only
+ * otherwise. The KV-backed write is the durable path: on Railway and
+ * similar platforms the filesystem is ephemeral (wiped on every deploy /
+ * crash), so a JSON-only setup loses all chat history on restart.
+ *
+ * Write strategy:
+ *   - Always serialize once per debounce tick.
+ *   - Best-effort write to `chat.store.v1` via kvSet (no-op if no DB).
+ *   - Best-effort write to the JSON file (so single-tenant dev still
+ *     works without Postgres + so local backup exists).
+ * The two writes are independent — one failing doesn't block the other.
+ *
+ * Read strategy (loadPersistedChatStateSync still runs sync at boot;
+ * loadPersistedChatStateFromKv runs once asynchronously after that to
+ * pick up anything KV had that the file didn't).
+ */
+const CHAT_STATE_KV_KEY = 'chat.store.v1';
+
 async function persistChatStateNow() {
   if (chatStateSaveInFlight) return;
   chatStateSaveInFlight = true;
   try {
-    ensureServerDir();
-    await writeFile(CHAT_STORE_FILE, JSON.stringify(serializeChatState(), null, 2), 'utf8');
-  } catch (e) {
-    console.warn('[chat-store] save failed:', e?.message || e);
+    const snapshot = serializeChatState();
+    // Durable write first — single source of truth when Postgres is set up.
+    try {
+      await kvSet(CHAT_STATE_KV_KEY, snapshot);
+    } catch (e) {
+      console.warn('[chat-store] kv save failed:', e?.message || e);
+    }
+    // File write as a local cache / dev fallback. Failure here is fine
+    // when running on a read-only or ephemeral filesystem.
+    try {
+      ensureServerDir();
+      await writeFile(CHAT_STORE_FILE, JSON.stringify(snapshot, null, 2), 'utf8');
+    } catch (e) {
+      if (!process.env.SUPPRESS_CHAT_STORE_FILE_WARN) {
+        console.warn('[chat-store] file save failed:', e?.message || e);
+      }
+    }
   } finally {
     chatStateSaveInFlight = false;
+  }
+}
+
+/**
+ * One-shot async loader: if KV has a fresher snapshot than what the sync
+ * file load brought in (typical after a redeploy where the file is gone),
+ * merge it into memory. Called once at boot, after the sync load.
+ */
+async function loadPersistedChatStateFromKv() {
+  try {
+    const raw = await kvGet(CHAT_STATE_KV_KEY, null);
+    if (!raw || typeof raw !== 'object') return;
+    // Only hydrate if memory is still empty — file load wins if both are
+    // present and consistent, since the file is more recent on a hot box.
+    if (lineThreads.size > 0 || fbThreads.size > 0) return;
+
+    const lineArr = Array.isArray(raw.lineThreads) ? raw.lineThreads : [];
+    for (const t of lineArr) {
+      const kind = t?.kind === 'group' || t?.kind === 'room' ? t.kind : 'user';
+      const targetId = String(t?.targetId || '');
+      if (!targetId) continue;
+      const shopId = typeof t?.shopId === 'string' && t.shopId ? t.shopId : DEFAULT_SHOP_ID;
+      const key = `${shopId}::${kind}:${targetId}`;
+      lineThreads.set(key, {
+        shopId,
+        kind,
+        targetId,
+        key,
+        displayName: typeof t?.displayName === 'string' ? t.displayName : null,
+        pictureUrl: typeof t?.pictureUrl === 'string' ? t.pictureUrl : null,
+        messages: normalizeThreadMessages(t?.messages),
+        updatedAt: toIsoOrNow(t?.updatedAt),
+      });
+    }
+    const fbArr = Array.isArray(raw.fbThreads) ? raw.fbThreads : [];
+    for (const t of fbArr) {
+      const channel = t?.channel === 'ig' ? 'ig' : 'fb';
+      const targetId = String(t?.targetId || '');
+      if (!targetId) continue;
+      const shopId = typeof t?.shopId === 'string' && t.shopId ? t.shopId : DEFAULT_SHOP_ID;
+      const pageId = typeof t?.pageId === 'string' && t.pageId ? t.pageId : null;
+      const key = `${shopId}::${channel}:${targetId}`;
+      fbThreads.set(key, {
+        shopId,
+        pageId,
+        kind: 'user',
+        channel,
+        targetId,
+        key,
+        displayName: typeof t?.displayName === 'string' ? t.displayName : null,
+        pictureUrl: typeof t?.pictureUrl === 'string' ? t.pictureUrl : null,
+        messages: normalizeThreadMessages(t?.messages),
+        updatedAt: toIsoOrNow(t?.updatedAt),
+      });
+    }
+    if (lineThreads.size + fbThreads.size > 0) {
+      console.log(`[chat-store] hydrated from KV (line=${lineThreads.size}, fb=${fbThreads.size})`);
+    }
+  } catch (e) {
+    console.warn('[chat-store] kv load failed:', e?.message || e);
   }
 }
 
@@ -1083,6 +1175,10 @@ function pushEvent(item) {
 }
 
 loadPersistedChatStateSync();
+// KV is async — fire-and-forget after the sync file load. Threads loaded
+// from file are kept; KV only fills the gap on a fresh box where the JSON
+// file got wiped (ephemeral disk on redeploy).
+void loadPersistedChatStateFromKv();
 
 let lineClient = lineConfig.channelAccessToken
   ? new line.messagingApi.MessagingApiClient({ channelAccessToken: lineConfig.channelAccessToken })
