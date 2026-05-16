@@ -73,13 +73,39 @@ const savedIntegrations = loadIntegrationsSync();
 // form, which persists `{ channelSecret, channelAccessToken }` to kv under
 // `LINE_KV_KEY`. Hot-reloaded into `lineConfig` + `lineClient` so we never
 // have to restart the server when a shop owner pastes their credentials.
+// Legacy single-tenant key — still read on startup so existing installs
+// upgrade cleanly to per-shop storage (we copy it to the default shop on
+// first boot). New writes go to LINE_KV_PREFIX + shopId.
 const LINE_KV_KEY = 'line.config.v1';
+const LINE_KV_PREFIX = 'line.config.shop.';
+
+/**
+ * Per-shop LINE state. Each entry is its own credentials + bot info + index
+ * pointer; Shop A connecting their OA doesn't touch Shop B's row.
+ *   shopId -> { channelSecret, channelAccessToken, source, botInfo }
+ */
+const lineConfigByShop = new Map();
+/**
+ * Webhook routing index: OA userId -> shopId. Built whenever a shop's
+ * config is loaded or updated. The LINE webhook payload has a `destination`
+ * field equal to the receiving OA's userId, so this map is how we figure
+ * out which shop a webhook belongs to.
+ */
+const lineOaToShop = new Map();
+
+/**
+ * Module-scope "active" config used by code paths that aren't yet
+ * shop-aware (webhook signature check, push API, thread storage). It
+ * mirrors the currently-loaded shop's config; per-shop endpoints flip it
+ * before doing work, then any background read uses the right values.
+ *
+ * This is a compat shim — Phase 1B will replace the remaining global
+ * references with explicit shopId lookups.
+ */
 const lineConfig = {
   channelSecret: (process.env.LINE_CHANNEL_SECRET || '').trim(),
   channelAccessToken: (process.env.LINE_CHANNEL_ACCESS_TOKEN || '').trim(),
-  /** 'env' | 'ui' | 'oauth' | null — where the currently-active credentials came from. */
   source: null,
-  /** OA basicId + display name from /v2/bot/info, populated on successful save. */
   botInfo: null,
 };
 if (lineConfig.channelSecret || lineConfig.channelAccessToken) {
@@ -87,6 +113,93 @@ if (lineConfig.channelSecret || lineConfig.channelAccessToken) {
 }
 function hasLineSecret() { return Boolean(lineConfig.channelSecret); }
 function hasLineToken() { return Boolean(lineConfig.channelAccessToken); }
+
+function lineKvKeyForShop(shopId) {
+  return `${LINE_KV_PREFIX}${shopId}`;
+}
+
+/**
+ * Lazy-load a shop's LINE config from KV into the in-memory map and rebuild
+ * the OA-to-shop index. Returns the entry or null if the shop has never
+ * connected LINE.
+ */
+async function loadLineConfigForShop(shopId) {
+  if (!shopId) return null;
+  const cached = lineConfigByShop.get(shopId);
+  if (cached) return cached;
+  const saved = await kvGet(lineKvKeyForShop(shopId), null);
+  if (saved && (saved.channelSecret || saved.channelAccessToken)) {
+    const entry = {
+      channelSecret: String(saved.channelSecret || ''),
+      channelAccessToken: String(saved.channelAccessToken || ''),
+      source: saved.source || 'ui',
+      botInfo: saved.botInfo || null,
+    };
+    lineConfigByShop.set(shopId, entry);
+    if (entry.botInfo?.userId) lineOaToShop.set(String(entry.botInfo.userId), shopId);
+    return entry;
+  }
+  return null;
+}
+
+/**
+ * Persist a shop's LINE config (memory + KV + index). Also refreshes the
+ * compat `lineConfig` so any background code that still reads the global
+ * sees the newest values.
+ */
+async function setLineConfigForShop(shopId, { secret, token, source, botInfo = null }) {
+  if (!shopId) throw new Error('setLineConfigForShop requires shopId');
+  const entry = {
+    channelSecret: (secret || '').trim(),
+    channelAccessToken: (token || '').trim(),
+    source: source || null,
+    botInfo: botInfo || null,
+  };
+  // Refresh OA index — remove old mapping if the OA userId changed.
+  const prev = lineConfigByShop.get(shopId);
+  if (prev?.botInfo?.userId && prev.botInfo.userId !== entry.botInfo?.userId) {
+    lineOaToShop.delete(String(prev.botInfo.userId));
+  }
+  if (entry.botInfo?.userId) lineOaToShop.set(String(entry.botInfo.userId), shopId);
+  lineConfigByShop.set(shopId, entry);
+
+  await kvSet(lineKvKeyForShop(shopId), {
+    channelSecret: entry.channelSecret,
+    channelAccessToken: entry.channelAccessToken,
+    botInfo: entry.botInfo,
+    source: entry.source,
+    savedAt: new Date().toISOString(),
+  });
+
+  // Mirror to the compat global so legacy code paths see the active shop's creds.
+  lineConfig.channelSecret = entry.channelSecret;
+  lineConfig.channelAccessToken = entry.channelAccessToken;
+  lineConfig.source = entry.source;
+  lineConfig.botInfo = entry.botInfo;
+  return entry;
+}
+
+/**
+ * Wipe a shop's LINE config (used by /disconnect). Falls back to env vars
+ * for the global compat only — the per-shop slot is fully removed.
+ */
+async function clearLineConfigForShop(shopId) {
+  const prev = lineConfigByShop.get(shopId);
+  if (prev?.botInfo?.userId) lineOaToShop.delete(String(prev.botInfo.userId));
+  lineConfigByShop.delete(shopId);
+  await kvSet(lineKvKeyForShop(shopId), null);
+  // Reset compat global to env (so env-only deployments still work).
+  lineConfig.channelSecret = (process.env.LINE_CHANNEL_SECRET || '').trim();
+  lineConfig.channelAccessToken = (process.env.LINE_CHANNEL_ACCESS_TOKEN || '').trim();
+  lineConfig.source = lineConfig.channelSecret || lineConfig.channelAccessToken ? 'env' : null;
+  lineConfig.botInfo = null;
+}
+
+/** Lookup which shop owns the OA that just sent a webhook event. */
+function shopIdForLineDestination(destination) {
+  if (!destination) return null;
+  return lineOaToShop.get(String(destination)) || null;
+}
 
 /**
  * LINE Module Channel (OAuth-style connect, the same flow zwiz.ai uses).
@@ -983,26 +1096,54 @@ async function applyLineConfig({ secret, token, source }) {
   }
 }
 
-/** On boot, prefer the UI-saved config over env vars so the shop owner's
- *  latest paste-and-save always wins after a redeploy. */
+/**
+ * On boot, populate the per-shop config cache from KV and build the OA-to-shop
+ * webhook routing index. Handles a one-time migration: if the legacy
+ * single-tenant key (line.config.v1) is present and the default shop has no
+ * per-shop key yet, copy it over so existing installs upgrade cleanly.
+ */
 async function loadPersistedLineConfig() {
+  // 1. Migration step — legacy global key → DEFAULT_SHOP per-shop key.
   try {
-    const saved = await kvGet(LINE_KV_KEY, null);
-    if (saved && typeof saved === 'object' && (saved.channelSecret || saved.channelAccessToken)) {
-      await applyLineConfig({
-        secret: saved.channelSecret,
-        token: saved.channelAccessToken,
-        source: 'ui',
+    const legacy = await kvGet(LINE_KV_KEY, null);
+    const defaultShopKey = lineKvKeyForShop(DEFAULT_SHOP_ID);
+    const existing = await kvGet(defaultShopKey, null);
+    if (
+      legacy &&
+      typeof legacy === 'object' &&
+      (legacy.channelSecret || legacy.channelAccessToken) &&
+      !existing
+    ) {
+      await kvSet(defaultShopKey, {
+        channelSecret: legacy.channelSecret,
+        channelAccessToken: legacy.channelAccessToken,
+        botInfo: legacy.botInfo || null,
+        source: legacy.source || 'ui',
+        savedAt: new Date().toISOString(),
       });
-      // Re-fill cached bot info if it was persisted alongside
-      if (saved.botInfo && !lineConfig.botInfo) lineConfig.botInfo = saved.botInfo;
+      console.log('[LINE] migrated legacy global config to default shop');
+    }
+  } catch (e) {
+    console.warn('[LINE] legacy migration failed:', e?.message || e);
+  }
+
+  // 2. Load the default shop's config into memory + compat globals so
+  //    code paths that still read the singleton work out of the box.
+  try {
+    const entry = await loadLineConfigForShop(DEFAULT_SHOP_ID);
+    if (entry) {
+      lineConfig.channelSecret = entry.channelSecret;
+      lineConfig.channelAccessToken = entry.channelAccessToken;
+      lineConfig.source = entry.source;
+      lineConfig.botInfo = entry.botInfo;
       return;
     }
   } catch (e) {
-    console.warn('[LINE] loadPersistedLineConfig failed:', e?.message || e);
+    console.warn('[LINE] load default shop config failed:', e?.message || e);
   }
+
+  // 3. env-only fallback for fresh installs.
   if (lineConfig.channelAccessToken) {
-    // env-only path — populate bot info opportunistically
     lineConfig.botInfo = await fetchLineBotInfo(lineConfig.channelAccessToken);
   }
 }
@@ -1587,7 +1728,25 @@ function lineIntegrationStatusPayload(req) {
   };
 }
 
-app.get('/api/line/integration/status', (req, res) => {
+app.get('/api/line/integration/status', async (req, res) => {
+  // Load the active shop's config into the compat global before computing
+  // the status payload so the response reflects THIS shop, not whichever
+  // one was last touched by a request.
+  const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
+  const entry = await loadLineConfigForShop(shopId);
+  if (entry) {
+    lineConfig.channelSecret = entry.channelSecret;
+    lineConfig.channelAccessToken = entry.channelAccessToken;
+    lineConfig.source = entry.source;
+    lineConfig.botInfo = entry.botInfo;
+  } else {
+    // Fresh shop, never connected — reset compat to env so the UI shows
+    // "not configured" rather than another shop's leftover state.
+    lineConfig.channelSecret = (process.env.LINE_CHANNEL_SECRET || '').trim();
+    lineConfig.channelAccessToken = (process.env.LINE_CHANNEL_ACCESS_TOKEN || '').trim();
+    lineConfig.source = lineConfig.channelSecret || lineConfig.channelAccessToken ? 'env' : null;
+    lineConfig.botInfo = null;
+  }
   res.json(lineIntegrationStatusPayload(req));
 });
 
@@ -1595,6 +1754,7 @@ app.post(
   '/api/line/integration/connect',
   express.json({ limit: '8kb' }),
   async (req, res) => {
+    const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
     const channelSecret = String(req.body?.channelSecret || '').trim();
     const channelAccessToken = String(req.body?.channelAccessToken || '').trim();
     if (!channelSecret || !channelAccessToken) {
@@ -1602,29 +1762,31 @@ app.post(
         error: 'ต้องกรอกทั้ง Channel Secret และ Channel Access Token',
       });
     }
-    // Basic shape check — LINE secrets are 32 hex chars, access tokens are
-    // long base64-ish strings. We don't want to block valid creds though, so
-    // only reject suspiciously short input.
     if (channelSecret.length < 16 || channelAccessToken.length < 40) {
       return res.status(400).json({
         error: 'ข้อมูลที่กรอกดูสั้นเกินไป ตรวจสอบ Channel Secret และ Access Token อีกครั้ง',
       });
     }
-    // Validate the access token by calling /v2/bot/info before saving.
     const botInfo = await fetchLineBotInfo(channelAccessToken);
     if (!botInfo) {
       return res.status(400).json({
         error: 'เชื่อมไม่สำเร็จ — LINE ปฏิเสธ Access Token นี้ ตรวจสอบว่าคัดลอกมาจาก Channel ที่ถูกต้องและยัง active อยู่',
       });
     }
+    // Guard: another shop can't grab an OA that's already wired to a
+    // different shop (would silently steal their inbox routing).
+    const owner = lineOaToShop.get(String(botInfo.userId));
+    if (owner && owner !== shopId) {
+      return res.status(409).json({
+        error: 'OA นี้ถูกเชื่อมกับร้านอื่นแล้ว — ตัดการเชื่อมที่ร้านเดิมก่อน',
+      });
+    }
     try {
-      await applyLineConfig({ secret: channelSecret, token: channelAccessToken, source: 'ui' });
-      lineConfig.botInfo = botInfo;
-      await kvSet(LINE_KV_KEY, {
-        channelSecret,
-        channelAccessToken,
+      await setLineConfigForShop(shopId, {
+        secret: channelSecret,
+        token: channelAccessToken,
+        source: 'ui',
         botInfo,
-        savedAt: new Date().toISOString(),
       });
       return res.json({ ok: true, status: lineIntegrationStatusPayload(req) });
     } catch (e) {
@@ -1636,15 +1798,8 @@ app.post(
 
 app.post('/api/line/integration/disconnect', async (req, res) => {
   try {
-    await kvSet(LINE_KV_KEY, null);
-    // Fall back to env if anything is set there; otherwise clear entirely.
-    const envSecret = (process.env.LINE_CHANNEL_SECRET || '').trim();
-    const envToken = (process.env.LINE_CHANNEL_ACCESS_TOKEN || '').trim();
-    await applyLineConfig({
-      secret: envSecret,
-      token: envToken,
-      source: envSecret || envToken ? 'env' : null,
-    });
+    const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
+    await clearLineConfigForShop(shopId);
     return res.json({ ok: true, status: lineIntegrationStatusPayload(req) });
   } catch (e) {
     console.error('[LINE] disconnect failed:', e);
@@ -1662,13 +1817,19 @@ app.post('/api/line/integration/disconnect', async (req, res) => {
  *
  * The shop owner never has to copy/paste a Channel Secret or Access Token.
  */
-app.get('/api/line/oauth/start', (req, res) => {
+app.get('/api/line/oauth/start', async (req, res) => {
   if (!lineOauthAvailable()) {
     return res.status(503).send('LINE OAuth is not configured on this server.');
   }
+  if (!req.user) {
+    return res.redirect('/?lineConnect=login_required');
+  }
   pruneLineOauthStates();
   const state = crypto.randomBytes(16).toString('base64url');
-  lineOauthStates.set(state, { userId: req.user?.id || null, createdAt: Date.now() });
+  // Remember which shop this connect attempt belongs to so the callback can
+  // write the credentials to the right per-shop slot.
+  const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
+  lineOauthStates.set(state, { userId: req.user.id, shopId, createdAt: Date.now() });
 
   const redirectUri = `${publicBaseUrl(req)}/api/line/oauth/callback`;
   // Scopes mirror what zwiz / vbot request: read+send messages, get user
@@ -1718,6 +1879,7 @@ app.get('/api/line/oauth/callback', async (req, res) => {
     return res.redirect('/settings?lineConnect=bad_state');
   }
   lineOauthStates.delete(state);
+  const shopId = stored.shopId || DEFAULT_SHOP_ID;
 
   const redirectUri = `${publicBaseUrl(req)}/api/line/oauth/callback`;
 
@@ -1748,6 +1910,12 @@ app.get('/api/line/oauth/callback', async (req, res) => {
       return res.redirect('/settings?lineConnect=bot_info_failed');
     }
 
+    // Guard: don't let one shop steal another shop's already-connected OA.
+    const owner = lineOaToShop.get(String(botInfo.userId));
+    if (owner && owner !== shopId) {
+      return res.redirect('/settings?lineConnect=already_connected');
+    }
+
     // 3. Try to set the webhook URL automatically. Best-effort: if the
     //    Module Channel doesn't have bot:webhook scope, this silently
     //    fails and the user can still set it manually.
@@ -1765,22 +1933,15 @@ app.get('/api/line/oauth/callback', async (req, res) => {
       console.warn('[LINE OAuth] webhook endpoint update failed:', e?.message || e);
     }
 
-    // 4. Persist. The Module Channel access_token is used like a normal
-    //    Channel Access Token everywhere we currently use channelAccessToken.
-    //    For webhook signature verification, LINE signs events with the
-    //    Module Channel's secret, so we store that as channelSecret.
-    await applyLineConfig({
+    // 4. Persist to the SHOP's per-shop slot (not the legacy global key).
+    //    The Module Channel secret doubles as the webhook signature secret
+    //    because LINE signs all routed webhooks with the Module Channel's
+    //    own secret, not the per-OA channel secret.
+    await setLineConfigForShop(shopId, {
       secret: LINE_MODULE_CHANNEL_SECRET,
       token: accessToken,
       source: 'oauth',
-    });
-    lineConfig.botInfo = botInfo;
-    await kvSet(LINE_KV_KEY, {
-      channelSecret: LINE_MODULE_CHANNEL_SECRET,
-      channelAccessToken: accessToken,
       botInfo,
-      source: 'oauth',
-      savedAt: new Date().toISOString(),
     });
 
     return res.redirect('/settings?lineConnect=ok');
