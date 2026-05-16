@@ -2538,7 +2538,9 @@ async function tryAutoReply({ channel, conversationId, thread, customerText, sho
 
   let products = [];
   try {
-    products = await dbListProducts();
+    // AI needs the THIS shop's catalog, not the union of every shop's
+    // products on the deployment. `sid` was resolved above from thread.shopId.
+    products = await dbListProducts(sid);
   } catch {
     /* swallow — empty catalog is fine */
   }
@@ -3235,9 +3237,15 @@ app.post('/api/auth/change-password', express.json({ limit: '4kb' }), async (req
 // Products (server-persisted shop catalog)
 // =====================================================================
 
-app.get('/api/products', async (_req, res) => {
+// Products + Orders endpoints are now shop-scoped. db.js helpers already
+// accept a shopId parameter and default to DEFAULT_SHOP_ID, but the
+// endpoints were never passing it — so every shop's catalog merged into
+// one. We resolve activeShopIdFromRequest and thread it through.
+
+app.get('/api/products', async (req, res) => {
   try {
-    const items = await dbListProducts();
+    const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
+    const items = await dbListProducts(shopId);
     res.json({ items });
   } catch (e) {
     res.status(500).json({ error: String(e?.message || e) });
@@ -3246,9 +3254,10 @@ app.get('/api/products', async (_req, res) => {
 
 app.post('/api/products', express.json({ limit: '70mb' }), async (req, res) => {
   try {
+    const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
     const p = req.body?.product;
     if (!p?.id) return res.status(400).json({ error: 'product.id required' });
-    const saved = await dbUpsertProduct(p);
+    const saved = await dbUpsertProduct(p, shopId);
     res.json({ product: saved });
   } catch (e) {
     res.status(500).json({ error: String(e?.message || e) });
@@ -3257,7 +3266,8 @@ app.post('/api/products', express.json({ limit: '70mb' }), async (req, res) => {
 
 app.delete('/api/products/:id', async (req, res) => {
   try {
-    await dbDeleteProduct(String(req.params.id || ''));
+    const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
+    await dbDeleteProduct(String(req.params.id || ''), shopId);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: String(e?.message || e) });
@@ -3265,12 +3275,13 @@ app.delete('/api/products/:id', async (req, res) => {
 });
 
 // =====================================================================
-// Orders (CRUD)
+// Orders (CRUD) — same shop scoping as Products.
 // =====================================================================
 
-app.get('/api/orders', async (_req, res) => {
+app.get('/api/orders', async (req, res) => {
   try {
-    const items = await dbListOrders();
+    const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
+    const items = await dbListOrders(shopId);
     res.json({ items });
   } catch (e) {
     res.status(500).json({ error: String(e?.message || e) });
@@ -3279,11 +3290,12 @@ app.get('/api/orders', async (_req, res) => {
 
 app.post('/api/orders', express.json({ limit: '256kb' }), async (req, res) => {
   try {
+    const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
     const o = req.body?.order;
     if (!o) return res.status(400).json({ error: 'order required' });
     if (!o.id) o.id = `ord_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     if (!o.createdAt) o.createdAt = new Date().toISOString();
-    const saved = await dbUpsertOrder(o);
+    const saved = await dbUpsertOrder(o, shopId);
     res.json({ order: saved });
   } catch (e) {
     res.status(500).json({ error: String(e?.message || e) });
@@ -3292,13 +3304,14 @@ app.post('/api/orders', express.json({ limit: '256kb' }), async (req, res) => {
 
 app.patch('/api/orders/:id', express.json({ limit: '256kb' }), async (req, res) => {
   try {
+    const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
     const id = String(req.params.id || '');
     if (!id) return res.status(400).json({ error: 'id required' });
-    const all = await dbListOrders();
+    const all = await dbListOrders(shopId);
     const existing = all.find((o) => o?.id === id);
     if (!existing) return res.status(404).json({ error: 'not_found' });
     const merged = { ...existing, ...(req.body?.patch || {}), id };
-    const saved = await dbUpsertOrder(merged);
+    const saved = await dbUpsertOrder(merged, shopId);
     res.json({ order: saved });
   } catch (e) {
     res.status(500).json({ error: String(e?.message || e) });
@@ -3307,7 +3320,8 @@ app.patch('/api/orders/:id', express.json({ limit: '256kb' }), async (req, res) 
 
 app.delete('/api/orders/:id', async (req, res) => {
   try {
-    await dbDeleteOrder(String(req.params.id || ''));
+    const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
+    await dbDeleteOrder(String(req.params.id || ''), shopId);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: String(e?.message || e) });
