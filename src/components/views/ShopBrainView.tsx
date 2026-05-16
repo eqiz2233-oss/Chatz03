@@ -814,11 +814,6 @@ function AddForm({
           <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white md:text-[28px]">
             {isEdit ? 'แก้ไขสินค้า' : 'เพิ่มสินค้าใหม่'}
           </h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            {isEdit
-              ? 'แก้แล้วกดบันทึก ข้อมูลจะอัปเดตให้ AI ใช้ตอบลูกค้าทันที'
-              : 'กรอกข้อมูลให้ครบ AI จะใช้ข้อมูลนี้ตอบและขายของให้คุณ'}
-          </p>
           {onLoadDemo && !hasAnyContent && (
             <button
               type="button"
@@ -901,10 +896,6 @@ function AddForm({
                   </div>
                 )}
               </div>
-              <p className="mt-3 text-center text-xs leading-relaxed text-slate-400 dark:text-slate-500">
-                ตั้งรูปภาพหลักของสินค้า รองรับไฟล์<br />
-                *.png, *.jpg, *.jpeg เท่านั้น
-              </p>
               {form.imageUrl && (
                 <button
                   type="button"
