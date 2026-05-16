@@ -383,10 +383,23 @@ const fbProfileBackfillAttempts = new Map(); // threadKey -> unix ms
 // span of reading the very first inbound message.
 const FB_PROFILE_BACKFILL_COOLDOWN_MS = 30 * 1000;
 
-function getOrCreateFbThread(targetId, channel = 'fb') {
-  const key = `${channel}:${targetId}`;
+/**
+ * Get-or-create a Meta (Facebook / Instagram) thread. Each thread is
+ * scoped to the shop that owns the receiving Page so two shops talking
+ * to the same Messenger PSID get their own rows.
+ *
+ *   shopId — required for tenant isolation
+ *   pageId — which Page received this message (used by the send path
+ *            to look up the right Page Access Token; for IG threads
+ *            this is the linked Page's id, not the IG account id).
+ */
+function getOrCreateFbThread(targetId, channel = 'fb', shopId, pageId = null) {
+  const sid = shopId || DEFAULT_SHOP_ID;
+  const key = `${sid}::${channel}:${targetId}`;
   if (!fbThreads.has(key)) {
     fbThreads.set(key, {
+      shopId: sid,
+      pageId: pageId || null,
       kind: 'user',
       channel, // 'fb' (Page DMs) or 'ig' (Instagram DMs)
       targetId,
@@ -397,7 +410,10 @@ function getOrCreateFbThread(targetId, channel = 'fb') {
       updatedAt: new Date().toISOString(),
     });
   }
-  return fbThreads.get(key);
+  const thread = fbThreads.get(key);
+  // Pin a previously-unknown pageId so reply routing can find it later.
+  if (pageId && !thread.pageId) thread.pageId = pageId;
+  return thread;
 }
 
 function messengerDisplayNameFromGraph(d) {
@@ -919,8 +935,14 @@ function loadPersistedChatStateSync() {
       const channel = t?.channel === 'ig' ? 'ig' : 'fb';
       const targetId = String(t?.targetId || '');
       if (!targetId) continue;
-      const key = `${channel}:${targetId}`;
+      // Pre-v3 snapshots have no shopId on the thread — default to the
+      // legacy single shop so old data stays visible after upgrade.
+      const shopId = typeof t?.shopId === 'string' && t.shopId ? t.shopId : DEFAULT_SHOP_ID;
+      const pageId = typeof t?.pageId === 'string' && t.pageId ? t.pageId : null;
+      const key = `${shopId}::${channel}:${targetId}`;
       fbThreads.set(key, {
+        shopId,
+        pageId,
         kind: 'user',
         channel,
         targetId,
@@ -2036,11 +2058,12 @@ app.post('/api/slips/verify', express.json({ limit: '50kb' }), async (req, res) 
   }
 });
 
-app.get('/api/fb/conversations', (_req, res) => {
-  // Retry profile enrichment in the background for threads still showing fallback ids.
+app.get('/api/fb/conversations', async (req, res) => {
+  // Scope to caller's active shop — same pattern as /api/line/conversations.
+  const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
   scheduleFbProfileBackfill();
   const arr = Array.from(fbThreads.values())
-    .filter((t) => t.messages.length > 0)
+    .filter((t) => (t.shopId || DEFAULT_SHOP_ID) === shopId && t.messages.length > 0)
     .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
     .map(fbThreadToApiConversation);
   res.json({ conversations: arr, count: arr.length });
@@ -2137,6 +2160,16 @@ app.post(
     let total = 0;
     try {
       for (const entry of payload.entry || []) {
+        // entry.id is the Page ID (or IG account id when object=instagram).
+        // Look up which shop owns this Page so each event routes to the
+        // right tenant's inbox and uses that tenant's reply token.
+        const entryOwnerId = entry?.id ? String(entry.id) : null;
+        const page = isInstagram
+          ? (entryOwnerId ? findPageByIgId(entryOwnerId) : null)
+          : (entryOwnerId ? findPageByPageId(entryOwnerId) : null);
+        const eventShopId = page?.shopId || DEFAULT_SHOP_ID;
+        const eventPageId = page?.id || entryOwnerId; // remember the receiving Page for send routing
+
         const events = entry.messaging || [];
         total += events.length;
         for (const ev of events) {
@@ -2158,7 +2191,7 @@ app.post(
 
           // Tag thread by channel: page DMs vs IG DMs are stored separately so the UI
           // can render them with the correct channel icon and so PSID/IGSID don't collide.
-          const thread = getOrCreateFbThread(psid, isInstagram ? 'ig' : 'fb');
+          const thread = getOrCreateFbThread(psid, isInstagram ? 'ig' : 'fb', eventShopId, eventPageId);
           let textOut = null;
           let imageUrl = null;
           let videoUrl = null;
@@ -2343,18 +2376,41 @@ async function sendLineMessage({ conversationId, text, asAi, shopId }) {
   }
 }
 
-async function sendMetaMessage({ conversationId, text, asAi }) {
+async function sendMetaMessage({ conversationId, text, asAi, shopId }) {
   syncFbConfigFromEnv();
-  if (!fbHasPageToken()) {
-    return { status: 503, error: 'No connected Page. Connect Facebook in Settings → Integrations.' };
-  }
-  const pageToken = primaryPageAccessToken();
   const body = typeof text === 'string' ? text.trim() : '';
   if (!conversationId || !body) return { status: 400, error: 'conversationId and text are required' };
   const m = /^(fb|ig):user:(.+)$/.exec(String(conversationId));
   if (!m) return { status: 400, error: 'invalid conversationId (expected fb:user:<PSID> or ig:user:<IGSID>)' };
   const channel = m[1];
   const targetId = m[2];
+
+  // Resolve the receiving Page for THIS conversation, so we always reply via
+  // the same Page the customer messaged. Lookup priority:
+  //   1. The thread's own stored pageId (set when the webhook came in).
+  //   2. A Page belonging to the caller's active shop (first match).
+  //   3. Legacy global fallback — picks any connected Page (single-shop dev only).
+  let pageToken = null;
+  let resolvedPage = null;
+  for (const t of fbThreads.values()) {
+    if (t.channel === channel && t.targetId === targetId) {
+      if (t.pageId) {
+        const p = findPageByPageId(t.pageId) || findPageByIgId(t.pageId);
+        if (p?.pageAccessToken) { pageToken = p.pageAccessToken; resolvedPage = p; }
+      }
+      break;
+    }
+  }
+  if (!pageToken && shopId) {
+    const owned = listPages().filter((p) => (p.shopId || DEFAULT_SHOP_ID) === shopId);
+    if (owned[0]?.pageAccessToken) { pageToken = owned[0].pageAccessToken; resolvedPage = owned[0]; }
+  }
+  if (!pageToken) {
+    if (!fbHasPageToken()) {
+      return { status: 503, error: 'No connected Page. Connect Facebook in Settings → Integrations.' };
+    }
+    pageToken = primaryPageAccessToken();
+  }
   if (asAi && !isBotEnabled(conversationId)) {
     return { status: 409, error: 'Bot is turned off for this conversation' };
   }
@@ -2389,7 +2445,8 @@ async function sendMetaMessage({ conversationId, text, asAi }) {
       },
       label: `${channel.toUpperCase()} send ${String(targetId).slice(-6)}`,
     });
-    const thread = getOrCreateFbThread(targetId, channel);
+    const sid = (resolvedPage?.shopId) || shopId || DEFAULT_SHOP_ID;
+    const thread = getOrCreateFbThread(targetId, channel, sid, resolvedPage?.id || null);
     const now = new Date().toISOString();
     thread.messages.push({ id: data?.message_id || crypto.randomUUID(), receivedAt: now, sender, text: body });
     thread.updatedAt = now;
@@ -2514,7 +2571,7 @@ app.post('/api/messages/send', express.json({ limit: '50kb' }), async (req, res)
   const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
   let result;
   if (id.startsWith('line:')) result = await sendLineMessage({ ...(req.body || {}), shopId });
-  else if (id.startsWith('fb:') || id.startsWith('ig:')) result = await sendMetaMessage(req.body || {});
+  else if (id.startsWith('fb:') || id.startsWith('ig:')) result = await sendMetaMessage({ ...(req.body || {}), shopId });
   else result = { status: 400, error: 'unknown conversationId prefix (expected line:/fb:/ig:)' };
   if (result.status >= 400) return res.status(result.status).json({ error: result.error });
   return res.json({ ok: true });
@@ -2814,11 +2871,13 @@ async function syncFbConversationHistory(pageId, pageToken, igAccountId) {
     if (data?.error) {
       console.warn('[FB History] conversations error:', data.error?.message || data.error);
     } else {
+      const ownerPage = findPageByPageId(pageId);
+      const ownerShopId = ownerPage?.shopId || DEFAULT_SHOP_ID;
       for (const convo of Array.isArray(data?.data) ? data.data : []) {
         const participants = convo?.participants?.data || [];
         const customer = participants.find((p) => p.id !== pageId);
         if (!customer) continue;
-        const thread = getOrCreateFbThread(customer.id, 'fb');
+        const thread = getOrCreateFbThread(customer.id, 'fb', ownerShopId, pageId);
         if (customer.name && !thread.displayName) thread.displayName = customer.name;
         const existing = new Set(thread.messages.map((m) => m.id));
         const msgs = Array.isArray(convo?.messages?.data) ? [...convo.messages.data].reverse() : [];
@@ -2868,11 +2927,13 @@ async function syncFbConversationHistory(pageId, pageToken, igAccountId) {
     if (data?.error) {
       console.warn('[IG History] conversations error:', data.error?.message || data.error);
     } else {
+      const ownerPage = findPageByIgId(igAccountId) || findPageByPageId(pageId);
+      const ownerShopId = ownerPage?.shopId || DEFAULT_SHOP_ID;
       for (const convo of Array.isArray(data?.data) ? data.data : []) {
         const participants = convo?.participants?.data || [];
         const customer = participants.find((p) => p.id !== igAccountId);
         if (!customer) continue;
-        const thread = getOrCreateFbThread(customer.id, 'ig');
+        const thread = getOrCreateFbThread(customer.id, 'ig', ownerShopId, ownerPage?.id || null);
         if (customer.name && !thread.displayName) thread.displayName = customer.name;
         const existing = new Set(thread.messages.map((m) => m.id));
         const msgs = Array.isArray(convo?.messages?.data) ? [...convo.messages.data].reverse() : [];
@@ -2903,6 +2964,17 @@ app.post('/api/fb/integration/connect', express.json({ limit: '20kb' }), async (
   if (!id || !access_token) {
     return res.status(400).json({ error: 'id and access_token are required' });
   }
+  // Bind the Page to the caller's active shop. Without this, two shops
+  // connecting different Pages would silently end up sharing one inbox.
+  const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
+  // Guard: another shop can't claim a Page that's already wired up elsewhere
+  // (would silently steal its inbox routing).
+  const existing = findPageByPageId(id);
+  if (existing && existing.shopId && existing.shopId !== shopId) {
+    return res.status(409).json({
+      error: 'Page นี้ถูกเชื่อมกับร้านอื่นแล้ว — ตัดการเชื่อมที่ร้านเดิมก่อน',
+    });
+  }
   try {
     // Subscribe this Page to our app's webhook (this delivers BOTH FB Page DMs and IG DMs
     // for the linked Instagram Business account, as long as the App Dashboard has webhooks
@@ -2928,6 +3000,7 @@ app.post('/api/fb/integration/connect', express.json({ limit: '20kb' }), async (
         ? { id: instagram.id, username: instagram.username, name: instagram.name, picture: instagram.picture }
         : null,
       connectedAt: new Date().toISOString(),
+      shopId,
     });
     refreshFbState();
 

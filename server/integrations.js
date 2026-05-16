@@ -1,6 +1,6 @@
 // JSON-file storage for connected integrations.
 //
-// Schema (v2): {
+// Schema (v3): {
 //   pages: [
 //     {
 //       id: '<page-id>',
@@ -10,13 +10,16 @@
 //       pageAccessToken: '<long-lived-page-token>',
 //       instagram: { id, username, name?, picture? } | null,
 //       connectedAt: '<iso>',
-//       connectedBy?: { name, id }   // reserved for multi-user
+//       connectedBy?: { name, id },  // reserved for multi-user
+//       shopId: '<shop-id>'          // v3: which tenant owns this Page
 //     },
 //     ...
 //   ]
 // }
 //
-// Backwards-compatible with v1 ({ fb: { pageAccessToken, page } }) — auto-migrates on read.
+// Backwards-compatible with v1 ({ fb: { pageAccessToken, page } }) and v2
+// (no shopId) — auto-migrates on read. Pages missing shopId are treated as
+// owned by the caller-provided default shop.
 //
 // Note: file lives at server/integrations.json. On Railway, the filesystem is ephemeral —
 // switch to a real DB (or Railway Volumes) before going to multi-tenant production.
@@ -102,6 +105,13 @@ export async function clearAllPages() {
 /** All connected pages. */
 export function listPages() {
   return loadIntegrationsSync().pages;
+}
+
+/** Pages connected to a specific shop. Pages with no shopId predate v3 and
+ *  are treated as belonging to the provided defaultShopId (so existing
+ *  single-tenant installs keep working). */
+export function listPagesForShop(shopId, defaultShopId) {
+  return listPages().filter((p) => (p.shopId || defaultShopId) === shopId);
 }
 
 /** Lookup helpers used by the webhook router and send route. */
