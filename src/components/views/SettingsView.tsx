@@ -17,6 +17,12 @@ import {
   type LineIntegrationStatus,
 } from '../../lib/lineIntegration';
 import { useMutedState, playNotification } from '../../lib/inboxNotifications';
+import {
+  listShopMembers,
+  createShopInvite,
+  removeShopMember,
+  type ShopMember,
+} from '../../lib/team';
 
 /**
  * The Settings page uses a vertical sidebar (left) + active section content
@@ -193,12 +199,189 @@ function AppearanceSection({
   );
 }
 
-/** Account section — just wraps the existing AccountCard. */
+/** Account section — wraps the existing AccountCard + adds the Team card. */
 function AccountSection({ t, locale }: { t: (k: string) => string; locale: Locale }) {
   return (
     <div className="space-y-4">
       <AccountCard t={t} locale={locale} />
+      <TeamCard locale={locale} />
     </div>
+  );
+}
+
+/**
+ * Team / shop-member management. An owner can:
+ *  - see who else has access to this shop
+ *  - generate a shareable invite URL (paste anywhere — LINE, IG, SMS)
+ *  - remove a teammate (the last owner is protected)
+ * A staff member sees the list and can leave the shop.
+ */
+function TeamCard({ locale }: { locale: Locale }) {
+  const { user, activeShop } = useAuth();
+  const th = locale === 'th';
+  const shopId = activeShop?.id || null;
+
+  const [members, setMembers] = useState<ShopMember[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const refresh = useCallback(async () => {
+    if (!shopId) return;
+    try {
+      setMembers(await listShopMembers(shopId));
+    } catch (e) {
+      setErr(String((e as Error).message || e));
+    }
+  }, [shopId]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const me = members?.find((m) => m.id === user?.id) || null;
+  const isOwner = me?.role === 'owner';
+
+  async function onInvite() {
+    if (!shopId) return;
+    setErr(null);
+    setInviteUrl(null);
+    setBusy(true);
+    try {
+      const invite = await createShopInvite(shopId, 'staff');
+      setInviteUrl(invite.url);
+    } catch (e) {
+      setErr(String((e as Error).message || e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onCopy() {
+    if (!inviteUrl) return;
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    } catch {
+      /* user can still select the text manually */
+    }
+  }
+
+  async function onRemove(targetUserId: string) {
+    if (!shopId) return;
+    const target = members?.find((m) => m.id === targetUserId);
+    const isSelf = targetUserId === user?.id;
+    const msg = isSelf
+      ? (th ? 'ออกจากร้านนี้?' : 'Leave this shop?')
+      : (th
+          ? `เอา ${target?.displayName || target?.username || 'สมาชิก'} ออกจากร้านนี้?`
+          : `Remove ${target?.displayName || target?.username || 'member'} from this shop?`);
+    if (!window.confirm(msg)) return;
+    setErr(null);
+    setBusy(true);
+    try {
+      await removeShopMember(shopId, targetUserId);
+      await refresh();
+    } catch (e) {
+      setErr(String((e as Error).message || e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <SectionCard
+      title={th ? 'ทีมงาน' : 'Team'}
+      desc={th
+        ? 'เชิญแอดมินคนอื่นเข้ามาช่วยตอบลูกค้าในร้านนี้'
+        : 'Invite teammates to help reply on this shop'}
+    >
+      {members === null ? (
+        <p className="text-sm text-slate-500 dark:text-slate-400">{th ? 'กำลังโหลด…' : 'Loading…'}</p>
+      ) : members.length === 0 ? (
+        <p className="text-sm text-slate-500 dark:text-slate-400">{th ? 'ไม่มีสมาชิก' : 'No members'}</p>
+      ) : (
+        <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+          {members.map((m) => (
+            <li key={m.id} className="flex items-center gap-3 py-2.5">
+              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-brand-100 text-xs font-bold text-brand-700 dark:bg-brand-900/40 dark:text-brand-200">
+                {(m.displayName || m.username || '?').slice(0, 2).toUpperCase()}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  {m.displayName || m.username}
+                  {m.id === user?.id && (
+                    <span className="ml-1.5 text-xs font-normal text-slate-400">({th ? 'คุณ' : 'you'})</span>
+                  )}
+                </div>
+                <div className="truncate text-xs text-slate-500 dark:text-slate-400">
+                  {m.role === 'owner' ? (th ? 'เจ้าของร้าน' : 'Owner') : (th ? 'แอดมิน' : 'Staff')}
+                  {m.email ? ` · ${m.email}` : ''}
+                </div>
+              </div>
+              {(isOwner || m.id === user?.id) && (
+                <button
+                  type="button"
+                  onClick={() => void onRemove(m.id)}
+                  disabled={busy}
+                  className="text-xs font-medium text-slate-400 transition hover:text-rose-600 disabled:opacity-50 dark:hover:text-rose-400"
+                >
+                  {m.id === user?.id
+                    ? (th ? 'ออก' : 'Leave')
+                    : (th ? 'เอาออก' : 'Remove')}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {isOwner && (
+        <div className="mt-4 border-t border-slate-100 pt-4 dark:border-slate-800">
+          {inviteUrl ? (
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                {th ? 'คัดลอกลิงก์นี้แล้วส่งให้ทีม (อายุ 7 วัน)' : 'Copy this link and send it to your teammate (valid for 7 days)'}
+              </p>
+              <div className="flex items-center gap-2">
+                <code className="block min-w-0 flex-1 truncate rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 font-mono text-[11px] text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
+                  {inviteUrl}
+                </code>
+                <button
+                  type="button"
+                  onClick={onCopy}
+                  className="rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 dark:bg-brand-500 dark:hover:bg-brand-400"
+                >
+                  {copied ? '✓' : (th ? 'คัดลอก' : 'Copy')}
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => setInviteUrl(null)}
+                className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                {th ? 'สร้างลิงก์ใหม่' : 'Generate another'}
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void onInvite()}
+              disabled={busy}
+              className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:hover:bg-brand-400"
+            >
+              {th ? 'สร้างลิงก์เชิญทีม' : 'Create invite link'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {err && (
+        <div className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-950/50 dark:text-rose-200">
+          {err}
+        </div>
+      )}
+    </SectionCard>
   );
 }
 

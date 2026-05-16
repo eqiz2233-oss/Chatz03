@@ -95,6 +95,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
+  /**
+   * If the user landed on a /…?invite=<token> URL (shared by a shop owner)
+   * AND they're signed in, auto-POST to /accept and pull the shop they
+   * just joined into the active shop list. Runs whenever the user changes
+   * — so the same effect fires after a fresh signup/login.
+   */
+  useEffect(() => {
+    if (!user) return;
+    const url = new URL(window.location.href);
+    const token = url.searchParams.get('invite');
+    if (!token) return;
+    void (async () => {
+      try {
+        const r = await fetch(`/api/shops/invites/${encodeURIComponent(token)}/accept`, {
+          method: 'POST',
+          credentials: 'include',
+        });
+        if (r.ok) {
+          // Strip ?invite=… so the call doesn't fire again on reload.
+          url.searchParams.delete('invite');
+          window.history.replaceState({}, '', url.pathname + (url.search || '') + url.hash);
+          await refresh();
+        }
+      } catch {
+        /* network blip — token stays in URL, user can retry by reload */
+      }
+    })();
+  }, [user, refresh]);
+
   /** Shared "POST a body, expect a session cookie, refresh state" helper for
    *  the four auth-entry endpoints (login, signup, google, facebook). */
   const postAuth = useCallback(
