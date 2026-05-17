@@ -9,11 +9,14 @@ import { AnalyticsView } from './components/views/AnalyticsView';
 import { SettingsView } from './components/views/SettingsView';
 import { LoginView } from './components/views/LoginView';
 import { useAuth } from './context/AuthContext';
-import type { InboxFocusRequest, View } from './types';
+import { useViewRoute } from './lib/router';
+import type { InboxFocusRequest } from './types';
 
 export default function App() {
   const { user, loading } = useAuth();
-  const [view, setView] = useState<View>('inbox');
+  // View ↔ URL is now bound — sidebar clicks push history, browser back/
+  // forward work, and bookmarking /orders lands the user on Orders.
+  const [view, setView] = useViewRoute();
   const [inboxFocus, setInboxFocus] = useState<InboxFocusRequest | null>(null);
 
   const clearInboxFocus = useCallback(() => setInboxFocus(null), []);
