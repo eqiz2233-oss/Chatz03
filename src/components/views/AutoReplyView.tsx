@@ -4,13 +4,18 @@ import { I } from '../Icons';
 import { SkeletonBar, SkeletonCircle } from '../Skeleton';
 
 /**
- * Auto-reply settings — persona picker + free-text messages.
+ * Auto-reply settings — one combined card with two subsections:
+ *   1. Persona picker (default / friendly / playful / formal)
+ *   2. After-hours (toggle + open-close times + closed-shop message)
  *
- * Persona picker and after-hours message only.
+ * Greeting and fallback live entirely inside the AI: the server's prompt
+ * builder generates them from the chosen persona, so the shop owner
+ * doesn't have to write copy. That's why this page has only one card —
+ * the user sets *who the bot is*, not *what the bot says*.
  */
 
 interface BotSettingsExt {
-  botPersona: 'friendly' | 'formal' | 'playful' | 'professional';
+  botPersona: 'default' | 'friendly' | 'playful' | 'formal';
   greetingMessage: string;
   greetingEnabled: boolean;
   fallbackMessage: string;
@@ -22,7 +27,7 @@ interface BotSettingsExt {
 }
 
 const DEFAULT_EXT: BotSettingsExt = {
-  botPersona: 'friendly',
+  botPersona: 'default',
   greetingMessage: '',
   greetingEnabled: true,
   fallbackMessage: '',
@@ -33,44 +38,77 @@ const DEFAULT_EXT: BotSettingsExt = {
   quickReplies: [],
 };
 
+/**
+ * Each persona has a *distinct* voice — not just a different sample line.
+ * The dialogue example (customer Q → bot A) is what really sells the
+ * difference, because the user sees how the bot will actually answer a
+ * real shop question, not just say hi.
+ *
+ * The persona id is sent verbatim to the server, which maps it onto a
+ * matching tone-of-voice block inside the system prompt (see server/ai.js).
+ */
 const PERSONAS = [
+  {
+    id: 'default' as const,
+    emoji: '✨',
+    th: 'ค่าเริ่มต้น',
+    en: 'Default',
+    blurb_th: 'สุภาพ อ่านง่าย ปรับโทนตามลูกค้า',
+    blurb_en: 'Polite, easy to read, adapts to the customer',
+    greeting_th: 'สวัสดีค่ะ มีอะไรให้ช่วยไหมคะ',
+    greeting_en: 'Hi, how can I help today?',
+    answer_th: 'ตัวนี้ 250 บาทค่ะ ซื้อ 2 ชิ้นส่งฟรี EMS เลยนะคะ',
+    answer_en: "This one's 250 THB. Free EMS if you order 2 or more.",
+    tint: 'from-violet-50 to-pink-50 dark:from-violet-950/30 dark:to-pink-950/20',
+    recommended: true,
+  },
   {
     id: 'friendly' as const,
     emoji: '🌸',
     th: 'เป็นกันเอง',
     en: 'Friendly',
-    sample_th: 'สวัสดีค่ะ มีอะไรให้ช่วยไหมคะ 😊',
-    sample_en: 'Hi there! How can I help today? 😊',
-    tint: 'from-rose-50 to-pink-50 dark:from-rose-950/30 dark:to-pink-950/20',
+    blurb_th: 'เหมือนคนคุยจริงๆ ใช้คำง่ายๆ',
+    blurb_en: 'Talks like a real person',
+    greeting_th: 'หวัดดีค่ะ ทักมาเลยนะ มีอะไรถามได้เต็มที่',
+    greeting_en: "Hey there! Ask me anything you'd like.",
+    answer_th: 'ตัวนี้ราคา 250 ค่ะ ถ้าซื้อ 2 ชิ้นส่งฟรี EMS เลยน้า',
+    answer_en: "It's 250 baht. Grab 2 and shipping's on us.",
+    tint: 'from-rose-50 to-amber-50 dark:from-rose-950/30 dark:to-amber-950/20',
   },
   {
     id: 'playful' as const,
     emoji: '🎀',
     th: 'สนุกสนาน',
     en: 'Playful',
-    sample_th: 'หวัดดีจ้าาา~ มาดูอะไรดีคะวันนี้ 💖',
-    sample_en: "Heyy~ what're we shopping for today 💖",
+    blurb_th: 'สดใส ขี้เล่น ใส่อีโมจิได้',
+    blurb_en: 'Cheerful, playful, emojis OK',
+    greeting_th: 'หวัดดีค่าาา~ ดูตัวไหนอยู่บอกได้เลยน้า 💕',
+    greeting_en: 'Heyyy~ which one caught your eye 💕',
+    answer_th: '250 บาทค่าาา~ ซื้อ 2 ชิ้นส่งฟรีนะคะ คุ้มมากเลย ✨',
+    answer_en: '250 baht~ free shipping when you grab 2 ✨',
     tint: 'from-fuchsia-50 to-purple-50 dark:from-fuchsia-950/30 dark:to-purple-950/20',
-  },
-  {
-    id: 'professional' as const,
-    emoji: '💼',
-    th: 'มืออาชีพ',
-    en: 'Professional',
-    sample_th: 'สวัสดีค่ะ ยินดีให้บริการ สอบถามได้เลยนะคะ',
-    sample_en: 'Hello, happy to assist. Let me know what you need.',
-    tint: 'from-sky-50 to-indigo-50 dark:from-sky-950/30 dark:to-indigo-950/20',
   },
   {
     id: 'formal' as const,
     emoji: '🎩',
     th: 'ทางการ',
     en: 'Formal',
-    sample_th: 'เรียนลูกค้า ทางร้านยินดีต้อนรับและพร้อมให้บริการค่ะ',
-    sample_en: 'Dear customer, our shop welcomes your inquiry.',
-    tint: 'from-slate-50 to-zinc-50 dark:from-slate-900/40 dark:to-zinc-900/40',
+    blurb_th: 'กระชับ ชัดเจน ดูน่าเชื่อถือ',
+    blurb_en: 'Concise, clear, trustworthy',
+    greeting_th: 'เรียนลูกค้า ทางร้านยินดีให้บริการค่ะ',
+    greeting_en: 'Dear customer, our shop is at your service.',
+    answer_th: 'สินค้าดังกล่าวราคา 250 บาทค่ะ จัดส่งฟรีเมื่อซื้อตั้งแต่ 2 ชิ้นขึ้นไป',
+    answer_en: 'The item is priced at 250 THB. Free shipping on orders of 2 or more.',
+    tint: 'from-slate-50 to-zinc-100 dark:from-slate-900/40 dark:to-zinc-900/40',
   },
 ];
+
+/** Coerce any legacy / unknown persona value into one of the four current ids. */
+function normalizePersona(v: unknown): BotSettingsExt['botPersona'] {
+  if (v === 'friendly' || v === 'playful' || v === 'formal' || v === 'default') return v;
+  // The old 'professional' persona has been merged into 'default' (smart polite).
+  return 'default';
+}
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -139,9 +177,13 @@ export function AutoReplyView() {
       try {
         const r = await fetch('/api/bot/settings', { credentials: 'include' });
         if (!r.ok) return;
-        const j = (await r.json()) as { settings: Partial<BotSettingsExt> };
+        const j = (await r.json()) as { settings: Partial<BotSettingsExt> & { botPersona?: unknown } };
         if (cancelled) return;
-        const merged = { ...DEFAULT_EXT, ...(j.settings || {}) };
+        const merged: BotSettingsExt = {
+          ...DEFAULT_EXT,
+          ...(j.settings || {}),
+          botPersona: normalizePersona((j.settings || {}).botPersona),
+        };
         setSettings(merged);
         beforeChangeRef.current = merged;
       } finally {
@@ -220,66 +262,91 @@ export function AutoReplyView() {
             <SkeletonView />
           ) : (
             <>
-              <SectionCard
-                icon="🎭"
-                title={th ? 'บุคลิกของบอท' : 'Bot personality'}
-                desc={th ? 'แตะการ์ดเพื่อเลือก' : 'Tap a card to pick'}
-                info={th
-                  ? 'บุคลิกจะกำหนดสไตล์การพูดของบอท เมื่อบอทตอบลูกค้าแบบ AI'
-                  : 'Personality shapes the bot’s tone when it answers customers with AI.'}
-              >
-                <PersonaPicker
-                  th={th}
-                  value={settings.botPersona}
-                  onChange={(v) => set('botPersona', v)}
-                />
-                <PreviewBubble th={th} persona={activePersona} />
-              </SectionCard>
+              {/* One combined card: persona picker + dialogue preview + business
+                  hours, separated by a subtle inner divider. */}
+              <section className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white/80 shadow-sm backdrop-blur-sm transition-shadow duration-500 hover:shadow-md dark:border-slate-800 dark:bg-slate-900/80">
+                {/* Persona */}
+                <header className="flex items-start gap-2.5 border-b border-slate-100 px-5 py-3.5 dark:border-slate-800">
+                  <span className="mt-0.5 text-lg leading-none" aria-hidden>🎭</span>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <h3 className="text-[15px] font-semibold text-slate-900 dark:text-slate-100">
+                        {th ? 'บุคลิกของบอท' : 'Bot personality'}
+                      </h3>
+                      <InfoTooltip text={th
+                        ? 'บุคลิกจะกำหนดสไตล์การพูดของบอทเวลาตอบลูกค้า'
+                        : 'Personality shapes the bot’s tone when it answers customers.'} />
+                    </div>
+                    <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                      {th ? 'แตะการ์ดเพื่อเลือก' : 'Tap a card to pick'}
+                    </p>
+                  </div>
+                </header>
+                <div className="px-5 py-4">
+                  <PersonaPicker
+                    th={th}
+                    value={settings.botPersona}
+                    onChange={(v) => set('botPersona', v)}
+                  />
+                  <DialoguePreview th={th} persona={activePersona} />
+                </div>
 
-              <SectionCard
-                icon="🌙"
-                title={th ? 'นอกเวลาทำการ' : 'After hours'}
-                desc={th ? 'ตั้งเวลาและข้อความเมื่อร้านปิด' : 'Set hours and after-hours reply'}
-                info={th
-                  ? 'บอทจะส่งข้อความนี้แทนคำตอบปกติเมื่ออยู่นอกช่วงเวลาที่เปิดร้าน'
-                  : 'The bot sends this message instead of its usual reply during closed hours.'}
-                accessory={
+                {/* Business hours — same card, soft tinted header to read as
+                    a subsection rather than a separate panel. */}
+                <header className="flex items-start justify-between gap-3 border-y border-slate-100 bg-slate-50/40 px-5 py-3.5 dark:border-slate-800 dark:bg-slate-900/40">
+                  <div className="flex min-w-0 items-start gap-2.5">
+                    <span className="mt-0.5 text-lg leading-none" aria-hidden>🌙</span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <h3 className="text-[15px] font-semibold text-slate-900 dark:text-slate-100">
+                          {th ? 'นอกเวลาทำการ' : 'After hours'}
+                        </h3>
+                        <InfoTooltip text={th
+                          ? 'บอทจะส่งข้อความนี้แทนคำตอบปกติเมื่ออยู่นอกช่วงเวลาที่เปิดร้าน'
+                          : 'The bot sends this message instead of its usual reply during closed hours.'} />
+                      </div>
+                      <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                        {th ? 'ตั้งเวลาและข้อความเมื่อร้านปิด' : 'Set hours and after-hours reply'}
+                      </p>
+                    </div>
+                  </div>
                   <Switch
                     checked={settings.awayEnabled}
                     onChange={(v) => set('awayEnabled', v)}
                     label="enable away"
                   />
-                }
-              >
-                {!settings.awayEnabled ? (
-                  <div className="rounded-xl bg-slate-50 px-4 py-3 text-xs text-slate-500 dark:bg-slate-800/40 dark:text-slate-400">
-                    {th ? 'ปิดอยู่ — บอทจะตอบทุกข้อความตลอด 24 ชม.' : 'Off — the bot replies 24/7.'}
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-3">
-                      <TimeField
-                        label={th ? 'เปิดร้าน' : 'Open'}
-                        value={settings.awayEnd}
-                        onChange={(v) => set('awayEnd', v)}
-                      />
-                      <TimeField
-                        label={th ? 'ปิดร้าน' : 'Close'}
-                        value={settings.awayStart}
-                        onChange={(v) => set('awayStart', v)}
+                </header>
+                <div className="px-5 py-4">
+                  {!settings.awayEnabled ? (
+                    <div className="rounded-xl bg-slate-50 px-4 py-3 text-xs text-slate-500 dark:bg-slate-800/40 dark:text-slate-400">
+                      {th ? 'ปิดอยู่ — บอทจะตอบทุกข้อความตลอด 24 ชม.' : 'Off — the bot replies 24/7.'}
+                    </div>
+                  ) : (
+                    <div className="space-y-4 motion-safe:animate-[fadeUp_300ms_ease-out]">
+                      <div className="grid grid-cols-2 gap-3">
+                        <TimeField
+                          label={th ? 'เปิดร้าน' : 'Open'}
+                          value={settings.awayEnd}
+                          onChange={(v) => set('awayEnd', v)}
+                        />
+                        <TimeField
+                          label={th ? 'ปิดร้าน' : 'Close'}
+                          value={settings.awayStart}
+                          onChange={(v) => set('awayStart', v)}
+                        />
+                      </div>
+                      <MessageField
+                        th={th}
+                        value={settings.awayMessage}
+                        onChange={(v) => set('awayMessage', v)}
+                        placeholder={th
+                          ? 'ตอนนี้ปิดร้านแล้วค่ะ จะรีบตอบในเช้าวันถัดไปนะคะ 🌙'
+                          : "We're closed — we'll reply first thing tomorrow 🌙"}
                       />
                     </div>
-                    <MessageField
-                      th={th}
-                      value={settings.awayMessage}
-                      onChange={(v) => set('awayMessage', v)}
-                      placeholder={th
-                        ? 'ตอนนี้ปิดร้านแล้วค่ะ จะรีบตอบในเช้าวันถัดไปนะคะ 🌙'
-                        : "We're closed — we'll reply first thing tomorrow 🌙"}
-                    />
-                  </div>
-                )}
-              </SectionCard>
+                  )}
+                </div>
+              </section>
             </>
           )}
         </div>
@@ -296,41 +363,6 @@ export function AutoReplyView() {
 }
 
 // ─── Building blocks ────────────────────────────────────────────────────────
-
-function SectionCard({
-  icon,
-  title,
-  desc,
-  info,
-  accessory,
-  children,
-}: {
-  icon?: string;
-  title: string;
-  desc?: string | null;
-  info?: string;
-  accessory?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white/80 shadow-sm backdrop-blur-sm transition-shadow duration-500 hover:shadow-md dark:border-slate-800 dark:bg-slate-900/80">
-      <header className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-3.5 dark:border-slate-800">
-        <div className="flex min-w-0 items-start gap-2.5">
-          {icon && <span className="mt-0.5 text-lg leading-none" aria-hidden>{icon}</span>}
-          <div className="min-w-0">
-            <div className="flex items-center gap-1.5">
-              <h3 className="text-[15px] font-semibold text-slate-900 dark:text-slate-100">{title}</h3>
-              {info && <InfoTooltip text={info} />}
-            </div>
-            {desc && <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{desc}</p>}
-          </div>
-        </div>
-        {accessory && <div className="shrink-0">{accessory}</div>}
-      </header>
-      <div className="px-5 py-4">{children}</div>
-    </section>
-  );
-}
 
 function Switch({
   checked,
@@ -401,21 +433,41 @@ function TimeField({ label, value, onChange }: { label: string; value: string; o
   );
 }
 
-function PreviewBubble({ th, persona }: { th: boolean; persona: typeof PERSONAS[number] }) {
+/**
+ * Two-bubble dialogue preview so the user sees the persona's *answering*
+ * style, not just a greeting. The bot's reply on the right is what really
+ * sells the difference between personas.
+ */
+function DialoguePreview({ th, persona }: { th: boolean; persona: typeof PERSONAS[number] }) {
+  const customerQ = th ? 'ราคาเท่าไหร่คะ?' : 'How much is this?';
   return (
-    <div className="mt-3 flex items-end gap-2 rounded-xl bg-slate-50/80 px-3 py-3 transition-colors duration-500 dark:bg-slate-800/40">
-      <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-gradient-to-br from-brand-500 to-pink-500 text-sm shadow-sm">
-        {persona.emoji}
+    <div
+      key={persona.id /* re-mount on persona switch for the entry animation */}
+      className="mt-4 space-y-2 rounded-2xl bg-slate-50/70 p-3 transition-colors duration-500 motion-safe:animate-[fadeUp_400ms_ease-out] dark:bg-slate-800/40"
+    >
+      {/* Customer bubble */}
+      <div className="flex items-end gap-2">
+        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-slate-300 text-[10px] font-semibold text-white dark:bg-slate-600" aria-hidden>
+          {th ? 'ล' : 'C'}
+        </span>
+        <div className="max-w-[85%] rounded-2xl rounded-bl-md bg-white px-3 py-1.5 text-[13px] text-slate-700 shadow-sm dark:bg-slate-900 dark:text-slate-200">
+          {customerQ}
+        </div>
       </div>
-      <div
-        key={persona.id /* re-mount on persona change for fade-in */}
-        className="relative max-w-[85%] rounded-2xl rounded-bl-md bg-white px-3.5 py-2 text-[13px] text-slate-700 shadow-sm motion-safe:animate-[fadeUp_400ms_ease-out] dark:bg-slate-900 dark:text-slate-200"
-      >
-        {th ? persona.sample_th : persona.sample_en}
+      {/* Bot reply */}
+      <div className="flex items-end justify-end gap-2">
+        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-gradient-to-r from-brand-500 to-pink-500 px-3 py-1.5 text-[13px] text-white shadow-sm">
+          {th ? persona.answer_th : persona.answer_en}
+        </div>
+        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-gradient-to-br from-brand-500 to-pink-500 text-sm shadow-sm" aria-hidden>
+          {persona.emoji}
+        </span>
       </div>
-      <span className="ml-auto text-[10px] text-slate-400 dark:text-slate-500">
-        {th ? 'ตัวอย่าง' : 'preview'}
-      </span>
+      <div className="flex justify-end pr-1">
+        <span className="text-[10px] text-slate-400 dark:text-slate-500">
+          {th ? 'ตัวอย่างคำตอบจริง' : 'sample reply'}
+        </span>
+      </div>
     </div>
   );
 }
@@ -460,6 +512,11 @@ function PersonaPicker({
                 : 'border-slate-200 bg-white hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md dark:border-slate-800 dark:bg-slate-900 dark:hover:border-brand-800')
             }
           >
+            {p.recommended && (
+              <span className="absolute right-2.5 top-2.5 inline-flex items-center gap-1 rounded-full bg-gradient-to-r from-brand-500 to-pink-500 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-white shadow-sm">
+                ★ {th ? 'แนะนำ' : 'recommended'}
+              </span>
+            )}
             <div className="flex items-center gap-2">
               <span className="text-2xl transition-transform duration-500 ease-out group-hover:scale-110">{p.emoji}</span>
               <span className={'text-sm font-semibold transition-colors duration-300 ' + (active ? 'text-brand-700 dark:text-brand-200' : 'text-slate-800 dark:text-slate-100')}>
@@ -471,8 +528,11 @@ function PersonaPicker({
                 </span>
               )}
             </div>
+            <p className={'mt-1.5 text-[11px] leading-relaxed transition-colors duration-300 ' + (active ? 'text-brand-700/80 dark:text-brand-200/80' : 'text-slate-500 dark:text-slate-400')}>
+              {th ? p.blurb_th : p.blurb_en}
+            </p>
             <div className="mt-2.5 rounded-xl bg-white/70 px-3 py-2 text-[12px] leading-relaxed text-slate-600 shadow-inner dark:bg-slate-950/40 dark:text-slate-300">
-              <span className="italic">"{th ? p.sample_th : p.sample_en}"</span>
+              <span className="italic">"{th ? p.greeting_th : p.greeting_en}"</span>
             </div>
           </button>
         );

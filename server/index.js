@@ -4024,7 +4024,9 @@ const DEFAULT_BOT_SETTINGS = {
   shopProfile: { shopName: '', tagline: '' },
   // Auto-reply page (new sidebar entry). Schema matches the front-end
   // BotSettingsExt so the same /api/bot/settings GET/PUT round-trips it.
-  botPersona: 'friendly',
+  // Valid personas: 'default' | 'friendly' | 'playful' | 'formal'. The
+  // legacy 'professional' value is silently mapped to 'default' on read.
+  botPersona: 'default',
   greetingMessage: '',
   greetingEnabled: true,
   fallbackMessage: '',

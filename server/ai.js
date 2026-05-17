@@ -46,7 +46,41 @@ export function aiModel() {
 // Prompt construction
 // ---------------------------------------------------------------------------
 
-function buildSystemPrompt({ shopName, brandVoice, paymentInfo, locale }) {
+/**
+ * Persona-specific tone-of-voice blocks. The shop owner picks one of these
+ * in the Auto-reply page; what they pick must noticeably change how the bot
+ * speaks, otherwise the setting is decorative — which is the bug this map
+ * fixes. Each block is short and prescriptive (not just adjectives) so the
+ * model can act on it.
+ */
+const PERSONA_TONE = {
+  default: [
+    'Tone: polite, easy to read, never stiff.',
+    'Read the customer\'s last message and match their energy: if they joke, joke back lightly; if they ask a real question, answer crisply.',
+    'Default to ค่ะ / นะคะ. Use emojis only if the customer uses them first.',
+    'Sentences should feel like a thoughtful shop owner — warm but never bubbly.',
+  ].join('\n'),
+  friendly: [
+    'Tone: a real human chatting with a friend.',
+    'Use everyday spoken Thai: "ทักได้เลยน้า", "เดี๋ยวเช็คให้นะ", "อันนี้น่ารักนะ".',
+    'No formal openers like "เรียนลูกค้า". Use natural particles: ค่ะ, น้า, นะ.',
+    'Almost no emojis — the warmth comes from word choice, not symbols.',
+  ].join('\n'),
+  playful: [
+    'Tone: bright, upbeat, mildly playful.',
+    'Stretched vowels are fine ("ค่าาา", "น้าาา"). Sprinkle exclamations.',
+    'You may use one fitting emoji per reply when natural (💕, ✨, 😊, 🎀). Do not overdo it.',
+    'Stay accurate — playful tone, but every fact still comes from the catalog.',
+  ].join('\n'),
+  formal: [
+    'Tone: formal, concise, trustworthy — like a department-store customer-service line.',
+    'Use "เรียนลูกค้า", "ทางร้าน", "กรุณา", and full sentence endings (ค่ะ).',
+    'No emojis. No playful particles. No stretched vowels.',
+    'Reply as briefly as possible while still answering completely.',
+  ].join('\n'),
+};
+
+function buildSystemPrompt({ shopName, brandVoice, paymentInfo, locale, persona }) {
   const lines = [];
   lines.push(
     `You are the customer-service assistant for "${shopName || 'this shop'}", a Thai online shop selling via LINE, Facebook Messenger, and Instagram DM.`,
@@ -54,9 +88,15 @@ function buildSystemPrompt({ shopName, brandVoice, paymentInfo, locale }) {
   lines.push('');
   lines.push('Your job is to help close sales: greet warmly, answer product questions, quote prices, accept orders, and confirm payment slips. You must reply in Thai unless the customer writes in English.');
   lines.push('');
+
+  // Persona tone — placed up high so it shapes every downstream rule.
+  const personaKey = (typeof persona === 'string' && PERSONA_TONE[persona]) ? persona : 'default';
+  lines.push(`## Persona — "${personaKey}"`);
+  lines.push(PERSONA_TONE[personaKey]);
+  lines.push('');
+
   lines.push('Rules:');
-  lines.push('- Keep replies short (1–3 sentences). Thai shop chat is conversational, not formal.');
-  lines.push('- Use friendly Thai particles (ค่ะ / นะคะ / ครับ) matching the conversation history. Default to ค่ะ/นะคะ.');
+  lines.push('- Keep replies short (1–3 sentences). Thai shop chat is conversational, not formal — unless the persona above says otherwise.');
   lines.push('- Never invent products, sizes, or prices that are not in the catalog below. If something is unavailable, say so politely and suggest the closest match.');
   lines.push('- When the customer wants to order, confirm: product, option (size/color), quantity, and the total price.');
   lines.push('- When the customer asks how to pay, share the payment info verbatim.');
@@ -173,6 +213,7 @@ export async function generateReply(params) {
     brandVoice: botSettings?.brandVoice || '',
     paymentInfo: botSettings?.paymentInfo || {},
     locale: locale === 'en' ? 'en' : 'th',
+    persona: botSettings?.botPersona,
   });
   const catalog = buildCatalogText(products);
 
@@ -240,6 +281,7 @@ export async function generateSlipThankYou({ customerName, amount, bank, botSett
       brandVoice: botSettings?.brandVoice || '',
       paymentInfo: botSettings?.paymentInfo || {},
       locale: 'th',
+      persona: botSettings?.botPersona,
     });
     const userMsg =
       `ลูกค้าชื่อ "${customerName || 'ลูกค้า'}" เพิ่งส่งสลิปโอนเงิน ${amount ? `฿${amount.toLocaleString()}` : ''}${bank ? ` ผ่าน ${bank}` : ''} ` +
