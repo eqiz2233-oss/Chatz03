@@ -503,17 +503,22 @@ export function ShopBrainView() {
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col bg-[#f4f3f8] dark:bg-slate-950">
       {/* Top bar */}
-      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-6 py-4 dark:border-slate-800 dark:bg-slate-900">
-        <div className="min-w-0">
-          <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">ร้านของฉัน</h1>
-          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-            {products.length} ชิ้น · เหลือโควต้า {slotsRemaining} / {SHOP_PRODUCT_SLOT_LIMIT}
-          </p>
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 bg-white/80 px-6 py-4 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/80">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-brand-500 to-pink-500 text-lg shadow-md shadow-brand-500/25" aria-hidden>
+            🛍️
+          </span>
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">ร้านของฉัน</h1>
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+              {products.length} ชิ้น · เหลือ {slotsRemaining} / {SHOP_PRODUCT_SLOT_LIMIT}
+            </p>
+          </div>
         </div>
         <button
           type="button"
           onClick={() => setMode('templates')}
-          className="btn-secondary text-sm"
+          className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm font-semibold text-slate-700 shadow-sm transition-all duration-300 ease-out hover:-translate-y-[1px] hover:border-brand-300 hover:text-brand-700 hover:shadow-md dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-brand-700"
           title="จัดการแม่แบบสินค้า"
         >
           แม่แบบ
@@ -526,68 +531,68 @@ export function ShopBrainView() {
       </header>
 
       {saveHint && (
-        <div className="shrink-0 border-b border-emerald-200 bg-emerald-50 px-6 py-2 text-center text-sm font-medium text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-200">
+        <div className="shrink-0 border-b border-emerald-200 bg-emerald-50 px-6 py-2 text-center text-sm font-medium text-emerald-800 motion-safe:animate-[fadeUp_300ms_ease-out] dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-200">
           {saveHint}
         </div>
       )}
 
       {/* 2-pane: ซ้ายรายการ · ขวาฟอร์ม (ไม่สลับหน้า) */}
       <div className="flex min-h-0 flex-1 flex-row overflow-hidden">
-        {/* LEFT — product list */}
-        <aside className="flex min-h-0 w-[min(100%,300px)] shrink-0 flex-col border-r border-slate-200 bg-[#f4f3f8] dark:border-slate-800 dark:bg-slate-950 sm:w-[300px] lg:w-[340px]">
-          <div className="shrink-0 border-b border-slate-200/80 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              รายการสินค้า
+        {/* LEFT — product list, on a warm tinted background so it reads
+            as the "your shop" panel, distinct from the right-side editor. */}
+        <aside className="flex min-h-0 w-[min(100%,300px)] shrink-0 flex-col border-r border-slate-200/60 bg-gradient-to-b from-violet-50/70 via-white to-rose-50/40 dark:border-slate-800 dark:from-slate-950 dark:via-slate-950 dark:to-slate-950 sm:w-[300px] lg:w-[340px]">
+          <div className="shrink-0 border-b border-slate-200/60 bg-white/60 px-4 py-3 backdrop-blur-sm dark:border-slate-800 dark:bg-slate-900/60">
+            <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              <span aria-hidden>📦</span> รายการสินค้า
             </div>
             <div className="flex items-center gap-2">
-            <div className="relative flex-1">
-              <I.Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="ค้นหาสินค้า"
-                className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500"
-              />
-            </div>
-            <button
-              type="button"
-              onClick={resetForm}
-              disabled={editingId === null && !form.name && !form.price}
-              title="เริ่มเพิ่มสินค้าใหม่"
-              className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-600 text-white shadow-sm transition hover:bg-brand-700 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40 dark:bg-brand-500 dark:hover:bg-brand-400"
-              aria-label="เพิ่มสินค้าใหม่"
-            >
-              <I.Plus className="h-4 w-4" />
-            </button>
+              <div className="relative flex-1">
+                <I.Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="ค้นหาสินค้า"
+                  className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm text-slate-900 placeholder:text-slate-400 transition-all duration-300 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={resetForm}
+                disabled={editingId === null && !form.name && !form.price}
+                title="เริ่มเพิ่มสินค้าใหม่"
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-brand-500 to-pink-500 text-white shadow-md shadow-brand-500/30 transition-all duration-300 ease-out hover:-translate-y-[1px] hover:shadow-lg hover:shadow-brand-500/40 active:translate-y-0 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
+                aria-label="เพิ่มสินค้าใหม่"
+              >
+                <I.Plus className="h-4 w-4" />
+              </button>
             </div>
           </div>
 
           <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
             {editingId === null && (
-              <div className="rounded-xl border-2 border-brand-500 bg-brand-50/80 px-3 py-2.5 text-sm font-medium text-brand-800 dark:border-brand-400 dark:bg-brand-950/50 dark:text-brand-200">
-                + เพิ่มสินค้าใหม่
+              <div className="relative overflow-hidden rounded-xl bg-gradient-to-r from-brand-50/90 via-pink-50/80 to-brand-50/90 px-3 py-2.5 text-sm font-semibold text-brand-800 shadow-sm motion-safe:animate-[fadeUp_300ms_ease-out] dark:from-brand-950/50 dark:via-pink-950/40 dark:to-brand-950/50 dark:text-brand-200">
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0 rounded-xl border-2 border-dashed border-brand-300/70 dark:border-brand-700/60"
+                />
+                <span className="relative">+ เพิ่มสินค้าใหม่</span>
               </div>
             )}
             {filteredProducts.length === 0 ? (
-              <div className="grid h-full min-h-[200px] place-items-center rounded-2xl border border-dashed border-slate-200 bg-white/60 p-6 text-center dark:border-slate-700 dark:bg-slate-900/60">
+              <div className="grid h-full min-h-[200px] place-items-center rounded-2xl border border-dashed border-slate-200 bg-white/60 p-6 text-center motion-safe:animate-[fadeUp_400ms_ease-out] dark:border-slate-700 dark:bg-slate-900/60">
                 <div>
-                  <I.Box className="mx-auto h-8 w-8 text-slate-300 dark:text-slate-600" />
+                  <I.Box className="mx-auto h-9 w-9 text-slate-300 motion-safe:animate-pulse dark:text-slate-600" />
                   <p className="mt-2 text-sm font-medium text-slate-500 dark:text-slate-400">
                     {search ? 'ไม่พบสินค้าที่ค้นหา' : 'ยังไม่มีสินค้า'}
                   </p>
                   {!search && (
-                    <>
-                      <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
-                        กรอกฟอร์มด้านขวาแล้วกดบันทึก หรือโหลดตัวอย่าง
-                      </p>
-                      <button
-                        type="button"
-                        onClick={loadDemoMockup}
-                        className="mt-4 rounded-full bg-brand-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-brand-700 dark:bg-brand-500 dark:hover:bg-brand-400"
-                      >
-                        โหลดตัวอย่าง (mockup)
-                      </button>
-                    </>
+                    <button
+                      type="button"
+                      onClick={loadDemoMockup}
+                      className="mt-4 rounded-full bg-gradient-to-r from-brand-500 to-pink-500 px-4 py-2 text-xs font-semibold text-white shadow-md shadow-brand-500/30 transition-all duration-300 ease-out hover:-translate-y-[1px] hover:shadow-lg hover:shadow-brand-500/40"
+                    >
+                      โหลดตัวอย่าง
+                    </button>
                   )}
                 </div>
               </div>
@@ -655,10 +660,10 @@ function ShopListCard({
         }
       }}
       className={
-        'group flex cursor-pointer gap-3 rounded-xl border p-3 text-left transition ' +
+        'group flex cursor-pointer gap-3 rounded-xl border p-3 text-left transition-all duration-300 ease-out ' +
         (isActive
-          ? 'border-brand-400 bg-brand-50/70 ring-2 ring-brand-100 dark:border-brand-500 dark:bg-brand-950/40 dark:ring-brand-900/60'
-          : 'border-slate-200 bg-white hover:border-brand-200 hover:bg-brand-50/30 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-brand-700 dark:hover:bg-brand-950/20')
+          ? 'border-brand-400 bg-gradient-to-r from-brand-50/80 to-pink-50/60 shadow-md shadow-brand-500/10 ring-2 ring-brand-200/60 dark:border-brand-500 dark:from-brand-950/50 dark:to-pink-950/30 dark:ring-brand-900/60'
+          : 'border-slate-200 bg-white hover:-translate-y-[1px] hover:border-brand-200 hover:bg-brand-50/30 hover:shadow-md dark:border-slate-700 dark:bg-slate-900 dark:hover:border-brand-700 dark:hover:bg-brand-950/20')
       }
     >
       <div className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-50 text-xl ring-1 ring-slate-100 dark:bg-slate-800 dark:ring-slate-700">
@@ -689,8 +694,11 @@ function ShopListCard({
         </div>
         <div className="mt-2 flex items-center justify-between gap-2">
           {p.aiReady ? (
-            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
-              <I.Check className="h-2.5 w-2.5" />
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 shadow-[0_0_0_2px_rgba(16,185,129,0.08)] dark:bg-emerald-900/40 dark:text-emerald-300">
+              <span className="relative grid h-2 w-2 place-items-center" aria-hidden>
+                <span className="absolute inset-0 rounded-full bg-emerald-400/60 motion-safe:animate-ping" />
+                <span className="relative h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              </span>
               AI พร้อมตอบ
             </span>
           ) : (
@@ -706,7 +714,7 @@ function ShopListCard({
             }}
             aria-label="ลบสินค้า"
             title="ลบ"
-            className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-slate-400 opacity-0 transition group-hover:opacity-100 hover:bg-rose-500/10 hover:text-rose-600 dark:text-slate-500 dark:hover:text-rose-400"
+            className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-slate-400 opacity-0 transition-all duration-300 group-hover:opacity-100 hover:bg-rose-500/10 hover:text-rose-600 dark:text-slate-500 dark:hover:text-rose-400"
           >
             <I.Trash2 className="h-3.5 w-3.5" />
           </button>
@@ -800,10 +808,14 @@ function AddForm({
     closeSaveTpl();
   };
 
-  // Premium-looking input style: more padding, slightly rounder corners,
-  // subtle border — matches the reference image's input height & weight.
+  // Premium-looking input style: rounded-2xl, soft purple focus ring with
+  // a gentle "halo" shadow on focus — matches the auth shell aesthetic so
+  // the whole app feels like one product.
   const inputClass =
-    'w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 transition placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-brand-500 dark:focus:ring-brand-900/40';
+    'w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400 ' +
+    'shadow-[0_1px_2px_rgba(15,23,42,0.03)] transition-all duration-300 ease-out ' +
+    'focus:border-brand-400 focus:outline-none focus:shadow-[0_0_0_4px_rgba(139,92,246,0.12)] ' +
+    'dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-brand-500 dark:focus:shadow-[0_0_0_4px_rgba(139,92,246,0.22)]';
 
   const updateOptionRow = (id: string, patch: Partial<OptionGroupFormRow>) =>
     setForm((f) => ({
@@ -848,8 +860,8 @@ function AddForm({
 
   return (
     <>
-      {/* ── Header bar: title + Cancel/Save in top-right (reference: Circlue) ── */}
-      <header className="flex shrink-0 flex-wrap items-start justify-between gap-4 border-b border-slate-200 bg-white px-6 py-5 dark:border-slate-800 dark:bg-slate-900 md:px-8 md:py-6">
+      {/* ── Header: title + Cancel / Save (Save is the gradient hero) ──── */}
+      <header className="flex shrink-0 flex-wrap items-start justify-between gap-4 border-b border-slate-200/70 bg-white/70 px-6 py-5 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/70 md:px-8 md:py-6">
         <div className="min-w-0">
           <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white md:text-[28px]">
             {isEdit ? 'แก้ไขสินค้า' : 'เพิ่มสินค้าใหม่'}
@@ -858,9 +870,9 @@ function AddForm({
             <button
               type="button"
               onClick={onLoadDemo}
-              className="mt-2 text-xs font-medium text-brand-600 underline-offset-2 hover:underline dark:text-brand-400"
+              className="mt-2 text-xs font-medium text-brand-600 transition-colors duration-300 underline-offset-2 hover:underline dark:text-brand-400"
             >
-              โหลดตัวอย่าง (mockup)
+              โหลดตัวอย่าง
             </button>
           )}
         </div>
@@ -869,7 +881,7 @@ function AddForm({
             type="button"
             onClick={onCancel}
             disabled={!isEdit && !hasAnyContent}
-            className="rounded-full border border-slate-300 bg-white px-5 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+            className="rounded-full border border-slate-300 bg-white px-5 py-2 text-sm font-semibold text-slate-700 transition-all duration-300 ease-out hover:bg-slate-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
           >
             ยกเลิก
           </button>
@@ -877,15 +889,16 @@ function AddForm({
             type="button"
             onClick={onSave}
             disabled={!hasValidCore || (!isEdit && slotsRemaining <= 0)}
-            className="rounded-full bg-brand-600 px-6 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 dark:bg-brand-500 dark:hover:bg-brand-400"
+            className="rounded-full bg-gradient-to-r from-brand-600 to-pink-600 px-6 py-2 text-sm font-semibold text-white shadow-lg shadow-brand-600/25 transition-all duration-300 ease-out hover:-translate-y-[1px] hover:shadow-xl hover:shadow-brand-600/35 active:translate-y-0 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-md disabled:hover:translate-y-0"
           >
             บันทึก
           </button>
         </div>
       </header>
 
-      {/* ── Body: 2-column (left rail + main form) ── */}
-      <div className="min-h-0 flex-1 overflow-y-auto bg-[#f4f3f8] dark:bg-slate-950">
+      {/* ── Body: 2-column (left rail + main form). Cool slate tint so the
+           white cards pop, contrasting with the warm tinted product list. */}
+      <div className="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-slate-50/80 to-[#f1f1f6] dark:from-slate-950 dark:to-slate-950">
         {hiddenFileInput}
         <div className="flex flex-col gap-5 px-6 py-6 md:px-8 md:py-7 lg:flex-row lg:gap-6">
 
@@ -911,7 +924,7 @@ function AddForm({
                   e.stopPropagation();
                   applyImageFile(e.dataTransfer.files?.[0]);
                 }}
-                className="flex aspect-square w-full cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50/60 text-slate-400 transition hover:border-brand-300 hover:bg-white hover:text-brand-600 dark:border-slate-700 dark:bg-slate-800/40 dark:hover:border-brand-500 dark:hover:bg-slate-900 dark:hover:text-brand-300"
+                className="flex aspect-square w-full cursor-pointer items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/60 text-slate-400 transition-all duration-500 ease-out hover:border-brand-300 hover:bg-gradient-to-br hover:from-brand-50/50 hover:to-pink-50/40 hover:text-brand-600 hover:shadow-[0_0_0_4px_rgba(139,92,246,0.08)] dark:border-slate-700 dark:bg-slate-800/40 dark:hover:border-brand-500 dark:hover:from-brand-950/30 dark:hover:to-pink-950/20 dark:hover:text-brand-300"
               >
                 {form.imageUrl ? (
                   previewOk ? (
@@ -1021,7 +1034,7 @@ function AddForm({
                   }}
                   disabled={!optionsHaveContent}
                   title={optionsHaveContent ? 'บันทึกชุดตัวเลือกนี้เป็นแม่แบบ' : 'กรอกตัวเลือกก่อน'}
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-brand-300 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-brand-500"
+                  className="rounded-full border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-medium text-slate-600 transition-all duration-300 ease-out hover:-translate-y-[1px] hover:border-brand-300 hover:text-brand-600 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-brand-500"
                 >
                   บันทึกเป็นแม่แบบ
                 </button>
@@ -1029,14 +1042,14 @@ function AddForm({
             >
               <div className="space-y-3">
                 {form.optionGroups.map((g, i) => (
-                  <div key={g.id} className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 dark:border-slate-700 dark:bg-slate-800/30">
+                  <div key={g.id} className="rounded-2xl border border-brand-100 bg-gradient-to-br from-brand-50/40 via-white to-pink-50/30 p-4 motion-safe:animate-[fadeUp_300ms_ease-out] dark:border-brand-900/60 dark:from-brand-950/30 dark:via-slate-900 dark:to-pink-950/20">
                     <div className="mb-3 flex items-center justify-between">
-                      <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">ชุดที่ {i + 1}</span>
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-brand-500 dark:text-brand-400">ชุดที่ {i + 1}</span>
                       {form.optionGroups.length > 1 && (
                         <button
                           type="button"
                           onClick={() => removeOptionRow(g.id)}
-                          className="text-xs font-medium text-slate-400 transition hover:text-rose-600 dark:hover:text-rose-400"
+                          className="text-xs font-medium text-slate-400 transition-colors duration-300 hover:text-rose-600 dark:hover:text-rose-400"
                         >
                           ลบ
                         </button>
@@ -1044,7 +1057,7 @@ function AddForm({
                     </div>
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div>
-                        <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-300">ประเภท</label>
+                        <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-300">ชื่อ</label>
                         <input
                           value={g.label}
                           onChange={(e) => updateOptionRow(g.id, { label: e.target.value })}
@@ -1053,7 +1066,7 @@ function AddForm({
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-300">ค่า</label>
+                        <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-300">ตัวเลือก</label>
                         <input
                           value={g.valuesInput}
                           onChange={(e) => updateOptionRow(g.id, { valuesInput: e.target.value })}
@@ -1068,14 +1081,14 @@ function AddForm({
               <button
                 type="button"
                 onClick={addOptionRow}
-                className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-500 transition hover:border-brand-400 hover:bg-brand-50/40 hover:text-brand-600 dark:border-slate-600 dark:text-slate-400 dark:hover:border-brand-500 dark:hover:bg-brand-950/30 dark:hover:text-brand-300"
+                className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-300 px-4 py-3 text-sm font-medium text-slate-500 transition-all duration-300 ease-out hover:border-brand-400 hover:bg-gradient-to-r hover:from-brand-50/40 hover:to-pink-50/30 hover:text-brand-600 dark:border-slate-600 dark:text-slate-400 dark:hover:border-brand-500 dark:hover:from-brand-950/30 dark:hover:to-pink-950/20 dark:hover:text-brand-300"
               >
                 <I.Plus className="h-4 w-4" />
                 เพิ่มตัวเลือก
               </button>
 
               {saveTplOpen && (
-                <div className="mt-4 rounded-xl border border-brand-200 bg-brand-50/60 p-4 dark:border-brand-800 dark:bg-brand-950/40">
+                <div className="mt-4 rounded-2xl border border-brand-200 bg-gradient-to-br from-brand-50/70 to-pink-50/40 p-4 motion-safe:animate-[fadeUp_300ms_ease-out] dark:border-brand-800 dark:from-brand-950/40 dark:to-pink-950/20">
                   <label className="mb-1.5 block text-xs font-medium text-slate-700 dark:text-slate-200">ตั้งชื่อแม่แบบ</label>
                   <input
                     autoFocus
@@ -1092,10 +1105,10 @@ function AddForm({
                         type="button"
                         onClick={() => setTplDraftEmoji(em)}
                         className={
-                          'grid h-9 w-9 place-items-center rounded-lg border text-lg transition ' +
+                          'grid h-10 w-10 place-items-center rounded-xl border text-lg transition-all duration-300 ease-out ' +
                           (tplDraftEmoji === em
-                            ? 'border-brand-400 bg-white ring-2 ring-brand-200 dark:border-brand-500 dark:bg-slate-800 dark:ring-brand-900'
-                            : 'border-slate-200 bg-white hover:border-brand-300 dark:border-slate-700 dark:bg-slate-900')
+                            ? 'border-brand-400 bg-gradient-to-br from-brand-50 to-pink-50 ring-2 ring-brand-200 dark:border-brand-500 dark:from-brand-950/50 dark:to-pink-950/30 dark:ring-brand-900'
+                            : 'border-slate-200 bg-white hover:-translate-y-[1px] hover:border-brand-300 hover:shadow-sm dark:border-slate-700 dark:bg-slate-900')
                         }
                       >
                         {em}
@@ -1106,7 +1119,7 @@ function AddForm({
                     <button
                       type="button"
                       onClick={closeSaveTpl}
-                      className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                      className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-xs font-semibold text-slate-700 transition-all duration-300 hover:bg-slate-50 active:scale-[0.98] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
                     >
                       ยกเลิก
                     </button>
@@ -1114,7 +1127,7 @@ function AddForm({
                       type="button"
                       onClick={submitSaveTpl}
                       disabled={!tplDraftName.trim()}
-                      className="rounded-lg bg-brand-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-brand-500 dark:hover:bg-brand-400"
+                      className="rounded-full bg-gradient-to-r from-brand-600 to-pink-600 px-4 py-1.5 text-xs font-semibold text-white shadow-md shadow-brand-600/25 transition-all duration-300 ease-out hover:-translate-y-[1px] hover:shadow-lg hover:shadow-brand-600/35 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
                     >
                       บันทึก
                     </button>
@@ -1160,7 +1173,7 @@ function FormCard({
   const bodyPad = padding === 'lg' ? 'px-6 py-5' : 'px-5 py-4';
   const headPad = padding === 'lg' ? 'px-6 py-4' : 'px-5 py-3.5';
   return (
-    <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-slate-700 dark:bg-slate-900 dark:shadow-none">
+    <section className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-shadow duration-500 ease-out hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)] motion-safe:animate-[fadeUp_300ms_ease-out] dark:border-slate-700 dark:bg-slate-900 dark:shadow-none">
       <header className={'flex items-center justify-between border-b border-slate-100 ' + headPad + ' dark:border-slate-800'}>
         <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">{title}</h3>
         {accessory}
