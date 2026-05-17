@@ -6,7 +6,7 @@ import { SkeletonBar, SkeletonCircle } from '../Skeleton';
 /**
  * Auto-reply settings — persona picker + free-text messages.
  *
- * Greeting, fallback, and away are plain text fields (no preset choices).
+ * Persona picker and after-hours message only.
  */
 
 interface BotSettingsExt {
@@ -235,34 +235,6 @@ export function AutoReplyView() {
                 />
                 <PreviewBubble th={th} persona={activePersona} />
               </SectionCard>
-
-              <MessageCard
-                icon="👋"
-                title={th ? 'ข้อความต้อนรับ' : 'Greeting'}
-                desc={th ? 'ส่งเมื่อลูกค้าทักครั้งแรก' : 'Sent on first contact'}
-                info={th
-                  ? 'ส่งให้ลูกค้าใหม่ที่ไม่เคยคุยกับร้านมาก่อน'
-                  : 'Sent to a customer who has not chatted with the shop before.'}
-                th={th}
-                value={settings.greetingMessage}
-                onChange={(v) => set('greetingMessage', v)}
-                placeholder={th ? 'สวัสดีค่ะ มีอะไรให้ช่วยไหมคะ 😊' : 'Hi! How can we help today? 😊'}
-                enabled={settings.greetingEnabled}
-                onToggle={(v) => set('greetingEnabled', v)}
-              />
-
-              <MessageCard
-                icon="🤔"
-                title={th ? 'ข้อความเมื่อบอทตอบไม่ได้' : 'When the bot can’t answer'}
-                desc={th ? 'ส่งเมื่อบอทไม่เข้าใจคำถาม' : "Sent when the bot can't answer"}
-                info={th
-                  ? 'ใช้เพื่อบอกลูกค้าว่ารอแอดมินสักครู่ ขณะที่ไม่มีใครออนไลน์'
-                  : 'Tells the customer to wait for a human when nobody is online.'}
-                th={th}
-                value={settings.fallbackMessage}
-                onChange={(v) => set('fallbackMessage', v)}
-                placeholder={th ? 'ขอโทษนะคะ จะเรียกแอดมินมาช่วยนะคะ 🙏' : 'Sorry — let me get a human to help 🙏'}
-              />
 
               <SectionCard
                 icon="🌙"
@@ -509,63 +481,6 @@ function PersonaPicker({
   );
 }
 
-// ─── Message card (greeting / fallback) ─────────────────────────────────────
-
-function MessageCard({
-  icon,
-  title,
-  desc,
-  info,
-  th,
-  value,
-  onChange,
-  placeholder,
-  enabled,
-  onToggle,
-}: {
-  icon: string;
-  title: string;
-  desc: string;
-  info?: string;
-  th: boolean;
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  enabled?: boolean;
-  onToggle?: (v: boolean) => void;
-}) {
-  const showToggle = typeof enabled === 'boolean' && typeof onToggle === 'function';
-  const disabled = showToggle && !enabled;
-
-  return (
-    <SectionCard
-      icon={icon}
-      title={title}
-      desc={desc}
-      info={info}
-      accessory={
-        showToggle ? (
-          <Switch checked={!!enabled} onChange={onToggle!} label={title} />
-        ) : undefined
-      }
-    >
-      {disabled ? (
-        <div className="rounded-xl bg-slate-50 px-4 py-3 text-xs text-slate-500 dark:bg-slate-800/40 dark:text-slate-400">
-          {th ? 'ปิดอยู่ — ไม่ส่งข้อความนี้' : 'Off — this message is not sent.'}
-        </div>
-      ) : (
-        <textarea
-          className="w-full resize-none rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-900 placeholder:text-slate-400 transition-colors duration-300 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:ring-brand-900/30"
-          rows={2}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={placeholder}
-        />
-      )}
-    </SectionCard>
-  );
-}
-
 // ─── InfoTooltip ────────────────────────────────────────────────────────────
 
 function InfoTooltip({ text }: { text: string }) {
@@ -676,7 +591,6 @@ function SkeletonView() {
           ))}
         </div>
       </SkeletonSection>
-      <SkeletonSection lines={4} />
       <SkeletonSection lines={4} />
     </>
   );
