@@ -1598,7 +1598,11 @@ function LineIntegrationCard(_props: { t: (k: string) => string }) {
   const [status, setStatus] = useState<LineIntegrationStatus | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [showForm, setShowForm] = useState(false);
+  /** Single disclosure that gates everything manual: webhook URL display,
+   *  the 4-step guide, and the Channel Secret + Access Token paste form.
+   *  Default closed so the page looks like a single "Connect with LINE"
+   *  button — no tokens, no copy/paste fields visible. */
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [showSteps, setShowSteps] = useState(false);
   const [secret, setSecret] = useState('');
   const [token, setToken] = useState('');
@@ -1668,7 +1672,7 @@ function LineIntegrationCard(_props: { t: (k: string) => string }) {
       setStatus(next);
       setSecret('');
       setToken('');
-      setShowForm(false);
+      setAdvancedOpen(false);
     } catch (e2) {
       setErr(String((e2 as Error).message || e2));
     } finally {
@@ -1694,10 +1698,14 @@ function LineIntegrationCard(_props: { t: (k: string) => string }) {
     : connected
       ? oa?.displayName ? `เชื่อมแล้ว · ${oa.displayName}${oa.basicId ? ` (@${oa.basicId})` : ''}`
       : `เชื่อมแล้ว · ${status.threadCount} ห้องแชท`
-    : partial ? 'ตั้งค่าบางส่วน — ใส่ Channel Access Token เพื่อให้ตอบกลับได้'
+    : partial ? 'ตั้งค่าบางส่วน — เปิดเมนู "ตั้งค่าขั้นสูง" เพื่อกรอกข้อมูลให้ครบ'
     : oauthAvailable
-      ? 'กด "เชื่อมต่อด้วย LINE" แล้วเลือก OA ของร้าน — ไม่ต้องคัดลอกโทเค็นเอง'
+      ? 'กดปุ่มแล้วเลือก OA ของร้าน ไม่ต้องคัดลอกอะไรเอง'
       : 'เชื่อม LINE Official Account ของร้านเพื่อตอบลูกค้าผ่าน LINE';
+
+  // Show the advanced disclosure only when the user is *not* connected via
+  // OAuth. OAuth-connected shops never need to see tokens or webhook URLs.
+  const showAdvancedToggle = !isOauthConnected;
 
   return (
     <div className="space-y-3">
@@ -1724,8 +1732,16 @@ function LineIntegrationCard(_props: { t: (k: string) => string }) {
         partial={partial}
         action={
           <div className="flex flex-wrap gap-2">
-            {/* Primary CTA — "Connect with LINE" when OAuth is set up, else the manual form toggle. */}
-            {!connected && oauthAvailable ? (
+            {connected ? (
+              <button
+                type="button"
+                onClick={onDisconnect}
+                disabled={busy}
+                className="rounded-full border border-rose-300 bg-white px-3 py-1.5 text-xs font-semibold text-rose-600 transition hover:bg-rose-50 disabled:opacity-50 dark:border-rose-700/60 dark:bg-slate-900 dark:text-rose-400 dark:hover:bg-rose-950/40"
+              >
+                ยกเลิกการเชื่อม
+              </button>
+            ) : oauthAvailable ? (
               <button
                 type="button"
                 onClick={() => connectLineOAuth()}
@@ -1736,156 +1752,149 @@ function LineIntegrationCard(_props: { t: (k: string) => string }) {
                 เชื่อมต่อด้วย LINE
               </button>
             ) : (
-              <button
-                type="button"
-                onClick={() => setShowForm((v) => !v)}
-                disabled={busy}
-                className={connected ? 'btn-secondary text-xs' : 'btn-primary text-xs'}
-              >
-                {connected ? 'แก้ไข' : 'เชื่อมต่อ'}
-              </button>
-            )}
-            {connected && (
-              <button
-                type="button"
-                onClick={onDisconnect}
-                disabled={busy}
-                className="rounded-full border border-rose-300 bg-white px-3 py-1.5 text-xs font-semibold text-rose-600 transition hover:bg-rose-50 disabled:opacity-50 dark:border-rose-700/60 dark:bg-slate-900 dark:text-rose-400 dark:hover:bg-rose-950/40"
-              >
-                ยกเลิกการเชื่อม
-              </button>
+              <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-4 py-1.5 text-xs font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                <I.Clock className="h-3.5 w-3.5" />
+                การเชื่อมต่ออัตโนมัติยังไม่พร้อม
+              </span>
             )}
           </div>
         }
       />
 
-      {/* "Advanced" link to manual paste form when OAuth is available but
-          the user wants to use their own token (e.g. dev/testing). */}
-      {!connected && oauthAvailable && !showForm && (
-        <button
-          type="button"
-          onClick={() => setShowForm(true)}
-          className="text-xs font-medium text-slate-500 underline-offset-2 hover:text-brand-600 hover:underline dark:text-slate-400 dark:hover:text-brand-400"
-        >
-          ผู้ใช้ขั้นสูง: ใส่ Channel Secret + Access Token เอง →
-        </button>
-      )}
-
       {isOauthConnected && (
         <p className="text-xs text-slate-500 dark:text-slate-400">
-          ✓ เชื่อมต่อผ่าน LINE Module Channel — webhook URL ตั้งให้อัตโนมัติแล้ว
+          ✓ เชื่อมต่อผ่าน LINE — webhook ตั้งให้อัตโนมัติแล้ว
         </p>
       )}
 
-      {/* Webhook URL + manual steps — hidden once OAuth has wired things up
-          for the user. They only need to see these when they're on the
-          manual paste path. */}
-      {status && !isOauthConnected && (
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-700 dark:bg-slate-900/60">
-          <div className="mb-1.5 font-semibold text-slate-600 dark:text-slate-300">Webhook URL (ใส่ในหน้า LINE Developers)</div>
-          <div className="flex items-center gap-2">
-            <code className="block min-w-0 flex-1 truncate rounded-lg bg-white px-2.5 py-1.5 font-mono text-[11px] text-slate-700 dark:bg-slate-950 dark:text-slate-200">
-              {status.webhookUrl}
-            </code>
-            <button
-              type="button"
-              onClick={() => void onCopy(status.webhookUrl)}
-              className="rounded-lg bg-slate-200 px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-              title="คัดลอก"
-            >
-              {copied ? '✓' : 'คัดลอก'}
-            </button>
-          </div>
+      {/* One disclosure gates everything technical: webhook URL display,
+          4-step guide, and the Channel Secret/Token paste form. Hidden by
+          default so the default UX is a single OAuth button. */}
+      {showAdvancedToggle && (
+        <div>
+          <button
+            type="button"
+            onClick={() => setAdvancedOpen((v) => !v)}
+            aria-expanded={advancedOpen}
+            className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-400 transition-colors hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+          >
+            <I.ChevronRight
+              className={'h-3 w-3 transition-transform duration-300 ' + (advancedOpen ? 'rotate-90' : '')}
+            />
+            ตั้งค่าขั้นสูง (สำหรับผู้ใช้ที่ต้องการตั้งค่าด้วยตัวเอง)
+          </button>
+
+          {advancedOpen && (
+            <div className="mt-3 space-y-3 rounded-2xl border border-slate-200 bg-slate-50/60 p-3 motion-safe:animate-[fadeUp_300ms_ease-out] dark:border-slate-700 dark:bg-slate-900/40">
+              <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+                เมนูนี้สำหรับกรณีที่คุณมี LINE Messaging API channel ของตัวเอง และต้องการกรอกข้อมูลด้วยตนเอง
+                ผู้ใช้ทั่วไปไม่จำเป็นต้องใช้ — รอให้ปุ่ม "เชื่อมต่อด้วย LINE" พร้อมใช้งานก็เพียงพอ
+              </p>
+
+              {/* Webhook URL */}
+              {status && (
+                <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs dark:border-slate-700 dark:bg-slate-900">
+                  <div className="mb-1.5 font-semibold text-slate-600 dark:text-slate-300">
+                    Webhook URL (ใส่ในหน้า LINE Developers)
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <code className="block min-w-0 flex-1 truncate rounded-lg bg-slate-50 px-2.5 py-1.5 font-mono text-[11px] text-slate-700 dark:bg-slate-950 dark:text-slate-200">
+                      {status.webhookUrl}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => void onCopy(status.webhookUrl)}
+                      className="rounded-lg bg-slate-200 px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                      title="คัดลอก"
+                    >
+                      {copied ? '✓' : 'คัดลอก'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* 4-step guide */}
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowSteps((v) => !v)}
+                  className="text-xs font-semibold text-brand-600 underline-offset-2 hover:underline dark:text-brand-400"
+                >
+                  {showSteps ? 'ซ่อนขั้นตอน' : 'ดูขั้นตอน 4 ขั้น →'}
+                </button>
+              </div>
+              {showSteps && (
+                <ol className="space-y-2 rounded-xl border border-slate-200 bg-white p-4 text-xs leading-relaxed text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+                  <li>
+                    <b>1.</b> เปิด{' '}
+                    <a
+                      href="https://developers.line.biz/console/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-semibold text-brand-600 hover:underline dark:text-brand-400"
+                    >
+                      LINE Developers Console
+                    </a>
+                    {' '}เลือก Provider ของร้าน แล้วกดสร้าง <b>Messaging API channel</b> ใหม่ (ถ้ายังไม่มี)
+                  </li>
+                  <li>
+                    <b>2.</b> ในแท็บ <b>Basic settings</b> คัดลอก <b>Channel secret</b> มาวางช่องด้านล่าง
+                  </li>
+                  <li>
+                    <b>3.</b> ในแท็บ <b>Messaging API</b> เลื่อนลงไปที่ Channel access token (long-lived) แล้วกด <b>Issue</b> → คัดลอกมาวางช่องด้านล่าง
+                  </li>
+                  <li>
+                    <b>4.</b> ในหน้าเดียวกัน ใส่ Webhook URL ด้านบนลงในช่อง <b>Webhook URL</b> และเปิด <b>Use webhook</b> ON
+                  </li>
+                  <li className="pt-1 text-slate-400 dark:text-slate-500">
+                    *แนะนำ: ปิด Auto-reply messages ของ LINE OA เพื่อให้ AI ของ Chatz ตอบแทน
+                  </li>
+                </ol>
+              )}
+
+              {/* Paste form */}
+              <form
+                onSubmit={onSave}
+                className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+              >
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                    Channel Secret
+                  </label>
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    value={secret}
+                    onChange={(e) => setSecret(e.target.value)}
+                    placeholder="ตัวเลข+ตัวอักษร 32 ตัว"
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 font-mono text-xs text-slate-700 outline-none focus:border-brand-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                    Channel Access Token (long-lived)
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={token}
+                    onChange={(e) => setToken(e.target.value)}
+                    placeholder="วาง access token จากแท็บ Messaging API ที่นี่"
+                    className="w-full resize-none rounded-xl border border-slate-300 bg-white px-3 py-2 font-mono text-[11px] leading-relaxed text-slate-700 outline-none focus:border-brand-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+                  />
+                </div>
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <button
+                    type="submit"
+                    disabled={busy || !secret.trim() || !token.trim()}
+                    className="btn-primary text-xs disabled:opacity-50"
+                  >
+                    {busy ? 'กำลังตรวจสอบ…' : 'บันทึกและเชื่อมต่อ'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
         </div>
-      )}
-
-      {/* Manual 4-step guide — only relevant for the paste path. */}
-      {!isOauthConnected && (
-        <button
-          type="button"
-          onClick={() => setShowSteps((v) => !v)}
-          className="text-xs font-semibold text-brand-600 underline-offset-2 hover:underline dark:text-brand-400"
-        >
-          {showSteps ? 'ซ่อนขั้นตอน' : 'ยังไม่รู้จะเริ่มยังไง? ดูขั้นตอน 4 ขั้น →'}
-        </button>
-      )}
-      {showSteps && (
-        <ol className="space-y-2 rounded-2xl border border-slate-200 bg-white p-4 text-xs leading-relaxed text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
-          <li>
-            <b>1.</b> เปิด{' '}
-            <a
-              href="https://developers.line.biz/console/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-semibold text-brand-600 hover:underline dark:text-brand-400"
-            >
-              LINE Developers Console
-            </a>
-            {' '}เลือก Provider ของร้าน แล้วกดสร้าง <b>Messaging API channel</b> ใหม่ (ถ้ายังไม่มี)
-          </li>
-          <li>
-            <b>2.</b> ในแท็บ <b>Basic settings</b> คัดลอก <b>Channel secret</b> มาวางช่องด้านล่าง
-          </li>
-          <li>
-            <b>3.</b> ในแท็บ <b>Messaging API</b> เลื่อนลงไปที่ Channel access token (long-lived) แล้วกด <b>Issue</b> → คัดลอกมาวางช่องด้านล่าง
-          </li>
-          <li>
-            <b>4.</b> ในหน้าเดียวกัน ใส่ Webhook URL ด้านบนลงในช่อง <b>Webhook URL</b> และเปิด <b>Use webhook</b> ON
-          </li>
-          <li className="pt-1 text-slate-400 dark:text-slate-500">
-            *แนะนำ: ปิด Auto-reply messages ของ LINE OA เพื่อให้ AI ของ Chatz ตอบแทน
-          </li>
-        </ol>
-      )}
-
-      {/* Paste form */}
-      {showForm && (
-        <form
-          onSubmit={onSave}
-          className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
-        >
-          <div>
-            <label className="mb-1.5 block text-xs font-semibold text-slate-700 dark:text-slate-200">
-              Channel Secret
-            </label>
-            <input
-              type="password"
-              autoComplete="off"
-              value={secret}
-              onChange={(e) => setSecret(e.target.value)}
-              placeholder="ตัวเลข+ตัวอักษร 32 ตัว"
-              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 font-mono text-xs text-slate-700 outline-none focus:border-brand-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
-            />
-          </div>
-          <div>
-            <label className="mb-1.5 block text-xs font-semibold text-slate-700 dark:text-slate-200">
-              Channel Access Token (long-lived)
-            </label>
-            <textarea
-              rows={3}
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder="วาง access token จากแท็บ Messaging API ที่นี่"
-              className="w-full resize-none rounded-xl border border-slate-300 bg-white px-3 py-2 font-mono text-[11px] leading-relaxed text-slate-700 outline-none focus:border-brand-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
-            />
-          </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => { setShowForm(false); setErr(null); }}
-              className="btn-secondary text-xs"
-            >
-              ยกเลิก
-            </button>
-            <button
-              type="submit"
-              disabled={busy || !secret.trim() || !token.trim()}
-              className="btn-primary text-xs disabled:opacity-50"
-            >
-              {busy ? 'กำลังตรวจสอบ…' : 'บันทึกและเชื่อมต่อ'}
-            </button>
-          </div>
-        </form>
       )}
 
       {err && (
