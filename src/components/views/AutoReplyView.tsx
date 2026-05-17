@@ -1,23 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppPreferences } from '../../context/AppPreferencesContext';
-import type { Locale } from '../../i18n/messages';
 import { I } from '../Icons';
 import { SkeletonBar, SkeletonCircle } from '../Skeleton';
 
 /**
- * Auto-reply settings — choice-first, smooth, keyboard-friendly.
+ * Auto-reply settings — persona picker + free-text messages.
  *
- * Design choices (2026-05):
- *   • Pick from preset bubbles, don't write copy from scratch.
- *   • One emoji per element class — persona avatar + section icon.
- *     No decorative sparkles on every chip.
- *   • Plain shop-owner Thai, not translation-y AI prose.
- *   • Animations 300–500ms ease-out — feel polished, never snappy.
- *   • Persona/preset pickers are radiogroups with full keyboard nav
- *     (Arrow / Home / End / Enter).
- *   • First-load shows a skeleton; saves surface as an undo-toast.
- *
- * Data shape (BotSettingsExt) unchanged — only the picking surface differs.
+ * Greeting, fallback, and away are plain text fields (no preset choices).
  */
 
 interface BotSettingsExt {
@@ -43,8 +32,6 @@ const DEFAULT_EXT: BotSettingsExt = {
   awayEnd: '07:00',
   quickReplies: [],
 };
-
-// ─── Preset libraries ───────────────────────────────────────────────────────
 
 const PERSONAS = [
   {
@@ -83,39 +70,6 @@ const PERSONAS = [
     sample_en: 'Dear customer, our shop welcomes your inquiry.',
     tint: 'from-slate-50 to-zinc-50 dark:from-slate-900/40 dark:to-zinc-900/40',
   },
-];
-
-// Preset chips. No decorative emoji prefix — the message text itself carries
-// the personality (and may include emoji that a shop owner would actually type).
-const GREETING_PRESETS = [
-  { th: 'สวัสดีค่ะ มีอะไรให้ช่วยไหมคะ 😊', en: 'Hi! How can we help today? 😊' },
-  { th: 'หวัดดีจ้า~ ดูสินค้าตัวไหนอยู่คะ', en: "Hey~ which item caught your eye?" },
-  { th: 'ขอบคุณที่ทักร้านเรานะคะ สอบถามได้เลยค่ะ', en: 'Thanks for messaging us! Ask anything.' },
-  { th: 'สวัสดีค่ะ ร้านเปิดอยู่ค่ะ ทักได้เลยนะคะ', en: "Hi! We're open — message away." },
-];
-
-const FALLBACK_PRESETS = [
-  { th: 'ขอโทษนะคะ จะเรียกแอดมินมาช่วยนะคะ', en: 'Sorry — let me get a human to help.' },
-  { th: 'อันนี้ขอเช็คให้สักครู่นะคะ', en: 'One moment, let me check on this.' },
-  { th: 'รอแอดมินสักครู่นะคะ จะรีบตอบให้ค่ะ', en: "Hold on — admin will reply shortly." },
-  { th: 'ขอบคุณค่ะ มีคนช่วยตอบให้ในไม่ช้านะคะ', en: 'Thanks! Someone will reply soon.' },
-];
-
-const AWAY_PRESETS = [
-  { th: 'ตอนนี้ปิดร้านแล้วค่ะ จะรีบตอบในเช้าวันถัดไปนะคะ', en: "We're closed — we'll reply first thing tomorrow." },
-  { th: 'นอกเวลาทำการค่ะ พรุ่งนี้เช้าจะตอบกลับนะคะ', en: 'Outside hours — reply tomorrow morning.' },
-  { th: 'ร้านพักผ่อนอยู่ค่ะ จะกลับมาเช้านะคะ', en: 'Shop is resting — back in the morning.' },
-];
-
-const QUICK_REPLY_SUGGESTIONS = [
-  { th: 'ราคา 250 บาทค่ะ', en: "It's 250 THB" },
-  { th: 'ส่งฟรี EMS เมื่อซื้อครบ 2 ชิ้น', en: 'Free EMS on 2+ items' },
-  { th: 'มีของพร้อมส่งค่ะ', en: 'In stock, ready to ship' },
-  { th: 'ส่งของวันนี้ก่อน 16:00 ค่ะ', en: 'Ship today before 4pm' },
-  { th: 'สอบถามไซส์ได้นะคะ', en: 'Ask me about sizing' },
-  { th: 'รบกวนส่งหลักฐานการโอนด้วยนะคะ', en: 'Please send the payment slip' },
-  { th: 'ขอเลขที่อยู่จัดส่งด้วยนะคะ', en: 'Could you share the shipping address?' },
-  { th: 'ขอบคุณที่อุดหนุนนะคะ', en: 'Thank you for your order!' },
 ];
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -282,7 +236,7 @@ export function AutoReplyView() {
                 <PreviewBubble th={th} persona={activePersona} />
               </SectionCard>
 
-              <PresetMessageCard
+              <MessageCard
                 icon="👋"
                 title={th ? 'ข้อความต้อนรับ' : 'Greeting'}
                 desc={th ? 'ส่งเมื่อลูกค้าทักครั้งแรก' : 'Sent on first contact'}
@@ -290,14 +244,14 @@ export function AutoReplyView() {
                   ? 'ส่งให้ลูกค้าใหม่ที่ไม่เคยคุยกับร้านมาก่อน'
                   : 'Sent to a customer who has not chatted with the shop before.'}
                 th={th}
-                presets={GREETING_PRESETS}
                 value={settings.greetingMessage}
                 onChange={(v) => set('greetingMessage', v)}
+                placeholder={th ? 'สวัสดีค่ะ มีอะไรให้ช่วยไหมคะ 😊' : 'Hi! How can we help today? 😊'}
                 enabled={settings.greetingEnabled}
                 onToggle={(v) => set('greetingEnabled', v)}
               />
 
-              <PresetMessageCard
+              <MessageCard
                 icon="🤔"
                 title={th ? 'ข้อความเมื่อบอทตอบไม่ได้' : 'When the bot can’t answer'}
                 desc={th ? 'ส่งเมื่อบอทไม่เข้าใจคำถาม' : "Sent when the bot can't answer"}
@@ -305,9 +259,9 @@ export function AutoReplyView() {
                   ? 'ใช้เพื่อบอกลูกค้าว่ารอแอดมินสักครู่ ขณะที่ไม่มีใครออนไลน์'
                   : 'Tells the customer to wait for a human when nobody is online.'}
                 th={th}
-                presets={FALLBACK_PRESETS}
                 value={settings.fallbackMessage}
                 onChange={(v) => set('fallbackMessage', v)}
+                placeholder={th ? 'ขอโทษนะคะ จะเรียกแอดมินมาช่วยนะคะ 🙏' : 'Sorry — let me get a human to help 🙏'}
               />
 
               <SectionCard
@@ -343,21 +297,17 @@ export function AutoReplyView() {
                         onChange={(v) => set('awayStart', v)}
                       />
                     </div>
-                    <PresetGrid
+                    <MessageField
                       th={th}
-                      presets={AWAY_PRESETS}
                       value={settings.awayMessage}
                       onChange={(v) => set('awayMessage', v)}
+                      placeholder={th
+                        ? 'ตอนนี้ปิดร้านแล้วค่ะ จะรีบตอบในเช้าวันถัดไปนะคะ 🌙'
+                        : "We're closed — we'll reply first thing tomorrow 🌙"}
                     />
                   </div>
                 )}
               </SectionCard>
-
-              <QuickRepliesCard
-                value={settings.quickReplies}
-                onChange={(v) => set('quickReplies', v)}
-                locale={locale}
-              />
             </>
           )}
         </div>
@@ -440,6 +390,28 @@ function Switch({
         }
       />
     </button>
+  );
+}
+
+function MessageField({
+  th,
+  value,
+  onChange,
+  placeholder,
+}: {
+  th: boolean;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+}) {
+  return (
+    <textarea
+      className="w-full resize-none rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-900 placeholder:text-slate-400 transition-colors duration-300 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:ring-brand-900/30"
+      rows={2}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+    />
   );
 }
 
@@ -537,17 +509,17 @@ function PersonaPicker({
   );
 }
 
-// ─── Preset message card (greeting / fallback) ───────────────────────────────
+// ─── Message card (greeting / fallback) ─────────────────────────────────────
 
-function PresetMessageCard({
+function MessageCard({
   icon,
   title,
   desc,
   info,
   th,
-  presets,
   value,
   onChange,
+  placeholder,
   enabled,
   onToggle,
 }: {
@@ -556,9 +528,9 @@ function PresetMessageCard({
   desc: string;
   info?: string;
   th: boolean;
-  presets: { th: string; en: string }[];
   value: string;
   onChange: (v: string) => void;
+  placeholder?: string;
   enabled?: boolean;
   onToggle?: (v: boolean) => void;
 }) {
@@ -582,226 +554,14 @@ function PresetMessageCard({
           {th ? 'ปิดอยู่ — ไม่ส่งข้อความนี้' : 'Off — this message is not sent.'}
         </div>
       ) : (
-        <PresetGrid th={th} presets={presets} value={value} onChange={onChange} />
+        <textarea
+          className="w-full resize-none rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-900 placeholder:text-slate-400 transition-colors duration-300 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-brand-500 dark:focus:ring-brand-900/30"
+          rows={2}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+        />
       )}
-    </SectionCard>
-  );
-}
-
-function PresetGrid({
-  th,
-  presets,
-  value,
-  onChange,
-}: {
-  th: boolean;
-  presets: { th: string; en: string }[];
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  const texts = useMemo(() => presets.map((p) => (th ? p.th : p.en)), [presets, th]);
-  const matchedIndex = texts.indexOf(value);
-  const initialCustom = !!value && matchedIndex === -1;
-  const [customOpen, setCustomOpen] = useState(initialCustom);
-
-  // For the radiogroup, treat each preset index as the id.
-  const ids = useMemo(() => texts.map((_, i) => String(i)), [texts]);
-  const activeId = matchedIndex === -1 ? ids[0] : ids[matchedIndex];
-  const { ref, handleKeyDown } = useRovingFocus(ids, activeId, (id) => {
-    onChange(texts[Number(id)]);
-    setCustomOpen(false);
-  });
-
-  return (
-    <div className="space-y-2.5">
-      <div
-        ref={ref}
-        role="radiogroup"
-        aria-label={th ? 'ตัวเลือกข้อความ' : 'Message presets'}
-        onKeyDown={handleKeyDown}
-        className="grid gap-2"
-      >
-        {texts.map((text, i) => {
-          const active = value === text;
-          return (
-            <button
-              key={i}
-              type="button"
-              role="radio"
-              aria-checked={active}
-              tabIndex={active || (matchedIndex === -1 && i === 0) ? 0 : -1}
-              data-roving-id={String(i)}
-              onClick={() => {
-                onChange(text);
-                setCustomOpen(false);
-              }}
-              className={
-                'group flex items-center gap-3 rounded-xl border px-3.5 py-2.5 text-left text-[13px] transition-all duration-300 ease-out focus-visible:ring-2 focus-visible:ring-brand-300 focus-visible:ring-offset-1 dark:focus-visible:ring-offset-slate-950 ' +
-                (active
-                  ? 'border-brand-400 bg-gradient-to-r from-brand-50 to-pink-50 text-brand-900 shadow-sm ring-1 ring-brand-200 dark:from-brand-950/40 dark:to-pink-950/30 dark:text-brand-100 dark:ring-brand-800'
-                  : 'border-slate-200 bg-white text-slate-700 hover:border-brand-200 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800/60')
-              }
-            >
-              <span className="flex-1">{text}</span>
-              {active && (
-                <span className="grid h-5 w-5 place-items-center rounded-full bg-brand-500 text-white shadow-sm motion-safe:animate-[fadeIn_300ms_ease-out]">
-                  <I.Check className="h-3 w-3" />
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      {!customOpen ? (
-        <button
-          type="button"
-          onClick={() => setCustomOpen(true)}
-          className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-medium text-slate-500 transition-colors duration-300 hover:text-brand-600 dark:text-slate-400 dark:hover:text-brand-400"
-        >
-          <I.Pencil className="h-3 w-3" />
-          {th ? 'เขียนเอง' : 'Write my own'}
-        </button>
-      ) : (
-        <div className="space-y-1.5 rounded-xl border border-dashed border-brand-200 bg-brand-50/40 p-3 motion-safe:animate-[fadeUp_300ms_ease-out] dark:border-brand-800 dark:bg-brand-950/20">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-medium text-brand-700 dark:text-brand-300">
-              {th ? 'ข้อความของฉัน' : 'My text'}
-            </span>
-            <button
-              type="button"
-              onClick={() => setCustomOpen(false)}
-              className="text-[11px] text-slate-500 transition-colors hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
-            >
-              {th ? 'ยกเลิก' : 'cancel'}
-            </button>
-          </div>
-          <textarea
-            autoFocus
-            className="w-full resize-none rounded-lg border border-slate-200 bg-white p-2.5 text-sm text-slate-900 placeholder:text-slate-400 transition-colors duration-300 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-            rows={2}
-            value={matchedIndex !== -1 ? '' : value}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder={th ? 'พิมพ์ข้อความของคุณ' : 'Type your message'}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Quick replies ──────────────────────────────────────────────────────────
-
-function QuickRepliesCard({
-  value,
-  onChange,
-  locale,
-}: {
-  value: string[];
-  onChange: (next: string[]) => void;
-  locale: Locale;
-}) {
-  const th = locale === 'th';
-  const [draft, setDraft] = useState('');
-
-  const add = (raw: string) => {
-    const text = raw.trim();
-    if (!text || value.includes(text)) return;
-    onChange([...value, text].slice(0, 30));
-  };
-
-  const addDraft = () => {
-    add(draft);
-    setDraft('');
-  };
-
-  const remove = (idx: number) => {
-    onChange(value.filter((_, i) => i !== idx));
-  };
-
-  const suggestions = QUICK_REPLY_SUGGESTIONS
-    .map((s) => (th ? s.th : s.en))
-    .filter((s) => !value.includes(s));
-
-  return (
-    <SectionCard
-      icon="⚡"
-      title={th ? 'คำตอบสำเร็จรูป' : 'Quick replies'}
-      desc={th
-        ? 'ปุ่มสำหรับแอดมินใช้ตอบเร็ว (สูงสุด 30)'
-        : 'Tap-to-send chips for the admin inbox (max 30)'}
-      info={th
-        ? 'แอดมินจะเห็นปุ่มเหล่านี้ในกล่องข้อความ กดเพื่อส่งทันที ไม่ต้องพิมพ์ซ้ำ'
-        : 'These chips appear in the inbox composer — tap to send instantly.'}
-    >
-      <div className="space-y-3.5">
-        {value.length > 0 && (
-          <ul className="flex flex-wrap gap-1.5">
-            {value.map((q, i) => (
-              <li
-                key={`${q}-${i}`}
-                className="inline-flex items-center gap-1 rounded-full border border-brand-200 bg-gradient-to-r from-brand-50 to-pink-50 py-1 pl-3 pr-1 text-[13px] text-brand-800 shadow-sm transition-all duration-300 motion-safe:animate-[fadeUp_300ms_ease-out] dark:border-brand-800 dark:from-brand-950/40 dark:to-pink-950/30 dark:text-brand-100"
-              >
-                <span className="max-w-[260px] truncate">{q}</span>
-                <button
-                  type="button"
-                  onClick={() => remove(i)}
-                  className="grid h-5 w-5 place-items-center rounded-full text-brand-500 transition-colors duration-300 hover:bg-rose-100 hover:text-rose-600 dark:text-brand-300 dark:hover:bg-rose-950/40 dark:hover:text-rose-300"
-                  aria-label={th ? 'ลบ' : 'Remove'}
-                >
-                  <I.X className="h-3 w-3" />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-
-        {suggestions.length > 0 && value.length < 30 && (
-          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-3 transition-colors duration-500 dark:border-slate-700 dark:bg-slate-800/30">
-            <div className="mb-2 text-[11px] font-medium text-slate-500 dark:text-slate-400">
-              {th ? 'แตะเพื่อเพิ่ม' : 'Tap to add'}
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {suggestions.map((s, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  onClick={() => add(s)}
-                  className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[12px] text-slate-600 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-brand-300 hover:text-brand-700 hover:shadow-sm focus-visible:ring-2 focus-visible:ring-brand-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-brand-700 dark:hover:text-brand-200"
-                >
-                  <I.Plus className="h-3 w-3" />
-                  <span>{s}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                addDraft();
-              }
-            }}
-            placeholder={th ? 'พิมพ์เองแล้วกด Enter' : 'Type your own, press Enter'}
-            className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 transition-colors duration-300 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-          />
-          <button
-            type="button"
-            onClick={addDraft}
-            disabled={!draft.trim() || value.length >= 30}
-            className="inline-flex items-center gap-1 rounded-xl bg-gradient-to-r from-brand-500 to-pink-500 px-3.5 text-sm font-medium text-white shadow-sm transition-all duration-300 ease-out hover:shadow-md active:scale-[0.98] disabled:opacity-40 disabled:hover:shadow-sm"
-          >
-            <I.Plus className="h-3.5 w-3.5" />
-            {th ? 'เพิ่ม' : 'Add'}
-          </button>
-        </div>
-      </div>
     </SectionCard>
   );
 }
@@ -918,7 +678,6 @@ function SkeletonView() {
       </SkeletonSection>
       <SkeletonSection lines={4} />
       <SkeletonSection lines={4} />
-      <SkeletonSection lines={3} />
     </>
   );
 }
