@@ -66,6 +66,51 @@ export function pathToView(pathname: string): View {
  * preserved across the navigation so feature-specific handlers (AuthContext,
  * LoginView, Settings) still see them.
  */
+/**
+ * Pre-auth routing. Login / register / reset all live at distinct URLs so
+ * the user (and the browser) can bookmark or navigate between them. Once
+ * the user is logged in this hook is irrelevant — the main `useViewRoute`
+ * takes over.
+ *
+ * We keep this separate from `useViewRoute` because the View union is for
+ * post-auth screens only; mixing auth screens into it would force every
+ * authenticated route check to handle "what if the view is 'login'?"
+ */
+export type AuthRoute = 'login' | 'register';
+
+export function pathToAuthRoute(pathname: string): AuthRoute {
+  const p = pathname !== '/' && pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
+  if (p === '/register' || p === '/signup') return 'register';
+  return 'login';
+}
+
+export function authRouteToPath(route: AuthRoute): string {
+  return route === 'register' ? '/register' : '/login';
+}
+
+export function useAuthRoute(): [AuthRoute, (next: AuthRoute) => void] {
+  const [route, setRouteState] = useState<AuthRoute>(() =>
+    typeof window === 'undefined' ? 'login' : pathToAuthRoute(window.location.pathname),
+  );
+
+  useEffect(() => {
+    const onPop = () => setRouteState(pathToAuthRoute(window.location.pathname));
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  const setRoute = (next: AuthRoute) => {
+    setRouteState(next);
+    const target = authRouteToPath(next);
+    const url = new URL(window.location.href);
+    if (url.pathname !== target) {
+      window.history.pushState({}, '', target + (url.search || '') + url.hash);
+    }
+  };
+
+  return [route, setRoute];
+}
+
 export function useViewRoute(): [View, (next: View) => void] {
   const [view, setViewState] = useState<View>(() =>
     typeof window === 'undefined' ? 'inbox' : pathToView(window.location.pathname),

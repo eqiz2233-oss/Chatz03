@@ -43,7 +43,7 @@ interface GoogleAccountsId {
   prompt: (listener?: (notification: { isNotDisplayed: () => boolean; isSkippedMoment: () => boolean; getNotDisplayedReason: () => string }) => void) => void;
   renderButton: (
     parent: HTMLElement,
-    options: { theme?: 'outline' | 'filled_blue' | 'filled_black'; size?: 'large' | 'medium' | 'small'; width?: number | string; text?: 'signin_with' | 'signup_with' | 'continue_with'; shape?: 'rectangular' | 'pill'; logo_alignment?: 'left' | 'center'; locale?: string },
+    options: { type?: 'standard' | 'icon'; theme?: 'outline' | 'filled_blue' | 'filled_black'; size?: 'large' | 'medium' | 'small'; width?: number | string; text?: 'signin_with' | 'signup_with' | 'continue_with'; shape?: 'rectangular' | 'pill' | 'circle' | 'square'; logo_alignment?: 'left' | 'center'; locale?: string },
   ) => void;
   disableAutoSelect: () => void;
 }
@@ -83,11 +83,18 @@ export async function renderGoogleButton({
   clientId,
   onCredential,
   width = 320,
+  variant = 'standard',
 }: {
   container: HTMLElement;
   clientId: string;
   onCredential: (credential: string) => void;
   width?: number;
+  /**
+   * 'standard' = full-width "Continue with Google" pill (the default,
+   * Google's recommended). 'icon' = square 40×40 G-logo chip used in
+   * the auth-shell OAuth row.
+   */
+  variant?: 'standard' | 'icon';
 }): Promise<{ ok: true } | { ok: false; reason: string }> {
   const gsi = await awaitGoogle();
   if (!gsi) return { ok: false, reason: 'gsi_not_loaded' };
@@ -100,14 +107,23 @@ export async function renderGoogleButton({
       cancel_on_tap_outside: true,
       use_fedcm_for_prompt: true,
     });
-    gsi.renderButton(container, {
-      theme: 'outline',
-      size: 'large',
-      width,
-      text: 'continue_with',
-      shape: 'rectangular',
-      logo_alignment: 'left',
-    });
+    if (variant === 'icon') {
+      gsi.renderButton(container, {
+        type: 'icon',
+        theme: 'outline',
+        size: 'large',
+        shape: 'square',
+      });
+    } else {
+      gsi.renderButton(container, {
+        theme: 'outline',
+        size: 'large',
+        width,
+        text: 'continue_with',
+        shape: 'rectangular',
+        logo_alignment: 'left',
+      });
+    }
     return { ok: true };
   } catch (e) {
     return { ok: false, reason: String((e as Error)?.message || e) };

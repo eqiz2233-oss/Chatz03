@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { InboxView } from './components/inbox/InboxView';
 import { OrdersView } from './components/views/OrdersView';
@@ -8,8 +8,9 @@ import { AutoReplyView } from './components/views/AutoReplyView';
 import { AnalyticsView } from './components/views/AnalyticsView';
 import { SettingsView } from './components/views/SettingsView';
 import { LoginView } from './components/views/LoginView';
+import { RegisterView } from './components/views/RegisterView';
 import { useAuth } from './context/AuthContext';
-import { useViewRoute } from './lib/router';
+import { useAuthRoute, useViewRoute } from './lib/router';
 import type { InboxFocusRequest } from './types';
 
 export default function App() {
@@ -17,9 +18,22 @@ export default function App() {
   // View ↔ URL is now bound — sidebar clicks push history, browser back/
   // forward work, and bookmarking /orders lands the user on Orders.
   const [view, setView] = useViewRoute();
+  // Pre-auth: /login vs /register. Ignored once `user` is truthy.
+  const [authRoute] = useAuthRoute();
   const [inboxFocus, setInboxFocus] = useState<InboxFocusRequest | null>(null);
 
   const clearInboxFocus = useCallback(() => setInboxFocus(null), []);
+
+  // After auth succeeds, drop the user on /inbox if they're still sitting
+  // on an auth URL — keeps the address bar honest and means the next
+  // sidebar click doesn't try to "navigate" from /login to /orders.
+  useEffect(() => {
+    if (!user) return;
+    const p = window.location.pathname;
+    if (p === '/login' || p === '/register' || p === '/signup') {
+      window.history.replaceState({}, '', '/inbox' + window.location.search + window.location.hash);
+    }
+  }, [user]);
 
   if (loading) {
     return (
@@ -33,6 +47,11 @@ export default function App() {
   }
 
   if (!user) {
+    // ?reset=<token> always belongs to the login screen — the password
+    // reset email points users there, and RegisterView has no place to
+    // handle the token.
+    const hasResetToken = new URLSearchParams(window.location.search).has('reset');
+    if (authRoute === 'register' && !hasResetToken) return <RegisterView />;
     return <LoginView />;
   }
 
