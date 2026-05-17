@@ -115,6 +115,18 @@ function persistProducts(list: Product[]) {
   }
 }
 
+function loadProducts(): Product[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(PRODUCTS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as Product[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 function parseValuesInput(raw: string): string[] {
   return raw
     .split(/[,，、\s]+/)
@@ -332,7 +344,8 @@ function formatOptionSummary(groups: ProductOptionGroup[]): string {
 type ShopMode = 'shop' | 'templates';
 
 export function ShopBrainView() {
-  const [products, setProducts] = useState<Product[]>([]);
+  const [products, setProducts] = useState<Product[]>(loadProducts);
+  const [saveHint, setSaveHint] = useState<string | null>(null);
   const [mode, setMode] = useState<ShopMode>('shop');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(BLANK);
@@ -405,7 +418,14 @@ export function ShopBrainView() {
 
   const handleSave = () => {
     const body = buildProductBody(form);
-    if (!body) return;
+    if (!body) {
+      setSaveHint('กรุณากรอกชื่อสินค้าและราคา');
+      return;
+    }
+    if (!Number.isFinite(body.price) || body.price <= 0) {
+      setSaveHint('ราคาต้องมากกว่า 0');
+      return;
+    }
 
     if (editingId) {
       let updated: Product | null = null;
@@ -422,8 +442,12 @@ export function ShopBrainView() {
         }),
       );
       if (updated) void syncProductToServer(updated);
+      setSaveHint('บันทึกการแก้ไขแล้ว');
     } else {
-      if (products.length >= SHOP_PRODUCT_SLOT_LIMIT) return;
+      if (products.length >= SHOP_PRODUCT_SLOT_LIMIT) {
+        setSaveHint(`เพิ่มได้สูงสุด ${SHOP_PRODUCT_SLOT_LIMIT} ชิ้น`);
+        return;
+      }
       const fresh: Product = {
         ...body,
         id: 'p' + Date.now(),
@@ -432,8 +456,10 @@ export function ShopBrainView() {
       };
       setProducts((prev) => [...prev, fresh]);
       void syncProductToServer(fresh);
+      setSaveHint('เพิ่มสินค้าแล้ว');
     }
     resetForm();
+    window.setTimeout(() => setSaveHint(null), 2500);
   };
 
   const openEdit = (p: Product) => {
@@ -499,11 +525,21 @@ export function ShopBrainView() {
         </button>
       </header>
 
-      {/* 2-pane split */}
-      <div className="flex min-h-0 flex-1 flex-col gap-5 px-6 py-5 lg:flex-row lg:gap-6 lg:px-8 lg:py-6">
+      {saveHint && (
+        <div className="shrink-0 border-b border-emerald-200 bg-emerald-50 px-6 py-2 text-center text-sm font-medium text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-200">
+          {saveHint}
+        </div>
+      )}
+
+      {/* 2-pane: ซ้ายรายการ · ขวาฟอร์ม (ไม่สลับหน้า) */}
+      <div className="flex min-h-0 flex-1 flex-row overflow-hidden">
         {/* LEFT — product list */}
-        <aside className="flex w-full shrink-0 flex-col gap-3 lg:w-[340px] xl:w-[360px]">
-          <div className="flex items-center gap-2">
+        <aside className="flex min-h-0 w-[min(100%,300px)] shrink-0 flex-col border-r border-slate-200 bg-[#f4f3f8] dark:border-slate-800 dark:bg-slate-950 sm:w-[300px] lg:w-[340px]">
+          <div className="shrink-0 border-b border-slate-200/80 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              รายการสินค้า
+            </div>
+            <div className="flex items-center gap-2">
             <div className="relative flex-1">
               <I.Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
@@ -523,9 +559,15 @@ export function ShopBrainView() {
             >
               <I.Plus className="h-4 w-4" />
             </button>
+            </div>
           </div>
 
-          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-0.5">
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+            {editingId === null && (
+              <div className="rounded-xl border-2 border-brand-500 bg-brand-50/80 px-3 py-2.5 text-sm font-medium text-brand-800 dark:border-brand-400 dark:bg-brand-950/50 dark:text-brand-200">
+                + เพิ่มสินค้าใหม่
+              </div>
+            )}
             {filteredProducts.length === 0 ? (
               <div className="grid h-full min-h-[200px] place-items-center rounded-2xl border border-dashed border-slate-200 bg-white/60 p-6 text-center dark:border-slate-700 dark:bg-slate-900/60">
                 <div>
@@ -536,7 +578,7 @@ export function ShopBrainView() {
                   {!search && (
                     <>
                       <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
-                        เพิ่มสินค้าชิ้นแรกที่ฟอร์มทางขวา หรือโหลดตัวอย่างเพื่อดู mockup
+                        กรอกฟอร์มด้านขวาแล้วกดบันทึก หรือโหลดตัวอย่าง
                       </p>
                       <button
                         type="button"
@@ -777,10 +819,8 @@ function AddForm({
 
   const addOptionRow = () => setForm((f) => ({ ...f, optionGroups: [...f.optionGroups, emptyOptionRow()] }));
 
-  const hasValidCore =
-    form.name.trim() &&
-    form.price &&
-    form.optionGroups.some((g) => g.label.trim() && parseValuesInput(g.valuesInput).length > 0);
+  const priceNum = Number(form.price);
+  const hasValidCore = Boolean(form.name.trim() && form.price && Number.isFinite(priceNum) && priceNum > 0);
 
   const hasAnyContent =
     form.name.trim() ||

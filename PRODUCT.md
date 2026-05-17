@@ -23,6 +23,8 @@ Main competitors:
 - Zaapi
 - zwiz.ai
 - LINE OA tools
+- Facebook messenger
+- Line 
 
 ## Personality / Brand Tone
 - Friendly, approachable
