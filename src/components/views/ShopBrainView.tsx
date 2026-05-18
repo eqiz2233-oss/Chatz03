@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { I } from '../Icons';
+import { compressImage } from '../../lib/imageCompress';
 
 export interface ProductOptionGroup {
   label: string;
@@ -318,8 +319,13 @@ const PRODUCT_IMAGE_EXTENSIONS = new Set([
   'svg',
 ]);
 
-const PRODUCT_IMAGE_MAX_BYTES = 50 * 1024 * 1024;
-const PRODUCT_IMAGE_MAX_MB = 50;
+// Reject anything above 15 MB outright — that's the *upload* limit. After
+// the file passes this check we still client-side compress to JPEG ≤ 1600px
+// so the value stored in the DB is typically 50–250 KB regardless of the
+// original size. The cap is generous enough for modern phone photos and
+// strict enough that a single malicious upload can't OOM the page.
+const PRODUCT_IMAGE_MAX_BYTES = 15 * 1024 * 1024;
+const PRODUCT_IMAGE_MAX_MB = 15;
 
 function productImageFileExtension(name: string): string {
   const base = name.split(/[/\\]/).pop() ?? name;
@@ -766,7 +772,9 @@ function AddForm({
     setPreviewOk(true);
   }, [form.imageUrl]);
 
-  const applyImageFile = (file: File | undefined) => {
+  const [compressing, setCompressing] = useState(false);
+
+  const applyImageFile = async (file: File | undefined) => {
     if (!file) return;
     if (!isAcceptedProductImageFile(file)) {
       setImageError('รองรับเฉพาะไฟล์รูป (เช่น JPEG, PNG, WebP, GIF, HEIC, AVIF, SVG …)');
@@ -777,15 +785,17 @@ function AddForm({
       return;
     }
     setImageError(null);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result;
-      if (typeof result === 'string') {
-        setForm((f) => ({ ...f, imageUrl: result }));
-      }
-    };
-    reader.onerror = () => setImageError('อ่านไฟล์ไม่สำเร็จ');
-    reader.readAsDataURL(file);
+    setCompressing(true);
+    try {
+      // Resize + JPEG-compress before storing. A 6 MB phone photo typically
+      // ends up ~120 KB after this — saves DB rows and page-load bandwidth.
+      const out = await compressImage(file);
+      setForm((f) => ({ ...f, imageUrl: out.dataUrl }));
+    } catch {
+      setImageError('อ่านไฟล์ไม่สำเร็จ');
+    } finally {
+      setCompressing(false);
+    }
   };
 
   const [saveTplOpen, setSaveTplOpen] = useState(false);
@@ -852,7 +862,7 @@ function AddForm({
       accept="image/*"
       className="sr-only"
       onChange={(e) => {
-        applyImageFile(e.target.files?.[0]);
+        void applyImageFile(e.target.files?.[0]);
         e.target.value = '';
       }}
     />
@@ -922,11 +932,16 @@ function AddForm({
                 onDrop={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  applyImageFile(e.dataTransfer.files?.[0]);
+                  void applyImageFile(e.dataTransfer.files?.[0]);
                 }}
                 className="flex aspect-square w-full cursor-pointer items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/60 text-slate-400 transition-all duration-500 ease-out hover:border-brand-300 hover:bg-gradient-to-br hover:from-brand-50/50 hover:to-pink-50/40 hover:text-brand-600 hover:shadow-[0_0_0_4px_rgba(139,92,246,0.08)] dark:border-slate-700 dark:bg-slate-800/40 dark:hover:border-brand-500 dark:hover:from-brand-950/30 dark:hover:to-pink-950/20 dark:hover:text-brand-300"
               >
-                {form.imageUrl ? (
+                {compressing ? (
+                  <div className="flex flex-col items-center gap-2 px-3 text-center text-brand-600 dark:text-brand-400">
+                    <span className="h-6 w-6 animate-spin rounded-full border-2 border-brand-200 border-t-brand-500 dark:border-brand-900 dark:border-t-brand-400" aria-hidden />
+                    <span className="text-xs font-medium">กำลังบีบอัดรูป…</span>
+                  </div>
+                ) : form.imageUrl ? (
                   previewOk ? (
                     <img
                       src={form.imageUrl}

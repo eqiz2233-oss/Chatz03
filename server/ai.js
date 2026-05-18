@@ -42,6 +42,40 @@ export function aiModel() {
   return MODEL;
 }
 
+/**
+ * Last error observed when calling Anthropic. Surfaced via /api/ai/health
+ * so the Settings page can show a red "AI offline" badge instead of
+ * silently failing every customer reply.
+ */
+let lastError = null;       // { code: string, message: string, at: string } | null
+let lastSuccessAt = null;   // ISO string or null
+let totalCalls = 0;
+let totalFailures = 0;
+
+export function aiHealth() {
+  return {
+    enabled: Boolean(client),
+    model: client ? MODEL : null,
+    hasApiKey: Boolean(apiKey),
+    lastError,
+    lastSuccessAt,
+    totalCalls,
+    totalFailures,
+  };
+}
+
+function recordSuccess() {
+  totalCalls += 1;
+  lastSuccessAt = new Date().toISOString();
+  lastError = null;
+}
+
+function recordFailure(code, message) {
+  totalCalls += 1;
+  totalFailures += 1;
+  lastError = { code, message, at: new Date().toISOString() };
+}
+
 // ---------------------------------------------------------------------------
 // Prompt construction
 // ---------------------------------------------------------------------------
@@ -243,21 +277,30 @@ export async function generateReply(params) {
     for (const block of response.content) {
       if (block.type === 'text' && block.text) {
         const txt = block.text.trim();
-        if (txt) return txt;
+        if (txt) {
+          recordSuccess();
+          return txt;
+        }
       }
     }
+    recordSuccess(); // call succeeded, just no text — not a failure
     return null;
   } catch (e) {
     // Common: AuthenticationError (bad key), RateLimitError. Don't crash the
     // webhook; log and stay silent so the human can take over.
+    const message = String(e?.message || e);
     if (e instanceof Anthropic.RateLimitError) {
       console.warn('[ai] rate limited — staying silent');
+      recordFailure('rate_limited', message);
     } else if (e instanceof Anthropic.AuthenticationError) {
       console.error('[ai] invalid ANTHROPIC_API_KEY');
+      recordFailure('invalid_api_key', message);
     } else if (e instanceof Anthropic.BadRequestError) {
-      console.error('[ai] bad request:', e?.message || e);
+      console.error('[ai] bad request:', message);
+      recordFailure('bad_request', message);
     } else {
-      console.warn('[ai] reply failed:', e?.message || e);
+      console.warn('[ai] reply failed:', message);
+      recordFailure('unknown', message);
     }
     return null;
   }

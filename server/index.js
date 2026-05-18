@@ -74,7 +74,7 @@ import {
   setActiveShopForRequest,
 } from './auth.js';
 import { isEmailEnabled } from './email.js';
-import { isAiEnabled, aiModel, generateReply, generateSlipThankYou } from './ai.js';
+import { isAiEnabled, aiModel, aiHealth, generateReply, generateSlipThankYou } from './ai.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
@@ -1634,6 +1634,9 @@ const AUTH_ALLOWLIST = [
   '/api/terms',
   '/api/fb/data-deletion',
   '/api/fb/data-deletion/status',
+  // Client error reports: errors can happen on /login or /register too,
+  // before the user has a session. The endpoint is already rate-limited.
+  '/api/log/client-error',
 ];
 app.use(requireAuth({ allowList: AUTH_ALLOWLIST }));
 
@@ -1674,6 +1677,48 @@ app.get('/api/health', (_req, res) => {
     envPath: path.join(__dirname, '..', '.env'),
   });
 });
+
+/**
+ * AI health — surfaced in Settings → Bot. Tells the shop owner whether
+ * the bot is actually able to reply right now (key set + last call
+ * succeeded), so they don't only find out from a customer complaint.
+ */
+app.get('/api/ai/health', (_req, res) => {
+  res.json(aiHealth());
+});
+
+/**
+ * Client-side error sink. The browser bundle posts uncaught errors,
+ * unhandled rejections, and ErrorBoundary catches here. We just log
+ * structurally to stdout — Railway / our log aggregator picks them up
+ * from there. When we wire Sentry later, this endpoint becomes the
+ * place we forward to Sentry too.
+ *
+ * Rate-limited per IP so a stuck client looping a bad render can't
+ * flood the log stream.
+ */
+app.post(
+  '/api/log/client-error',
+  rateLimit({ bucket: 'client-error', limit: 30, windowMs: 60_000 }),
+  express.json({ limit: '16kb' }),
+  (req, res) => {
+    const r = req.body || {};
+    const safe = {
+      kind: String(r.kind || 'unknown').slice(0, 20),
+      name: String(r.name || '').slice(0, 100),
+      message: String(r.message || '').slice(0, 500),
+      stack: String(r.stack || '').slice(0, 2000),
+      componentStack: r.componentStack ? String(r.componentStack).slice(0, 2000) : undefined,
+      url: String(r.url || '').slice(0, 500),
+      userAgent: String(r.userAgent || '').slice(0, 300),
+      at: String(r.at || new Date().toISOString()),
+    };
+    // Single-line so log aggregators can grep on prefix.
+    console.error('[client-error]', JSON.stringify(safe));
+    // 204 = no body, no caching, lowest overhead.
+    res.sendStatus(204);
+  },
+);
 
 app.get('/api/line/events', (_req, res) => {
   res.json({ events: eventsBuffer });
@@ -2283,7 +2328,17 @@ app.post(
       return res.sendStatus(401);
     }
     if (sigOk === null) {
-      console.warn('[FB webhook] FB_APP_SECRET not set — skipping signature check (NOT recommended)');
+      // FB_APP_SECRET not configured → we *cannot* verify the request came
+      // from Meta. Refuse all webhook bodies in that state — accepting them
+      // unverified means any external caller can inject fake customer
+      // messages into the inbox.
+      fbWebhookDebug = {
+        ...fbWebhookDebug,
+        lastErrorAt: new Date().toISOString(),
+        lastError: 'FB_APP_SECRET not set — webhook refused (cannot verify signature)',
+      };
+      console.error('[FB webhook] FB_APP_SECRET not set — refusing unsigned webhook request');
+      return res.sendStatus(401);
     }
 
     let payload;
@@ -3412,7 +3467,12 @@ app.post('/api/fb/integration/disconnect', async (_req, res) => {
 // Auth: login / logout / current user
 // =====================================================================
 
-app.post('/api/auth/login', rateLimit({ bucket: 'auth-login', limit: 10, windowMs: 60_000 }), express.json({ limit: '4kb' }), async (req, res) => {
+// Brute-force ceiling: 5 attempts/minute per IP. Real users with password
+// autofill rarely exceed 2–3; bots scanning credentials hit this fast and
+// get 429'd. Note this is per-IP only — a determined attacker rotating IPs
+// would not be caught here; we still rely on bcrypt cost + (TODO) per-
+// account lockout for that case.
+app.post('/api/auth/login', rateLimit({ bucket: 'auth-login', limit: 5, windowMs: 60_000 }), express.json({ limit: '4kb' }), async (req, res) => {
   const username = String(req.body?.username || '').trim();
   const password = String(req.body?.password || '');
   if (!username || !password) {

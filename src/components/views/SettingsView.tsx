@@ -1168,6 +1168,37 @@ const DEFAULT_BOT_SETTINGS: BotSettings = {
 interface AiStatus {
   enabled: boolean;
   model: string | null;
+  hasApiKey: boolean;
+  lastError: { code: string; message: string; at: string } | null;
+  lastSuccessAt: string | null;
+  totalCalls: number;
+  totalFailures: number;
+}
+
+/** Map a server-side error code to a short Thai explanation + how-to-fix. */
+function aiErrorExplain(code: string): { th: string; fix: string } {
+  switch (code) {
+    case 'invalid_api_key':
+      return {
+        th: 'API key ไม่ถูกต้องหรือหมดอายุ',
+        fix: 'ตรวจสอบ ANTHROPIC_API_KEY ใน Railway → Variables',
+      };
+    case 'rate_limited':
+      return {
+        th: 'ถูกจำกัดอัตราการเรียกชั่วคราว',
+        fix: 'รอสักครู่ ระบบจะกลับมาทำงานเอง',
+      };
+    case 'bad_request':
+      return {
+        th: 'คำสั่งที่ส่งให้ AI ไม่ถูกต้อง',
+        fix: 'แจ้งทีมงานพร้อมรายละเอียดด้านล่าง',
+      };
+    default:
+      return {
+        th: 'เกิดข้อผิดพลาด',
+        fix: 'แจ้งทีมงาน',
+      };
+  }
 }
 
 function AiBotSection({ t }: { t: (k: string) => string }) {
@@ -1176,21 +1207,32 @@ function AiBotSection({ t }: { t: (k: string) => string }) {
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [ai, setAi] = useState<AiStatus | null>(null);
 
-  // Probe whether the backend has ANTHROPIC_API_KEY wired so we can show the
-  // shop owner whether AI replies are actually live or just toggled in the UI.
+  // Probe AI health on mount + poll every 60s so the shop owner sees status
+  // changes (e.g. rate-limited → recovered) without refreshing.
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
+    const refresh = async () => {
       try {
-        const r = await fetch('/api/health', { credentials: 'include' });
+        const r = await fetch('/api/ai/health', { credentials: 'include' });
         if (!r.ok) return;
-        const j = await r.json();
-        if (!cancelled) setAi({ enabled: Boolean(j?.ai?.enabled), model: j?.ai?.model || null });
+        const j = (await r.json()) as Partial<AiStatus>;
+        if (cancelled) return;
+        setAi({
+          enabled: Boolean(j.enabled),
+          model: j.model ?? null,
+          hasApiKey: Boolean(j.hasApiKey),
+          lastError: j.lastError ?? null,
+          lastSuccessAt: j.lastSuccessAt ?? null,
+          totalCalls: j.totalCalls ?? 0,
+          totalFailures: j.totalFailures ?? 0,
+        });
       } catch {
         /* offline ok */
       }
-    })();
-    return () => { cancelled = true; };
+    };
+    void refresh();
+    const id = window.setInterval(refresh, 60_000);
+    return () => { cancelled = true; window.clearInterval(id); };
   }, []);
 
   // Load once
@@ -1255,7 +1297,11 @@ function AiBotSection({ t }: { t: (k: string) => string }) {
       </div>
 
       {ai && (
-        ai.enabled ? (
+        // Three states:
+        //   1. Has key + last call ok  → green "พร้อมใช้งาน"
+        //   2. Has key + last error    → red "ขัดข้อง" with the specific code
+        //   3. No key at all           → amber "ยังไม่ทำงาน" (config issue)
+        ai.enabled && !ai.lastError ? (
           <div className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 dark:border-emerald-900/50 dark:bg-emerald-950/40">
             <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-emerald-500 text-white">
               <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -1265,10 +1311,44 @@ function AiBotSection({ t }: { t: (k: string) => string }) {
             <div className="min-w-0 flex-1 text-sm">
               <div className="font-semibold text-emerald-900 dark:text-emerald-100">AI ปิดการขาย พร้อมใช้งาน</div>
               <div className="mt-0.5 text-xs text-emerald-700 dark:text-emerald-300">
-                ใช้โมเดล <span className="font-mono">{ai.model}</span> — บอทจะตอบลูกค้าตามแบรนด์และ catalog สินค้าโดยอัตโนมัติ
+                ใช้โมเดล <span className="font-mono">{ai.model}</span>
+                {ai.totalCalls > 0 && (
+                  <> · ตอบไปแล้ว <b>{ai.totalCalls.toLocaleString()}</b> ครั้ง</>
+                )}
               </div>
             </div>
+            <span className="relative grid h-2.5 w-2.5 place-items-center" aria-hidden>
+              <span className="absolute inset-0 rounded-full bg-emerald-400/60 motion-safe:animate-ping" />
+              <span className="relative h-2 w-2 rounded-full bg-emerald-500" />
+            </span>
           </div>
+        ) : ai.enabled && ai.lastError ? (
+          (() => {
+            const { th: errTh, fix } = aiErrorExplain(ai.lastError.code);
+            return (
+              <div className="flex items-start gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 dark:border-rose-900/50 dark:bg-rose-950/40">
+                <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-rose-500 text-white">
+                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </div>
+                <div className="min-w-0 flex-1 text-sm">
+                  <div className="font-semibold text-rose-900 dark:text-rose-100">
+                    AI ขัดข้อง — {errTh}
+                  </div>
+                  <div className="mt-0.5 text-xs text-rose-800 dark:text-rose-200">
+                    {fix}
+                  </div>
+                  <div className="mt-1 text-[11px] text-rose-700/80 dark:text-rose-300/80">
+                    ครั้งล่าสุด: {new Date(ai.lastError.at).toLocaleString('th-TH')}
+                    {ai.totalFailures > 0 && (
+                      <> · พลาด <b>{ai.totalFailures}</b>/{ai.totalCalls} ครั้ง</>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()
         ) : (
           <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/50 dark:bg-amber-950/40">
             <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-500 text-white">

@@ -13,11 +13,23 @@ import { AuthIllustration } from './AuthIllustration';
  */
 export function AuthShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="relative grid h-screen w-screen grid-cols-1 overflow-hidden bg-[#f4f1f9] text-slate-900 dark:bg-slate-950 dark:text-slate-100 md:grid-cols-[1fr_1fr] md:p-3 lg:p-4">
-      {/* Left — form panel. Vertically centered, capped narrow so inputs
-          don't sprawl on ultra-wide screens. */}
-      <div className="relative flex min-h-0 flex-col justify-center overflow-y-auto px-6 py-6 md:px-10 md:py-6 lg:px-16">
-        {/* Brand mark, floats top-left */}
+    // Outer shell uses `min-h-[100dvh]` not `h-screen`:
+    //   • On iOS Safari, opening the keyboard shrinks the visible viewport.
+    //     `h-screen` (= 100vh) does NOT update, so a `h-screen + overflow-
+    //     hidden` form gets clipped and the user can't see the input they're
+    //     typing into. `100dvh` (dynamic viewport) shrinks with the keyboard,
+    //     and removing overflow-hidden lets the form scroll naturally on
+    //     mobile.
+    //   • On desktop the form still fits inside one viewport because the
+    //     children are compact (no scrolling required).
+    //   • On md+ we also enforce a max-h to keep the illustration card from
+    //     stretching obscenely on ultra-tall windows.
+    <div className="relative grid min-h-[100dvh] w-screen grid-cols-1 bg-[#f4f1f9] text-slate-900 dark:bg-slate-950 dark:text-slate-100 md:min-h-[100dvh] md:max-h-screen md:grid-cols-[1fr_1fr] md:overflow-hidden md:p-3 lg:p-4">
+      {/* Left — form panel. Vertically centered on desktop, naturally
+          scrollable on mobile when the keyboard is open. */}
+      <div className="relative flex min-h-0 flex-col justify-center px-6 py-20 md:overflow-y-auto md:px-10 md:py-6 lg:px-16">
+        {/* Brand mark, floats top-left (absolute so it doesn't fight the
+            centered form on desktop) */}
         <a
           href="/login"
           className="absolute left-6 top-5 inline-flex items-center gap-2 md:left-10 md:top-5 lg:left-16"
