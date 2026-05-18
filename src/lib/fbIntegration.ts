@@ -23,6 +23,13 @@ export interface FbIntegrationEnvPresent {
   FB_VERIFY_TOKEN: boolean;
 }
 
+export interface FbPageHealthRecord {
+  healthy: false;
+  code: string;
+  message: string;
+  at: string;
+}
+
 export interface FbIntegrationStatus {
   /** True when webhook verify token and/or a Page token is present (channel can be live). */
   connected: boolean;
@@ -38,6 +45,15 @@ export interface FbIntegrationStatus {
   needsAppSecret: boolean;
   needsVerifyToken: boolean;
   apiVersion: string;
+  /**
+   * Per-page health from the last send attempt. Populated when a Page's
+   * access token has been revoked or expired — the shop owner must click
+   * "Reconnect Facebook" to fix it. Empty object means all pages are
+   * healthy (or no sends have happened yet).
+   */
+  pageHealth?: Record<string, FbPageHealthRecord>;
+  /** True if any currently-connected Page has a token-style error pending. */
+  needsReconnect?: boolean;
   /** Which env vars the running server sees (never includes secret values). */
   envPresent?: FbIntegrationEnvPresent | null;
 }

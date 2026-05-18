@@ -441,6 +441,27 @@ function getOrCreateFbThread(targetId, channel = 'fb', shopId, pageId = null) {
   return thread;
 }
 
+/**
+ * Returns the epoch ms timestamp of the latest *customer* message in any
+ * thread matching (channel, targetId) across all shops, or null when the
+ * customer has never written to us. Used by sendMetaMessage to enforce
+ * Meta's 24-hour reply window (see comment at the call site).
+ */
+function lastCustomerMessageAt(channel, targetId) {
+  let latest = 0;
+  for (const t of fbThreads.values()) {
+    if (t.channel !== channel || t.targetId !== targetId) continue;
+    for (let i = t.messages.length - 1; i >= 0; i--) {
+      const m = t.messages[i];
+      if (m?.sender !== 'customer') continue;
+      const ms = new Date(m.receivedAt).getTime();
+      if (Number.isFinite(ms) && ms > latest) latest = ms;
+      break; // most recent customer turn in this thread — no need to scan further
+    }
+  }
+  return latest > 0 ? latest : null;
+}
+
 function messengerDisplayNameFromGraph(d) {
   if (!d || typeof d !== 'object') return null;
   const fn = typeof d.first_name === 'string' ? d.first_name.trim() : '';
@@ -1770,9 +1791,15 @@ app.get('/api/inbox/stream', (req, res) => {
   res.write(`retry: 3000\n\n`);
   res.write(`data: ${JSON.stringify({ v: inboxVersion, at: Date.now(), hello: true })}\n\n`);
   inboxSubscribers.add(res);
+  // Heartbeat sent as a *named* SSE event so the browser's `addEventListener
+  // ('heartbeat', …)` fires but `addEventListener('message', …)` does not.
+  // That lets the client reset its stale-connection watchdog without
+  // triggering a needless re-fetch of every conversation list. Crucially,
+  // SSE comments (`: ping`) do not fire any JS event at all, so they can't
+  // serve that purpose — hence the switch.
   const heartbeat = setInterval(() => {
     try {
-      res.write(`: ping ${Date.now()}\n\n`);
+      res.write(`event: heartbeat\ndata: ${JSON.stringify({ at: Date.now() })}\n\n`);
     } catch {
       /* will be cleaned up on close */
     }
@@ -2682,6 +2709,29 @@ async function sendMetaMessage({ conversationId, text, asAi, shopId }) {
   if (asAi && !isBotEnabled(conversationId, botShopId)) {
     return { status: 409, error: 'Bot is turned off for this conversation' };
   }
+  // ── Meta 24-hour messaging window check ──────────────────────────────
+  // Meta's `messaging_type: 'RESPONSE'` only works when the customer has
+  // sent a message in the last 24h. Past that window:
+  //   • Facebook Messenger returns a 4xx error (codes 10 / 100).
+  //   • Instagram is worse — it returns HTTP 200 but silently drops the
+  //     message. Agents see "Sent ✓" but the customer never gets it.
+  // Block the send up-front for both channels so the agent sees a clear
+  // error instead of relying on Meta's inconsistent behaviour. Re-engaging
+  // outside 24h needs a MESSAGE_TAG / human-agent flow that this app
+  // doesn't yet implement (would require App Review).
+  const lastCustomerAt = lastCustomerMessageAt(channel, targetId);
+  if (lastCustomerAt !== null && Date.now() - lastCustomerAt > 24 * 60 * 60 * 1000) {
+    return {
+      status: 403,
+      error: 'WINDOW_EXPIRED',
+      errorCode: 'window_expired',
+      friendlyMessage:
+        channel === 'ig'
+          ? 'ลูกค้าไม่ได้ทักมาในรอบ 24 ชม. — Instagram ไม่อนุญาตให้ส่งข้อความออก กรุณารอลูกค้าทักก่อน'
+          : 'ลูกค้าไม่ได้ทักมาในรอบ 24 ชม. — Facebook ไม่อนุญาตให้ส่งข้อความออก กรุณารอลูกค้าทักก่อน',
+      lastCustomerAt: new Date(lastCustomerAt).toISOString(),
+    };
+  }
   const sender = asAi ? 'ai' : 'agent';
   const url = `https://graph.facebook.com/${fbConfig.apiVersion}/me/messages?access_token=${encodeURIComponent(pageToken)}`;
   // Wrap fetch in retry: throw on non-OK so retryWithBackoff sees it as failure;
@@ -2724,11 +2774,106 @@ async function sendMetaMessage({ conversationId, text, asAi, shopId }) {
       convId: `${channel}:user:${targetId}`,
       direction: 'out',
     });
+    // Send succeeded — clear any prior health flag on this Page so the
+    // Settings badge stops showing "broken".
+    if (resolvedPage?.id) markMetaPageHealthy(resolvedPage.id);
     return { status: 200, ok: true };
   } catch (e) {
     console.error(`${channel.toUpperCase()} send failed after retries:`, e?.message || e);
-    return { status: 502, error: String(e?.message || e) };
+    // Classify the failure so the Settings UI can show "reconnect FB"
+    // instead of an opaque error. Token-style failures are persistent —
+    // the shop owner has to reconnect; we don't keep retrying.
+    const classified = classifyMetaError(e);
+    if (resolvedPage?.id && classified.kind === 'token') {
+      markMetaPageUnhealthy(resolvedPage.id, classified);
+    }
+    return {
+      status: classified.httpStatus,
+      error: classified.message,
+      errorCode: classified.code,
+      pageId: resolvedPage?.id || null,
+      needsReconnect: classified.kind === 'token',
+    };
   }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Meta Page health tracking.
+//
+// FB/IG access tokens get revoked all the time — admin change, app review
+// flap, 60-day rotation, password reset. Before this map existed, a revoked
+// token meant every customer reply silently failed with an opaque error
+// and the shop owner had no idea until a customer complained.
+//
+// We record the last token-style failure per pageId. /api/fb/integration/
+// status surfaces it so the Channels page can show a red "ตอบไม่ได้ — เชื่อม
+// FB ใหม่" badge with a Reconnect button.
+// ──────────────────────────────────────────────────────────────────────────
+const metaPageHealth = new Map(); // pageId → { healthy: false, code, message, at }
+
+function classifyMetaError(e) {
+  const status = typeof e?.statusCode === 'number' ? e.statusCode : 0;
+  const raw = String(e?.message || e || '').trim();
+  // Graph API embeds the real code in the message string — e.g.
+  //   "Error validating access token: ... (190)"
+  //   "(#100) The user is not allowed to receive messages..."
+  const codeMatch = raw.match(/\((?:#)?(\d{2,4})\)/);
+  const fbCode = codeMatch ? Number(codeMatch[1]) : null;
+  // Token-style: revoked, expired, app blocked. Owner action required.
+  // FB error codes:
+  //   190 = expired/invalid OAuth token
+  //   102 = session expired
+  //   200 = permissions error (revoked scope)
+  //   458/459/460/463/464/467 = various Login-status errors
+  if (fbCode === 190 || fbCode === 102 || fbCode === 200 ||
+      (fbCode !== null && fbCode >= 458 && fbCode <= 467)) {
+    return {
+      kind: 'token',
+      code: 'token_invalid',
+      httpStatus: 401,
+      message: 'Facebook token หมดอายุหรือถูกยกเลิก — กรุณาเชื่อม Facebook ใหม่ใน Settings',
+    };
+  }
+  // Outside-24h-window etc. — different bug, different UI.
+  if (fbCode === 10 || fbCode === 100) {
+    return {
+      kind: 'permission',
+      code: 'recipient_unreachable',
+      httpStatus: 403,
+      message: 'ไม่สามารถส่งข้อความได้ — ลูกค้าอาจไม่ได้ทักมาในรอบ 24 ชม. หรือ Page ไม่มีสิทธิ์ตอบ',
+    };
+  }
+  // 5xx → upstream wobble
+  if (status >= 500) {
+    return { kind: 'upstream', code: 'meta_5xx', httpStatus: 502, message: raw || 'Facebook ขัดข้องชั่วคราว ลองอีกครั้ง' };
+  }
+  return { kind: 'unknown', code: 'send_failed', httpStatus: 502, message: raw || 'ส่งข้อความไม่สำเร็จ' };
+}
+
+function markMetaPageUnhealthy(pageId, classified) {
+  metaPageHealth.set(pageId, {
+    healthy: false,
+    code: classified.code,
+    message: classified.message,
+    at: new Date().toISOString(),
+  });
+}
+
+function markMetaPageHealthy(pageId) {
+  if (metaPageHealth.has(pageId)) metaPageHealth.delete(pageId);
+}
+
+function getMetaPageHealth(pageId) {
+  return metaPageHealth.get(pageId) || { healthy: true };
+}
+
+/** Snapshot of every page that has ever been flagged unhealthy in this
+ *  process. Surfaced via /api/fb/integration/status so the Settings UI
+ *  can show "Reconnect FB" banners. */
+function metaPageHealthSnapshot() {
+  const out = {};
+  for (const [pageId, h] of metaPageHealth) out[pageId] = h;
+  return out;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2842,15 +2987,31 @@ app.post('/api/messages/send', express.json({ limit: '50kb' }), async (req, res)
   if (id.startsWith('line:')) result = await sendLineMessage({ ...(req.body || {}), shopId });
   else if (id.startsWith('fb:') || id.startsWith('ig:')) result = await sendMetaMessage({ ...(req.body || {}), shopId });
   else result = { status: 400, error: 'unknown conversationId prefix (expected line:/fb:/ig:)' };
-  if (result.status >= 400) return res.status(result.status).json({ error: result.error });
+  if (result.status >= 400) return res.status(result.status).json(passThroughSendError(result));
   return res.json({ ok: true });
 });
 
 app.post('/api/fb/send', express.json({ limit: '50kb' }), async (req, res) => {
   const result = await sendMetaMessage(req.body || {});
-  if (result.status >= 400) return res.status(result.status).json({ error: result.error });
+  if (result.status >= 400) return res.status(result.status).json(passThroughSendError(result));
   return res.json({ ok: true });
 });
+
+/**
+ * Shape the structured fields from sendMetaMessage / sendLineMessage into a
+ * stable JSON payload the inbox composer can branch on. The composer reads
+ * `errorCode` to decide which UI banner to show — 'window_expired' surfaces
+ * the 24h-rule explanation, 'token_invalid' steers the user to Settings.
+ */
+function passThroughSendError(result) {
+  const body = { error: result.error || 'send_failed' };
+  if (result.errorCode) body.errorCode = result.errorCode;
+  if (result.friendlyMessage) body.friendlyMessage = result.friendlyMessage;
+  if (result.needsReconnect) body.needsReconnect = true;
+  if (result.pageId) body.pageId = result.pageId;
+  if (result.lastCustomerAt) body.lastCustomerAt = result.lastCustomerAt;
+  return body;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Facebook "Connect" flow — Zaapi-style: one button, OAuth popup, page picker.
@@ -2903,6 +3064,13 @@ app.get('/api/fb/integration/status', async (_req, res) => {
       tokenSource = 'env';
     }
   }
+  // Per-page health. `pageHealth` maps pageId → details if the last send
+  // failed with a token-style error. Settings reads this to show a
+  // "Reconnect FB" banner instead of a vague "send failed" message later.
+  const pageHealth = metaPageHealthSnapshot();
+  const allConnectedPages = listPages();
+  const anyPageBroken = allConnectedPages.some((p) => pageHealth[p.id]?.healthy === false);
+
   res.json({
     connected: webhookReady || replyEnabled,
     webhookReady,
@@ -2914,6 +3082,8 @@ app.get('/api/fb/integration/status', async (_req, res) => {
     needsAppSecret: !fbHasAppSecret,
     needsVerifyToken: !fbHasVerify,
     apiVersion: fbConfig.apiVersion,
+    pageHealth,
+    needsReconnect: anyPageBroken,
     /** Booleans only — helps confirm Railway/production actually loaded each key (names must match exactly). */
     envPresent: {
       FB_APP_ID: Boolean(fbConfig.appId),
@@ -3271,6 +3441,10 @@ app.post('/api/fb/integration/connect', express.json({ limit: '20kb' }), async (
       connectedAt: new Date().toISOString(),
       shopId,
     });
+    // Reconnect completed — clear any stale "token broken" flag from a
+    // prior revoked-token failure so the Settings banner disappears.
+    markMetaPageHealthy(id);
+    if (instagram?.id) markMetaPageHealthy(instagram.id);
     refreshFbState();
 
     // Fire-and-forget: load conversation history so inbox is populated immediately.

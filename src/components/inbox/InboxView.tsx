@@ -176,25 +176,78 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
   /**
    * Realtime push from /api/inbox/stream — any thread mutation (incoming
    * message, send, profile backfill, bot toggle) triggers a tiny SSE event;
-   * we react by re-fetching whichever channels are configured. EventSource
-   * reconnects automatically on drop, so we just open it once per session.
+   * we react by re-fetching whichever channels are configured.
+   *
+   * Three robustness layers because EventSource alone is not enough on
+   * real devices:
+   *   1. EventSource auto-reconnect handles brief drops. On reconnect the
+   *      server emits a `hello` event which our onMessage treats like any
+   *      other change → re-fetch. Events that arrived during a short
+   *      disconnect are pulled in on resume.
+   *   2. `online` + `visibilitychange` listeners: when the OS says
+   *      "network back" or the tab regains focus, we proactively reopen
+   *      + re-fetch. EventSource's own retry (3s) is slow, and Safari
+   *      sometimes pauses background tabs — relying on its reconnect
+   *      alone left a 30s+ window where the inbox looked stale.
+   *   3. Stale-connection watchdog: if no SSE traffic in 60s, force-close
+   *      and reopen. NAT timeouts + corporate proxies can leave the TCP
+   *      connection alive-but-stuck where neither end notices.
    */
   useEffect(() => {
     if (!lineBackend && !fbBackend) return;
-    let es: EventSource | null = null;
-    try {
-      es = new EventSource('/api/inbox/stream');
-    } catch {
-      return;
-    }
-    const onMessage = () => {
+
+    const fullRefetch = () => {
       if (lineBackend) void refetchLine();
       if (fbBackend) void refetchFb();
     };
-    es.addEventListener('message', onMessage);
+
+    let es: EventSource | null = null;
+    let lastEventAt = Date.now();
+
+    const open = () => {
+      try {
+        es = new EventSource('/api/inbox/stream');
+      } catch {
+        return;
+      }
+      lastEventAt = Date.now();
+      es.addEventListener('message', () => {
+        lastEventAt = Date.now();
+        fullRefetch();
+      });
+      // Heartbeat: server emits this every 25s on an idle connection.
+      // Listening to it lets the watchdog see "the pipe is alive" without
+      // firing a needless refetch every 25s.
+      es.addEventListener('heartbeat', () => {
+        lastEventAt = Date.now();
+      });
+      // We don't surface errors — the browser will auto-reconnect, and
+      // our watchdog will force-reopen if that doesn't happen quickly.
+      es.addEventListener('error', () => { /* swallow */ });
+    };
+
+    const reopen = () => {
+      try { es?.close(); } catch { /* ignore */ }
+      es = null;
+      open();
+      fullRefetch();
+    };
+
+    const onOnline = () => reopen();
+    const onVisibility = () => { if (document.visibilityState === 'visible') reopen(); };
+
+    open();
+    window.addEventListener('online', onOnline);
+    document.addEventListener('visibilitychange', onVisibility);
+    const staleTimer = window.setInterval(() => {
+      if (Date.now() - lastEventAt > 60_000) reopen();
+    }, 30_000);
+
     return () => {
-      es?.removeEventListener('message', onMessage);
-      es?.close();
+      window.removeEventListener('online', onOnline);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.clearInterval(staleTimer);
+      try { es?.close(); } catch { /* ignore */ }
     };
   }, [lineBackend, fbBackend, refetchLine, refetchFb]);
 
@@ -361,15 +414,47 @@ export function InboxView({ focusRequest = null, onFocusRequestConsumed }: Inbox
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ conversationId: active.id, text, asAi: sender === 'ai' }),
       });
+      // The server returns a structured error body for two cases we want
+      // to message specially in the chat composer:
+      //   • errorCode='window_expired' — 24h Meta rule. We surface the
+      //     friendlyMessage so the agent knows why and stops re-trying.
+      //   • needsReconnect=true       — Facebook token revoked. Same
+      //     thing: don't blame the agent, point them to Settings.
+      // Everything else falls back to the generic localized error.
       let errMsg = '';
+      let errorCode = '';
+      let friendlyMessage = '';
+      let needsReconnect = false;
       try {
-        const data = (await res.json()) as { error?: string };
-        if (!res.ok) errMsg = data?.error || res.statusText;
+        const data = (await res.json()) as {
+          error?: string;
+          errorCode?: string;
+          friendlyMessage?: string;
+          needsReconnect?: boolean;
+        };
+        if (!res.ok) {
+          errMsg = data?.error || res.statusText;
+          errorCode = data?.errorCode || '';
+          friendlyMessage = data?.friendlyMessage || '';
+          needsReconnect = Boolean(data?.needsReconnect);
+        }
       } catch {
         if (!res.ok) errMsg = res.statusText;
       }
       if (!res.ok) {
-        toast.error(errMsg || (isLine ? t('chat.sendFailed') : t('chat.fbSendFailed')));
+        let userMsg = friendlyMessage;
+        if (!userMsg) {
+          if (errorCode === 'window_expired') {
+            userMsg = active.id.startsWith('ig:')
+              ? 'ส่งไม่ได้ — Instagram ไม่อนุญาตให้ตอบหลังลูกค้าเงียบเกิน 24 ชม.'
+              : 'ส่งไม่ได้ — Facebook ไม่อนุญาตให้ตอบหลังลูกค้าเงียบเกิน 24 ชม.';
+          } else if (needsReconnect) {
+            userMsg = 'Facebook token หมดอายุ ไปที่ Settings → การเชื่อมต่อ แล้วกด "เชื่อมใหม่"';
+          } else {
+            userMsg = errMsg || (isLine ? t('chat.sendFailed') : t('chat.fbSendFailed'));
+          }
+        }
+        toast.error(userMsg);
         throw new Error(errMsg || 'send failed');
       }
       if (isLine) await refetchLine();
