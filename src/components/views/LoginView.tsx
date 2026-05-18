@@ -180,14 +180,14 @@ export function LoginView() {
         />
       ) : (
         <>
-          <h1 className="text-4xl font-bold tracking-tight text-slate-900 dark:text-white md:text-[42px]">
+          <h1 className="text-[28px] font-bold tracking-tight text-slate-900 dark:text-white md:text-[32px]">
             เข้าสู่ระบบ
           </h1>
-          <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
             ยินดีต้อนรับกลับ พร้อมเริ่มงานวันนี้
           </p>
 
-          <form onSubmit={onSubmitSignin} className="mt-8 space-y-3">
+          <form onSubmit={onSubmitSignin} className="mt-5 space-y-2.5">
             <input
               autoFocus
               autoComplete="username"
@@ -205,7 +205,7 @@ export function LoginView() {
               required
             />
 
-            <div className="flex justify-end pt-1">
+            <div className="flex justify-end">
               <button
                 type="button"
                 onClick={() => switchMode('forgot')}
@@ -220,19 +220,19 @@ export function LoginView() {
             <button
               type="submit"
               disabled={busy || !username.trim() || password.length < 1}
-              className={authSubmitClass + ' mt-2'}
+              className={authSubmitClass + ' mt-1'}
             >
               {busy ? 'กำลังเข้าสู่ระบบ…' : 'เข้าสู่ระบบ'}
             </button>
           </form>
 
           {notice && (
-            <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-[13px] text-emerald-800 motion-safe:animate-[fadeUp_300ms_ease-out] dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-200">
+            <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-[13px] text-emerald-800 motion-safe:animate-[fadeUp_300ms_ease-out] dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-200">
               {notice}
             </div>
           )}
 
-          <p className="mt-6 text-center text-[13px] text-slate-500 dark:text-slate-400">
+          <p className="mt-4 text-center text-[13px] text-slate-500 dark:text-slate-400">
             ยังไม่มีบัญชี?{' '}
             <a
               href="/register"
@@ -248,8 +248,8 @@ export function LoginView() {
           </p>
 
           {(oauth?.google.enabled || oauth?.facebook.enabled) && (
-            <div className="mt-8">
-              <div className="mb-4 flex items-center gap-3">
+            <div className="mt-4">
+              <div className="mb-3 flex items-center gap-3">
                 <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
                 <span className="text-[11px] uppercase tracking-wider text-slate-400 dark:text-slate-500">
                   หรือ

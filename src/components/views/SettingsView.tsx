@@ -36,14 +36,13 @@ import {
  *   notifications, appearance, account → infrequent / one-time
  */
 type SettingsSection =
-  | 'profile'      // display name, email, avatar
+  | 'profile'      // display name, email, avatar, team
   | 'shop'         // shop name, hours, contact (Business profile)
   | 'channels'     // LINE / FB / IG / EasySlip
-  | 'ai-bot'       // brand voice, auto-reply, keyword rules
+  | 'ai-bot'       // brand voice, keyword rules
   | 'notifications'
   | 'appearance'   // theme + language
-  | 'privacy'      // read receipts, block list (future)
-  | 'security'     // password, sessions, delete account
+  | 'safety'       // privacy + security merged (one trust pane)
   | 'about';       // version, privacy policy, terms
 
 interface NavItem {
@@ -56,9 +55,9 @@ export function SettingsView() {
   const { t, theme, setTheme, locale, setLocale } = useAppPreferences();
   const [section, setSection] = useState<SettingsSection>('profile');
 
-  // Order mirrors the order in real chat apps (LINE, Messenger): profile
-  // and shop info first (identity), then channels, then bot, then operational
-  // (notifications / display), then trust (privacy / security), then about.
+  // Identity → operational → trust → about. Privacy + Security collapse into
+  // one "ความปลอดภัยและความเป็นส่วนตัว" pane: most of those rows were thin
+  // (coming-soon chips) and the user couldn't tell them apart anyway.
   const nav: NavItem[] = [
     { key: 'profile',       label: locale === 'th' ? 'โปรไฟล์' : 'Profile',            icon: <I.User className="h-[18px] w-[18px]" /> },
     { key: 'shop',          label: locale === 'th' ? 'ข้อมูลร้าน' : 'Business profile', icon: <I.Store className="h-[18px] w-[18px]" /> },
@@ -66,26 +65,34 @@ export function SettingsView() {
     { key: 'ai-bot',        label: locale === 'th' ? 'การตั้งค่าบอท' : 'Bot settings',   icon: <I.Bot className="h-[18px] w-[18px]" /> },
     { key: 'notifications', label: locale === 'th' ? 'การแจ้งเตือน' : 'Notifications',  icon: <I.Bell className="h-[18px] w-[18px]" /> },
     { key: 'appearance',    label: locale === 'th' ? 'การแสดงผล' : 'Display',          icon: <I.Palette className="h-[18px] w-[18px]" /> },
-    { key: 'privacy',       label: locale === 'th' ? 'ความเป็นส่วนตัว' : 'Privacy',     icon: <I.Shield className="h-[18px] w-[18px]" /> },
-    { key: 'security',      label: locale === 'th' ? 'ความปลอดภัย' : 'Security',       icon: <I.Lock className="h-[18px] w-[18px]" /> },
+    { key: 'safety',        label: locale === 'th' ? 'ความปลอดภัยและความเป็นส่วนตัว' : 'Privacy & security', icon: <I.Shield className="h-[18px] w-[18px]" /> },
     { key: 'about',         label: locale === 'th' ? 'เกี่ยวกับ' : 'About',             icon: <I.Info className="h-[18px] w-[18px]" /> },
   ];
 
+  const activeNav = nav.find((n) => n.key === section);
+
   return (
     <div className="flex h-screen flex-1 flex-col bg-slate-50 dark:bg-slate-950">
-      {/* Page header — title only. No marketing subtitle (real settings don't have one). */}
-      <header className="shrink-0 border-b border-slate-200 bg-white px-6 py-4 dark:border-slate-800 dark:bg-slate-900 md:px-8">
-        <h1 className="text-xl font-semibold text-slate-900 dark:text-white">
-          {locale === 'th' ? 'ตั้งค่า' : 'Settings'}
-        </h1>
+      {/* Page header — gradient brand chip + title gives the settings panel
+          the "this is a real product" weight the user asked for. */}
+      <header className="shrink-0 border-b border-slate-200/70 bg-white/80 px-6 py-3.5 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/80 md:px-8">
+        <div className="flex items-center gap-3">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-brand-500 to-pink-500 text-white shadow-md shadow-brand-500/25" aria-hidden>
+            <I.Settings className="h-[18px] w-[18px]" />
+          </span>
+          <h1 className="text-lg font-bold tracking-tight text-slate-900 dark:text-white">
+            {locale === 'th' ? 'ตั้งค่า' : 'Settings'}
+          </h1>
+        </div>
       </header>
 
       {/* Body: sidebar + content */}
       <div className="flex min-h-0 flex-1 overflow-hidden">
 
-        {/* ── Left nav (desktop) — Facebook-style: plain icon + label, subtle active row ── */}
-        <aside className="hidden w-[220px] shrink-0 overflow-y-auto border-r border-slate-200 bg-white py-3 dark:border-slate-800 dark:bg-slate-900 md:block">
-          <nav>
+        {/* ── Left nav (desktop) — active row gets a brand-tinted background +
+            a left accent bar so the eye locks on the current section. ── */}
+        <aside className="hidden w-[240px] shrink-0 overflow-y-auto border-r border-slate-200/70 bg-white/60 py-3 dark:border-slate-800 dark:bg-slate-900/60 md:block">
+          <nav className="px-2">
             {nav.map((it) => {
               const isActive = it.key === section;
               return (
@@ -94,16 +101,19 @@ export function SettingsView() {
                   type="button"
                   onClick={() => setSection(it.key)}
                   className={
-                    'flex w-full items-center gap-3 px-5 py-2 text-left transition ' +
+                    'relative flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-all duration-300 ease-out ' +
                     (isActive
-                      ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-white'
-                      : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800/60')
+                      ? 'bg-gradient-to-r from-brand-50 to-pink-50/70 text-slate-900 shadow-sm dark:from-brand-950/40 dark:to-pink-950/30 dark:text-white'
+                      : 'text-slate-600 hover:bg-slate-100/70 dark:text-slate-300 dark:hover:bg-slate-800/60')
                   }
                 >
+                  {isActive && (
+                    <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-gradient-to-b from-brand-500 to-pink-500" aria-hidden />
+                  )}
                   <span className={isActive ? 'text-brand-600 dark:text-brand-400' : 'text-slate-400 dark:text-slate-500'}>
                     {it.icon}
                   </span>
-                  <span className="text-sm font-medium">{it.label}</span>
+                  <span className="text-[13px] font-medium leading-tight">{it.label}</span>
                 </button>
               );
             })}
@@ -134,17 +144,25 @@ export function SettingsView() {
           </div>
         </div>
 
-        {/* ── Content ── */}
-        <main className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-2xl px-5 py-6 md:px-8 md:py-8">
+        {/* ── Content. Section header up top with the active nav label so
+            users always know which section they're in, even on mobile. ── */}
+        <main className="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-slate-50/60 to-slate-50 dark:from-slate-950 dark:to-slate-950">
+          <div className="mx-auto max-w-2xl px-5 py-6 md:px-8 md:py-7">
+            {activeNav && (
+              <div className="mb-5 flex items-center gap-2.5">
+                <span className="text-brand-500 dark:text-brand-400" aria-hidden>{activeNav.icon}</span>
+                <h2 className="text-[22px] font-bold tracking-tight text-slate-900 dark:text-white">
+                  {activeNav.label}
+                </h2>
+              </div>
+            )}
             {section === 'profile' && <ProfileSection locale={locale} />}
             {section === 'shop' && <BusinessProfileSection locale={locale} />}
             {section === 'channels' && <ChannelsSection t={t} />}
             {section === 'ai-bot' && <AiBotSection t={t} />}
             {section === 'notifications' && <NotificationsSection locale={locale} />}
             {section === 'appearance' && <AppearanceSection t={t} theme={theme} setTheme={setTheme} locale={locale} setLocale={setLocale} />}
-            {section === 'privacy' && <PrivacySection locale={locale} />}
-            {section === 'security' && <SecuritySection t={t} locale={locale} />}
+            {section === 'safety' && <SafetyPrivacySection t={t} locale={locale} />}
             {section === 'about' && <AboutSection locale={locale} />}
           </div>
         </main>
@@ -505,52 +523,6 @@ function BusinessProfileSection({ locale }: { locale: Locale }) {
  * read receipts", Messenger: "Active status"). Full implementation
  * follows the public-API parity work.
  */
-function PrivacySection({ locale }: { locale: Locale }) {
-  const th = locale === 'th';
-  return (
-    <div className="space-y-4">
-      <SectionCard
-        title={th ? 'การอ่านข้อความ' : 'Message reads'}
-        desc={th ? 'ลูกค้าจะเห็นว่าคุณอ่านข้อความแล้วหรือไม่' : 'Whether customers see "read" on their messages'}
-      >
-        <SettingRow
-          label={th ? 'แจ้งสถานะ "อ่านแล้ว"' : 'Send read receipts'}
-          hint={th ? 'ปิดได้เพื่อตอบช้าโดยไม่กดดัน' : 'Turn off if you want to reply without pressure'}
-        >
-          <ComingSoonChip locale={locale} />
-        </SettingRow>
-      </SectionCard>
-
-      <SectionCard
-        title={th ? 'การมองเห็นออนไลน์' : 'Active status'}
-        desc={th ? 'ลูกค้าเห็นจุดเขียวเมื่อคุณออนไลน์อยู่หรือไม่' : 'Whether customers see a green dot when you are online'}
-      >
-        <SettingRow label={th ? 'แสดงสถานะออนไลน์' : 'Show online status'}>
-          <ComingSoonChip locale={locale} />
-        </SettingRow>
-      </SectionCard>
-
-      <SectionCard
-        title={th ? 'รายชื่อบล็อก' : 'Blocked customers'}
-        desc={th ? 'ลูกค้าในรายการนี้จะส่งข้อความหาคุณไม่ได้' : 'Customers in this list cannot message you'}
-      >
-        <p className="text-sm text-slate-500 dark:text-slate-400">
-          {th ? 'ยังไม่มีลูกค้าที่บล็อก' : 'No blocked customers yet'}
-        </p>
-      </SectionCard>
-
-      <SectionCard
-        title={th ? 'ดาวน์โหลดข้อมูลของฉัน' : 'Download my data'}
-        desc={th ? 'ขอสำเนาข้อมูลทั้งหมดของบัญชีในรูปแบบ JSON' : 'Get a copy of all your account data as JSON'}
-      >
-        <SettingRow label={th ? 'ส่งคำขอข้อมูล' : 'Request data export'}>
-          <ComingSoonChip locale={locale} />
-        </SettingRow>
-      </SectionCard>
-    </div>
-  );
-}
-
 function ComingSoonChip({ locale }: { locale: Locale }) {
   return (
     <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400">
@@ -560,12 +532,13 @@ function ComingSoonChip({ locale }: { locale: Locale }) {
 }
 
 /**
- * ─── Security ────────────────────────────────────────────────────────────
- * Password change, sign out, and the hard one: account deletion. Real chat
- * apps put deletion at the very bottom with a destructive-styled button to
- * prevent accidental clicks.
+ * ─── Privacy & Security (merged) ─────────────────────────────────────────
+ * The old screens were two thin panes mostly full of coming-soon chips. One
+ * merged pane is easier to trust: bot account, sessions, 2FA on the top;
+ * visibility + data underneath; account deletion at the very bottom inside
+ * a destructive card. Three cards total instead of eight.
  */
-function SecuritySection({ t, locale }: { t: (k: string) => string; locale: Locale }) {
+function SafetyPrivacySection({ t, locale }: { t: (k: string) => string; locale: Locale }) {
   const { user, deleteAccount } = useAuth();
   const th = locale === 'th';
   const [deleting, setDeleting] = useState(false);
@@ -596,29 +569,67 @@ function SecuritySection({ t, locale }: { t: (k: string) => string; locale: Loca
 
   return (
     <div className="space-y-4">
+      {/* 1. ความปลอดภัยของบัญชี — password (AccountCard) + sessions + 2FA */}
       <AccountCard t={t} locale={locale} />
 
       <SectionCard
-        title={th ? 'อุปกรณ์ที่ลงชื่อเข้าใช้' : 'Active sessions'}
-        desc={th ? 'อุปกรณ์และเบราว์เซอร์ที่บัญชีนี้ใช้งานอยู่' : 'Devices and browsers currently signed in'}
+        title={th ? 'การลงชื่อเข้าใช้และการยืนยันตัวตน' : 'Sign-in & verification'}
+        desc={th
+          ? 'อุปกรณ์ที่ใช้งานบัญชีนี้ และตัวเลือกความปลอดภัยเพิ่มเติม'
+          : 'Devices using this account and extra security options'}
       >
-        <SettingRow
-          label={th ? 'ดูเซสชันทั้งหมด' : 'View all sessions'}
-          hint={th ? 'ออกจากระบบจากอุปกรณ์อื่น' : 'Sign out other devices'}
-        >
-          <ComingSoonChip locale={locale} />
-        </SettingRow>
+        <div className="divide-y divide-slate-100 dark:divide-slate-800">
+          <SettingRow
+            label={th ? 'อุปกรณ์ที่ลงชื่อเข้าใช้' : 'Active sessions'}
+            hint={th ? 'ออกจากระบบจากอุปกรณ์อื่น' : 'Sign out other devices'}
+          >
+            <ComingSoonChip locale={locale} />
+          </SettingRow>
+          <SettingRow
+            label={th ? 'ยืนยันตัวตน 2 ขั้นตอน (2FA)' : 'Two-factor authentication'}
+            hint={th ? 'เพิ่มชั้นความปลอดภัยด้วยรหัสจาก Authenticator' : 'Add an extra layer with Authenticator codes'}
+          >
+            <ComingSoonChip locale={locale} />
+          </SettingRow>
+        </div>
       </SectionCard>
 
+      {/* 2. ความเป็นส่วนตัว + ข้อมูล — read receipts, online status, blocked, data export */}
       <SectionCard
-        title={th ? 'การยืนยันตัวตน 2 ขั้นตอน (2FA)' : 'Two-factor authentication'}
-        desc={th ? 'เพิ่มชั้นความปลอดภัยด้วยรหัสจาก Authenticator' : 'Add an extra layer with Authenticator codes'}
+        title={th ? 'ความเป็นส่วนตัวและข้อมูล' : 'Privacy & data'}
+        desc={th
+          ? 'ลูกค้าเห็นอะไรเกี่ยวกับคุณบ้าง และวิธีจัดการข้อมูลของคุณ'
+          : 'What customers see about you, and how to manage your data'}
       >
-        <SettingRow label="2FA">
-          <ComingSoonChip locale={locale} />
-        </SettingRow>
+        <div className="divide-y divide-slate-100 dark:divide-slate-800">
+          <SettingRow
+            label={th ? 'แจ้งสถานะ "อ่านแล้ว"' : 'Send read receipts'}
+            hint={th ? 'ลูกค้าจะเห็นว่าคุณอ่านข้อความแล้ว' : 'Customers see "read" on their messages'}
+          >
+            <ComingSoonChip locale={locale} />
+          </SettingRow>
+          <SettingRow
+            label={th ? 'แสดงสถานะออนไลน์' : 'Show online status'}
+            hint={th ? 'ลูกค้าเห็นจุดเขียวเมื่อคุณออนไลน์อยู่' : 'Customers see a green dot when you are online'}
+          >
+            <ComingSoonChip locale={locale} />
+          </SettingRow>
+          <SettingRow
+            label={th ? 'รายชื่อบล็อก' : 'Blocked customers'}
+            hint={th ? 'ยังไม่มีลูกค้าที่บล็อก' : 'No blocked customers yet'}
+          >
+            <ComingSoonChip locale={locale} />
+          </SettingRow>
+          <SettingRow
+            label={th ? 'ดาวน์โหลดข้อมูลของฉัน' : 'Download my data'}
+            hint={th ? 'ขอสำเนาข้อมูลทั้งหมดในรูปแบบ JSON' : 'Get a copy of all your data as JSON'}
+          >
+            <ComingSoonChip locale={locale} />
+          </SettingRow>
+        </div>
       </SectionCard>
 
+      {/* 3. ลบบัญชี — destructive, kept in its own card and visually separated */}
       <SectionCard
         title={th ? 'ลบบัญชี' : 'Delete account'}
         desc={th
@@ -627,8 +638,8 @@ function SecuritySection({ t, locale }: { t: (k: string) => string; locale: Loca
       >
         <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">
           {th
-            ? `คุณ ${user?.displayName || user?.username || ''} แชทเก่า แม่แบบ และการตั้งค่าทั้งหมดจะถูกลบ ถ้าคุณเป็นเจ้าของร้านเพียงคนเดียว ต้องโอนความเป็นเจ้าของให้คนอื่นก่อน`
-            : `${user?.displayName || user?.username || 'You'} — all your chats, templates, and settings will be removed. If you're the only owner of a shop, you must transfer ownership first.`}
+            ? `แชทเก่า แม่แบบ และการตั้งค่าทั้งหมดของ ${user?.displayName || user?.username || ''} จะถูกลบ ถ้าคุณเป็นเจ้าของร้านเพียงคนเดียว ต้องโอนความเป็นเจ้าของให้คนอื่นก่อน`
+            : `All chats, templates, and settings for ${user?.displayName || user?.username || 'this account'} will be removed. If you're the only owner of a shop, transfer ownership first.`}
         </p>
         {delErr && (
           <div className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-950/50 dark:text-rose-200">
@@ -945,12 +956,12 @@ function SettingRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-start justify-between gap-4 py-1">
+    <div className="flex items-start justify-between gap-4 py-2.5">
       <div className="min-w-0 flex-1">
-        <div className="text-sm text-slate-900 dark:text-slate-100">{label}</div>
+        <div className="text-sm font-medium text-slate-900 dark:text-slate-100">{label}</div>
         {hint && <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{hint}</div>}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="shrink-0 self-center">{children}</div>
     </div>
   );
 }
@@ -1344,7 +1355,7 @@ function SectionCard({
   children: React.ReactNode;
 }) {
   return (
-    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+    <section className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-shadow duration-500 ease-out hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)] dark:border-slate-800 dark:bg-slate-900 dark:shadow-none">
       <header className="border-b border-slate-100 px-5 py-3.5 dark:border-slate-800">
         <h3 className="text-[15px] font-semibold text-slate-900 dark:text-slate-100">{title}</h3>
         {desc && <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{desc}</p>}

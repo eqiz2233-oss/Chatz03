@@ -51,14 +51,14 @@ export function RegisterView() {
 
   return (
     <AuthShell>
-      <h1 className="text-4xl font-bold tracking-tight text-slate-900 dark:text-white md:text-[42px]">
+      <h1 className="text-[28px] font-bold tracking-tight text-slate-900 dark:text-white md:text-[32px]">
         สร้างบัญชี
       </h1>
-      <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-        เริ่มใช้งานฟรี — เชื่อม LINE / Facebook / Instagram ได้ทันที
+      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+        เริ่มใช้งานฟรี — เชื่อม LINE / Facebook / IG ได้ทันที
       </p>
 
-      <form onSubmit={onSubmit} className="mt-8 space-y-3">
+      <form onSubmit={onSubmit} className="mt-5 space-y-2.5">
         <input
           autoFocus
           value={displayName}
@@ -79,7 +79,7 @@ export function RegisterView() {
           autoComplete="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          placeholder="อีเมล (สำหรับรีเซ็ตรหัสผ่าน)"
+          placeholder="อีเมล (ไม่บังคับ)"
           className={authInputClass}
         />
         <PasswordInput
@@ -96,13 +96,13 @@ export function RegisterView() {
         <button
           type="submit"
           disabled={busy || !canSubmit}
-          className={authSubmitClass + ' mt-2'}
+          className={authSubmitClass + ' mt-1'}
         >
           {busy ? 'กำลังสร้างบัญชี…' : 'สร้างบัญชี'}
         </button>
       </form>
 
-      <p className="mt-6 text-center text-[13px] text-slate-500 dark:text-slate-400">
+      <p className="mt-4 text-center text-[13px] text-slate-500 dark:text-slate-400">
         มีบัญชีอยู่แล้ว?{' '}
         <a
           href="/login"
@@ -118,11 +118,11 @@ export function RegisterView() {
       </p>
 
       {(oauth?.google.enabled || oauth?.facebook.enabled) && (
-        <div className="mt-8">
-          <div className="mb-4 flex items-center gap-3">
+        <div className="mt-4">
+          <div className="mb-3 flex items-center gap-3">
             <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
             <span className="text-[11px] uppercase tracking-wider text-slate-400 dark:text-slate-500">
-              หรือสมัครด้วย
+              หรือ
             </span>
             <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
           </div>
@@ -135,12 +135,11 @@ export function RegisterView() {
         </div>
       )}
 
-      <p className="mt-8 text-center text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
+      <p className="mt-4 text-center text-[10px] leading-relaxed text-slate-400 dark:text-slate-500">
         การสร้างบัญชี = ยอมรับ{' '}
         <a href="/api/terms" target="_blank" rel="noopener noreferrer" className="underline-offset-2 hover:text-slate-600 hover:underline dark:hover:text-slate-300">
-          เงื่อนไขการใช้งาน
-        </a>{' '}
-        และ{' '}
+          เงื่อนไข
+        </a>{' '}และ{' '}
         <a href="/api/privacy" target="_blank" rel="noopener noreferrer" className="underline-offset-2 hover:text-slate-600 hover:underline dark:hover:text-slate-300">
           นโยบายความเป็นส่วนตัว
         </a>
