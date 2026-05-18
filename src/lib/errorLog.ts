@@ -59,17 +59,60 @@ function send(report: ErrorReport) {
     if (navigator.sendBeacon) {
       const blob = new Blob([body], { type: 'application/json' });
       navigator.sendBeacon(ENDPOINT, blob);
-      return;
+    } else {
+      void fetch(ENDPOINT, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        keepalive: true,
+      }).catch(() => { /* swallow */ });
     }
-    void fetch(ENDPOINT, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-      keepalive: true,
-    }).catch(() => { /* swallow */ });
+    // Also forward to Sentry if @sentry/browser is installed AND a DSN
+    // is wired up at runtime (e.g. injected via index.html or env). This
+    // is intentionally optional — the app must keep reporting via the
+    // in-house endpoint even when Sentry isn't configured yet.
+    forwardToSentry(report);
   } catch {
     /* swallow — never throw from the reporter */
+  }
+}
+
+/**
+ * Optional Sentry forwarder. Looks for either:
+ *   • `window.Sentry?.captureException` (loaded via <script> tag), or
+ *   • a future module-level `@sentry/browser` import.
+ * If neither is present, this is a no-op. When you're ready to enable
+ * Sentry, add the SDK script tag (or npm install + import) — no code
+ * change here is required to make capture start working.
+ */
+function forwardToSentry(report: ErrorReport) {
+  type SentryLike = {
+    captureException?: (err: unknown, ctx?: { extra?: Record<string, unknown> }) => void;
+    captureMessage?: (msg: string, ctx?: { extra?: Record<string, unknown> }) => void;
+  };
+  const w = window as unknown as { Sentry?: SentryLike };
+  const s = w.Sentry;
+  if (!s) return;
+  try {
+    const extra = {
+      kind: report.kind,
+      url: report.url,
+      componentStack: report.componentStack,
+      reportedAt: report.at,
+    };
+    // Reconstruct an Error so Sentry groups by stack — cheaper than
+    // throwing/catching to capture a fresh one.
+    if (report.stack && typeof s.captureException === 'function') {
+      const e = new Error(report.message);
+      e.name = report.name;
+      e.stack = report.stack;
+      s.captureException(e, { extra });
+    } else if (typeof s.captureMessage === 'function') {
+      s.captureMessage(`${report.name}: ${report.message}`, { extra });
+    }
+  } catch {
+    /* swallow */
   }
 }
 

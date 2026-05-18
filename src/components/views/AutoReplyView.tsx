@@ -14,28 +14,27 @@ import { SkeletonBar, SkeletonCircle } from '../Skeleton';
  * the user sets *who the bot is*, not *what the bot says*.
  */
 
+/**
+ * BotSettingsExt is the *active* shape we round-trip with /api/bot/settings.
+ * Legacy fields (greetingMessage, fallbackMessage, greetingEnabled,
+ * quickReplies) have been removed from the UI; the server schema also no
+ * longer defaults them. Old documents in KV that still carry those keys
+ * are simply ignored on read.
+ */
 interface BotSettingsExt {
   botPersona: 'default' | 'friendly' | 'playful' | 'formal';
-  greetingMessage: string;
-  greetingEnabled: boolean;
-  fallbackMessage: string;
   awayMessage: string;
   awayEnabled: boolean;
   awayStart: string;
   awayEnd: string;
-  quickReplies: string[];
 }
 
 const DEFAULT_EXT: BotSettingsExt = {
   botPersona: 'default',
-  greetingMessage: '',
-  greetingEnabled: true,
-  fallbackMessage: '',
   awayMessage: '',
   awayEnabled: false,
   awayStart: '22:00',
   awayEnd: '07:00',
-  quickReplies: [],
 };
 
 /**

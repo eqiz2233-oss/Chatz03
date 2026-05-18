@@ -34,6 +34,8 @@ import {
   deleteOrder as dbDeleteOrder,
   recordSlipAction,
   listSlipActionsBySlipIds,
+  recordSlipVerificationAttempt,
+  listRecentSlipVerifications,
   logChatEvent,
   chatEventsByDay,
   kvGet,
@@ -1523,6 +1525,19 @@ async function maybeAttachSlip({
       // never leak between tenants.
       shopId: thread.shopId || DEFAULT_SHOP_ID,
     });
+    // Persist the verification attempt to the audit table — including
+    // `failed` results that we deliberately DON'T surface as slip cards.
+    // The shop owner can audit "is anyone trying to send fake slips?" later
+    // even though those images render as normal photos in the chat.
+    void recordSlipVerificationAttempt({
+      source: 'webhook',
+      shopId: thread.shopId || DEFAULT_SHOP_ID,
+      channel,
+      convId: conversationId,
+      imageUrl: imageUrl || null,
+      result: verified,
+      userId: null,
+    });
     // Only attach the slip card to the chat message when verification
     // actually produced useful info. `failed` = it wasn't a slip → leave
     // the image as a regular photo.
@@ -2226,6 +2241,23 @@ app.post('/api/bot/state', express.json({ limit: '4kb' }), async (req, res) => {
 // Slip verification dashboard
 // =====================================================================
 
+/**
+ * Persistent verification audit — every EasySlip call (webhook + manual)
+ * stored in the DB. The Slips admin pulls this so the owner can audit
+ * "failed" attempts (potential fraud / wrong-image uploads) that don't
+ * appear in the in-memory `slipsById` cache.
+ */
+app.get('/api/slips/verifications', async (req, res) => {
+  const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
+  const limit = Math.min(200, Math.max(1, Number(req.query?.limit) || 50));
+  try {
+    const rows = await listRecentSlipVerifications(shopId, limit);
+    res.json({ verifications: rows });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
 app.get('/api/slips', async (req, res) => {
   const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
   res.json({
@@ -2241,19 +2273,45 @@ app.get('/api/slips/:id', async (req, res) => {
   res.json({ slip: s });
 });
 
-/** Manually re-verify by URL — useful when an EasySlip token is added later. */
-app.post('/api/slips/verify', express.json({ limit: '50kb' }), async (req, res) => {
-  const url = String(req.body?.imageUrl || '').trim();
-  if (!/^https?:\/\//i.test(url)) {
-    return res.status(400).json({ error: 'imageUrl required' });
-  }
-  try {
-    const result = await verifySlipBytes({ imageUrl: url });
-    res.json({ result, easyslipEnabled: isEasySlipEnabled() });
-  } catch (e) {
-    res.status(500).json({ error: String(e?.message || e) });
-  }
-});
+/**
+ * Manually re-verify by URL — useful when an EasySlip token is added later
+ * or the owner wants a second opinion. EasySlip charges per call, so this
+ * endpoint is rate-limited tighter than chat endpoints — a stuck client or
+ * malicious caller can't bleed the slip-API quota.
+ */
+app.post(
+  '/api/slips/verify',
+  rateLimit({ bucket: 'slip-verify', limit: 20, windowMs: 60_000 }),
+  express.json({ limit: '50kb' }),
+  async (req, res) => {
+    const url = String(req.body?.imageUrl || '').trim();
+    if (!/^https?:\/\//i.test(url)) {
+      return res.status(400).json({ error: 'imageUrl required' });
+    }
+    try {
+      const result = await verifySlipBytes({ imageUrl: url });
+      // Audit every manual verification so we can trace disputes back to who
+      // re-ran a check and what EasySlip said at that moment.
+      void recordSlipVerificationAttempt({
+        source: 'manual',
+        imageUrl: url,
+        result,
+        shopId: (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID,
+        userId: req.user?.id || null,
+      });
+      res.json({ result, easyslipEnabled: isEasySlipEnabled() });
+    } catch (e) {
+      void recordSlipVerificationAttempt({
+        source: 'manual',
+        imageUrl: url,
+        result: { status: 'failed', reason: String(e?.message || e) },
+        shopId: (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID,
+        userId: req.user?.id || null,
+      });
+      res.status(500).json({ error: String(e?.message || e) });
+    }
+  },
+);
 
 app.get('/api/fb/conversations', async (req, res) => {
   // Scope to caller's active shop — same pattern as /api/line/conversations.
@@ -4082,26 +4140,39 @@ const DEFAULT_BOT_SETTINGS = {
   autoFaq: true,
   autoSlipConfirm: true,
   shopProfile: { shopName: '', tagline: '' },
-  // Auto-reply page (new sidebar entry). Schema matches the front-end
-  // BotSettingsExt so the same /api/bot/settings GET/PUT round-trips it.
+  // Auto-reply page (Settings → ตอบกลับอัตโนมัติ). Persona shapes the AI
+  // tone (see server/ai.js PERSONA_TONE); after-hours messages cover the
+  // closed-shop case.
+  //
   // Valid personas: 'default' | 'friendly' | 'playful' | 'formal'. The
   // legacy 'professional' value is silently mapped to 'default' on read.
+  //
+  // Removed in this schema version (still tolerated as extra props on old
+  // documents): greetingMessage, greetingEnabled, fallbackMessage,
+  // quickReplies. The bot now decides greeting/fallback wording from the
+  // persona prompt itself — owners stopped configuring these by hand.
   botPersona: 'default',
-  greetingMessage: '',
-  greetingEnabled: true,
-  fallbackMessage: '',
   awayMessage: '',
   awayEnabled: false,
   awayStart: '22:00',
   awayEnd: '07:00',
-  quickReplies: [],
 };
+
+/** Strip the legacy fields when loading so we don't keep round-tripping them
+ *  back into the DB on every save. */
+function stripLegacyBotFields(s) {
+  if (!s || typeof s !== 'object') return s;
+  const { greetingMessage, greetingEnabled, fallbackMessage, quickReplies, ...rest } = s;
+  // Reference the discards so eslint/tsc don't complain about unused vars.
+  void greetingMessage; void greetingEnabled; void fallbackMessage; void quickReplies;
+  return rest;
+}
 
 app.get('/api/bot/settings', async (req, res) => {
   try {
     const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
     const merged = await getBotSettingsForShop(shopId);
-    res.json({ settings: merged });
+    res.json({ settings: stripLegacyBotFields(merged) });
   } catch (e) {
     res.status(500).json({ error: String(e?.message || e) });
   }
@@ -4110,8 +4181,9 @@ app.get('/api/bot/settings', async (req, res) => {
 app.put('/api/bot/settings', express.json({ limit: '32kb' }), async (req, res) => {
   try {
     const shopId = (await activeShopIdFromRequest(req)) || DEFAULT_SHOP_ID;
-    const incoming = req.body?.settings && typeof req.body.settings === 'object' ? req.body.settings : {};
-    const current = await getBotSettingsForShop(shopId);
+    const incomingRaw = req.body?.settings && typeof req.body.settings === 'object' ? req.body.settings : {};
+    const incoming = stripLegacyBotFields(incomingRaw);
+    const current = stripLegacyBotFields(await getBotSettingsForShop(shopId));
     const merged = { ...DEFAULT_BOT_SETTINGS, ...current, ...incoming };
     await kvSet(botSettingsKeyForShop(shopId), merged);
     res.json({ settings: merged });

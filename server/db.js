@@ -63,6 +63,10 @@ const memo = {
   products: [],
   orders: [],
   slipActions: [],
+  /** Every verifySlipBytes() call — webhook auto-verify + manual /api/slips/verify.
+   *  Persistent audit trail so payment disputes can be reconstructed even after
+   *  the in-memory `slipsById` cap (500) evicts the record. */
+  slipVerifications: [],
   chatEvents: [],
   kv: {},
 };
@@ -86,6 +90,7 @@ function loadJsonSync() {
     memo.products = Array.isArray(raw?.products) ? raw.products : [];
     memo.orders = Array.isArray(raw?.orders) ? raw.orders : [];
     memo.slipActions = Array.isArray(raw?.slipActions) ? raw.slipActions : [];
+    memo.slipVerifications = Array.isArray(raw?.slipVerifications) ? raw.slipVerifications : [];
     memo.chatEvents = Array.isArray(raw?.chatEvents) ? raw.chatEvents : [];
     memo.kv = raw?.kv && typeof raw.kv === 'object' ? raw.kv : {};
   } catch (e) {
@@ -165,6 +170,28 @@ export async function initDb() {
       at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (slip_id, at)
     );
+    -- Persistent slip-verification audit log. Every call to verifySlipBytes
+    -- writes one row regardless of outcome, so we can reconstruct any payment
+    -- dispute even after the in-memory slip ring has rolled.
+    CREATE TABLE IF NOT EXISTS slip_verifications (
+      id BIGSERIAL PRIMARY KEY,
+      shop_id TEXT NOT NULL DEFAULT 'shop_default',
+      source TEXT NOT NULL,
+      channel TEXT,
+      conv_id TEXT,
+      image_url TEXT,
+      status TEXT NOT NULL,
+      amount NUMERIC,
+      bank TEXT,
+      ref TEXT,
+      sender_name TEXT,
+      receiver_name TEXT,
+      reason TEXT,
+      by_user TEXT,
+      at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS slip_verifications_shop_idx ON slip_verifications(shop_id, at DESC);
+    CREATE INDEX IF NOT EXISTS slip_verifications_ref_idx  ON slip_verifications(shop_id, ref) WHERE ref IS NOT NULL;
     CREATE TABLE IF NOT EXISTS chat_events (
       id BIGSERIAL PRIMARY KEY,
       channel TEXT NOT NULL,
@@ -950,6 +977,86 @@ export async function listSlipActionsBySlipIds(slipIds, shopId = DEFAULT_SHOP_ID
     if (last) m.set(id, last);
   }
   return m;
+}
+
+// --------------------------------------------------------------------------
+// SLIP VERIFICATIONS (raw audit log of every EasySlip call)
+// --------------------------------------------------------------------------
+
+/**
+ * Persist one EasySlip verification attempt. We never throw from here —
+ * even if the DB is unreachable, the calling code should never lose a
+ * customer's slip just because we can't write an audit row.
+ *
+ * @param {Object} v
+ * @param {'webhook'|'manual'} v.source
+ * @param {string} [v.shopId]
+ * @param {string} [v.channel]
+ * @param {string} [v.convId]
+ * @param {string} [v.imageUrl]
+ * @param {{ status: string; amount?: number; bank?: string; ref?: string; senderName?: string; receiverName?: string; reason?: string }} v.result
+ * @param {string|null} [v.userId]   user who triggered (manual only)
+ */
+export async function recordSlipVerificationAttempt(v) {
+  const r = v.result || {};
+  const row = {
+    shopId: v.shopId || DEFAULT_SHOP_ID,
+    source: v.source || 'webhook',
+    channel: v.channel || null,
+    convId: v.convId || null,
+    imageUrl: v.imageUrl || null,
+    status: r.status || 'unknown',
+    amount: typeof r.amount === 'number' ? r.amount : null,
+    bank: r.bank || null,
+    ref: r.ref || null,
+    senderName: r.senderName || null,
+    receiverName: r.receiverName || null,
+    reason: r.reason || null,
+    byUser: v.userId || null,
+    at: new Date().toISOString(),
+  };
+  try {
+    if (pool) {
+      await pool.query(
+        `INSERT INTO slip_verifications
+           (shop_id, source, channel, conv_id, image_url, status,
+            amount, bank, ref, sender_name, receiver_name, reason, by_user, at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+        [row.shopId, row.source, row.channel, row.convId, row.imageUrl, row.status,
+         row.amount, row.bank, row.ref, row.senderName, row.receiverName, row.reason,
+         row.byUser, row.at],
+      );
+    } else {
+      memo.slipVerifications.push(row);
+      // Cap the JSON-mode log so dev mode doesn't grow unbounded.
+      if (memo.slipVerifications.length > 2000) {
+        memo.slipVerifications = memo.slipVerifications.slice(-2000);
+      }
+      scheduleJsonSave();
+    }
+  } catch (e) {
+    console.warn('[db] recordSlipVerificationAttempt failed:', e?.message || e);
+  }
+  return row;
+}
+
+/**
+ * List recent verification attempts for a shop. Used by the Slips admin UI
+ * to show "failed" / "duplicate" attempts that wouldn't appear in the
+ * normal `slipsById` cache after eviction.
+ */
+export async function listRecentSlipVerifications(shopId = DEFAULT_SHOP_ID, limit = 100) {
+  if (pool) {
+    const { rows } = await pool.query(
+      `SELECT * FROM slip_verifications WHERE shop_id=$1 ORDER BY at DESC LIMIT $2`,
+      [shopId, limit],
+    );
+    return rows;
+  }
+  return memo.slipVerifications
+    .filter((r) => (r.shopId || DEFAULT_SHOP_ID) === shopId)
+    .slice(-limit)
+    .reverse();
 }
 
 // --------------------------------------------------------------------------
