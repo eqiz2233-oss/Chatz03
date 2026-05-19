@@ -1552,6 +1552,25 @@ function MetaIntegrationSection({
     return () => window.clearInterval(id);
   }, [refresh]);
 
+  // Surface the redirect-back error from /api/fb/oauth/start when env
+  // values are missing or malformed. The user sees a clear Thai message
+  // instead of Facebook's generic "Invalid App ID" wrench page.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('fbConnect');
+    if (!code) return;
+    const msg =
+      code === 'bad_app_id'      ? 'FB_APP_ID ตั้งค่าผิดรูป — ดูคำแนะนำในกล่องเหลืองด้านล่าง'
+      : code === 'missing_app_id'     ? 'ยังไม่ได้ตั้ง FB_APP_ID ใน Railway Variables'
+      : code === 'missing_app_secret' ? 'ยังไม่ได้ตั้ง FB_APP_SECRET ใน Railway Variables'
+      : null;
+    if (msg) setErr(msg);
+    // Strip the query so it doesn't reappear on reload.
+    const url = new URL(window.location.href);
+    url.searchParams.delete('fbConnect');
+    window.history.replaceState({}, '', url.pathname + (url.search || '') + url.hash);
+  }, []);
+
   const onConnect = async () => {
     setErr(null); setBusy(true);
     try {
@@ -1609,6 +1628,34 @@ function MetaIntegrationSection({
 
       {err && (
         <div className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-600 dark:bg-rose-950/30 dark:text-rose-300">{err}</div>
+      )}
+      {/* Env-value problem banner — surfaces malformed FB_APP_ID etc.
+          BEFORE the user clicks "Connect" and ends up on Facebook's
+          "Invalid App ID" wrench page. The single most-common cause is
+          pasting the entire ".env" line ("FB_APP_ID=1620...") into the
+          Railway value field instead of just the value. */}
+      {status?.envProblems && status.envProblems.length > 0 && (
+        <div className="flex items-start gap-3 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 motion-safe:animate-[fadeUp_300ms_ease-out] dark:border-amber-900/50 dark:bg-amber-950/40">
+          <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-500 text-white">
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+          <div className="min-w-0 flex-1 text-sm">
+            <div className="font-semibold text-amber-900 dark:text-amber-100">
+              ค่า Environment ตั้งผิด — เชื่อม Facebook ไม่ได้
+            </div>
+            {status.envProblems.map((p) => (
+              <div key={p.key} className="mt-1 text-xs text-amber-800 dark:text-amber-200">
+                <code className="font-mono">{p.key}</code>: {p.message}
+              </div>
+            ))}
+            <div className="mt-2 text-[11px] text-amber-700 dark:text-amber-300">
+              วิธีแก้: เปิด Railway → Variables → คลิก {`{`}<code className="font-mono">FB_APP_ID</code>{`}`} →
+              ใส่ <b>เฉพาะตัวเลข</b> (เช่น <code className="font-mono">1620000000</code>) ไม่ต้องใส่ชื่อตัวแปรนำหน้า
+            </div>
+          </div>
+        </div>
       )}
       {/* Token-broken banner — shown when the last send to Facebook or
           Instagram failed with a revoked / expired access-token error.
@@ -1891,6 +1938,25 @@ function LineIntegrationCard(_props: { t: (k: string) => string }) {
         <p className="text-xs text-slate-500 dark:text-slate-400">
           ✓ เชื่อมต่อผ่าน LINE — webhook ตั้งให้อัตโนมัติแล้ว
         </p>
+      )}
+
+      {/* When OAuth isn't wired up at the server (LINE Module Channel env
+          missing) tell the operator EXACTLY what to do, instead of just
+          saying "ยังไม่พร้อม" and leaving them stuck. */}
+      {!connected && !oauthAvailable && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-900 motion-safe:animate-[fadeUp_300ms_ease-out] dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100">
+          <div className="font-semibold">เปิดบริการเชื่อมต่อ LINE อัตโนมัติ</div>
+          <p className="mt-1 text-amber-800 dark:text-amber-200">
+            ทีมงานต้องสมัคร <b>LINE Module Channel</b> ที่ developers.line.biz แล้วใส่ค่า 2 ตัวนี้ใน Railway Variables:
+          </p>
+          <ul className="mt-2 space-y-1 font-mono text-[11px]">
+            <li>• <code>LINE_MODULE_CHANNEL_ID</code></li>
+            <li>• <code>LINE_MODULE_CHANNEL_SECRET</code></li>
+          </ul>
+          <p className="mt-2 text-[11px] text-amber-700 dark:text-amber-300">
+            หลังตั้งค่าเสร็จ ปุ่ม "เชื่อมต่อด้วย LINE" จะใช้งานได้ทันที — ผู้ใช้แต่ละร้านไม่ต้องกรอก token ใดๆ
+          </p>
+        </div>
       )}
 
       {/* One disclosure gates everything technical: webhook URL display,

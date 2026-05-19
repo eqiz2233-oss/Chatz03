@@ -119,9 +119,42 @@ const lineOaToShop = new Map();
  * This is a compat shim — Phase 1B will replace the remaining global
  * references with explicit shopId lookups.
  */
+/**
+ * Read an environment variable defensively.
+ *
+ * Real-world failure modes this defends against — every one observed in
+ * production at least once:
+ *
+ *   1. The user pastes a whole `.env` line into Railway's value field, so
+ *      the value comes through as e.g. `"FB_APP_ID=1620000000"` instead of
+ *      `"1620000000"`. The "FB_APP_ID=" prefix then gets sent verbatim as
+ *      the OAuth `client_id` and Facebook returns "Invalid App ID".
+ *   2. The user wraps the value in quotes thinking it's needed
+ *      (`'"abcd1234"'`). Most upstream APIs reject the literal quote chars.
+ *   3. Leading / trailing whitespace from copy-paste — easy to miss when
+ *      pasted from a Notion page or PDF.
+ *
+ * We trim, strip a matching `${NAME}=` prefix, and strip outermost paired
+ * quotes. Returns `''` when the var is unset.
+ */
+function readEnv(name) {
+  let v = process.env[name];
+  if (typeof v !== 'string') return '';
+  v = v.trim();
+  if (!v) return '';
+  const prefix = `${name}=`;
+  if (v.startsWith(prefix)) v = v.slice(prefix.length).trim();
+  if (v.length >= 2) {
+    const f = v[0];
+    const l = v[v.length - 1];
+    if ((f === '"' && l === '"') || (f === "'" && l === "'")) v = v.slice(1, -1).trim();
+  }
+  return v;
+}
+
 const lineConfig = {
-  channelSecret: (process.env.LINE_CHANNEL_SECRET || '').trim(),
-  channelAccessToken: (process.env.LINE_CHANNEL_ACCESS_TOKEN || '').trim(),
+  channelSecret: readEnv('LINE_CHANNEL_SECRET'),
+  channelAccessToken: readEnv('LINE_CHANNEL_ACCESS_TOKEN'),
   source: null,
   botInfo: null,
 };
@@ -224,8 +257,8 @@ function shopIdForLineDestination(destination) {
  * Secret + Access Token by hand. Requires both env vars to be set; without
  * them the Settings UI falls back to the manual paste form.
  */
-const LINE_MODULE_CHANNEL_ID = (process.env.LINE_MODULE_CHANNEL_ID || '').trim();
-const LINE_MODULE_CHANNEL_SECRET = (process.env.LINE_MODULE_CHANNEL_SECRET || '').trim();
+const LINE_MODULE_CHANNEL_ID = readEnv('LINE_MODULE_CHANNEL_ID');
+const LINE_MODULE_CHANNEL_SECRET = readEnv('LINE_MODULE_CHANNEL_SECRET');
 function lineOauthAvailable() {
   return Boolean(LINE_MODULE_CHANNEL_ID && LINE_MODULE_CHANNEL_SECRET);
 }
@@ -258,16 +291,26 @@ let fbHasAnyPage = false;
 let fbConfigured = false;
 
 function syncFbConfigFromEnv() {
-  fbConfig.appSecret = (process.env.FB_APP_SECRET || '').trim();
-  fbConfig.verifyToken = (process.env.FB_VERIFY_TOKEN || '').trim();
-  fbConfig.apiVersion = (process.env.FB_GRAPH_VERSION || 'v21.0').trim();
-  fbConfig.appId = (process.env.FB_APP_ID || '').trim();
-  fbConfig.fallbackPageAccessToken = (process.env.FB_PAGE_ACCESS_TOKEN || '').trim();
+  fbConfig.appSecret = readEnv('FB_APP_SECRET');
+  fbConfig.verifyToken = readEnv('FB_VERIFY_TOKEN');
+  fbConfig.apiVersion = readEnv('FB_GRAPH_VERSION') || 'v21.0';
+  fbConfig.appId = readEnv('FB_APP_ID');
+  fbConfig.fallbackPageAccessToken = readEnv('FB_PAGE_ACCESS_TOKEN');
   fbHasVerify = Boolean(fbConfig.verifyToken);
   fbHasAppSecret = Boolean(fbConfig.appSecret);
-  fbOauthAvailable = Boolean(fbConfig.appId && fbConfig.appSecret);
+  // Treat OAuth as available only when the App ID actually *looks* like
+  // a Facebook App ID — pure digits, 8–20 long. This filters out the
+  // common "FB_APP_ID=162..." paste mistake where the env value still
+  // carries the variable name + '='. We'd rather show the user a clear
+  // setup error than redirect them to Facebook's "Invalid App ID" page.
+  fbOauthAvailable = isPlausibleFbAppId(fbConfig.appId) && fbConfig.appSecret.length >= 10;
   fbConfigured = fbHasVerify;
   refreshFbState();
+}
+
+/** Cheap shape check — Facebook App IDs are 64-bit numeric strings. */
+function isPlausibleFbAppId(v) {
+  return typeof v === 'string' && /^\d{8,20}$/.test(v);
 }
 
 syncFbConfigFromEnv();
@@ -2011,8 +2054,10 @@ function lineIntegrationStatusPayload(req) {
     // Hint which env vars are present so the UI can show "using server env"
     // vs "saved from Settings".
     envPresent: {
-      LINE_CHANNEL_SECRET: Boolean((process.env.LINE_CHANNEL_SECRET || '').trim()),
-      LINE_CHANNEL_ACCESS_TOKEN: Boolean((process.env.LINE_CHANNEL_ACCESS_TOKEN || '').trim()),
+      LINE_CHANNEL_SECRET: Boolean(readEnv('LINE_CHANNEL_SECRET')),
+      LINE_CHANNEL_ACCESS_TOKEN: Boolean(readEnv('LINE_CHANNEL_ACCESS_TOKEN')),
+      LINE_MODULE_CHANNEL_ID: Boolean(LINE_MODULE_CHANNEL_ID),
+      LINE_MODULE_CHANNEL_SECRET: Boolean(LINE_MODULE_CHANNEL_SECRET),
     },
   };
 }
@@ -2031,8 +2076,8 @@ app.get('/api/line/integration/status', async (req, res) => {
   } else {
     // Fresh shop, never connected — reset compat to env so the UI shows
     // "not configured" rather than another shop's leftover state.
-    lineConfig.channelSecret = (process.env.LINE_CHANNEL_SECRET || '').trim();
-    lineConfig.channelAccessToken = (process.env.LINE_CHANNEL_ACCESS_TOKEN || '').trim();
+    lineConfig.channelSecret = readEnv('LINE_CHANNEL_SECRET');
+    lineConfig.channelAccessToken = readEnv('LINE_CHANNEL_ACCESS_TOKEN');
     lineConfig.source = lineConfig.channelSecret || lineConfig.channelAccessToken ? 'env' : null;
     lineConfig.botInfo = null;
   }
@@ -3040,7 +3085,7 @@ const FB_SCOPES = [
  * Trailing slashes are stripped so the registered redirect URI stays exact.
  */
 function publicBaseUrl(req) {
-  const env = (process.env.PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
+  const env = readEnv('PUBLIC_BASE_URL').replace(/\/+$/, '');
   if (env) return env;
   const proto = (req.headers['x-forwarded-proto'] || (req.secure ? 'https' : 'http')).toString().split(',')[0].trim();
   const host = (req.headers['x-forwarded-host'] || req.headers.host || '').toString().trim();
@@ -3071,6 +3116,27 @@ app.get('/api/fb/integration/status', async (_req, res) => {
   const allConnectedPages = listPages();
   const anyPageBroken = allConnectedPages.some((p) => pageHealth[p.id]?.healthy === false);
 
+  // Flag malformed env values — most often FB_APP_ID still carrying its
+  // own variable name as a prefix. Surfaced in the Settings UI so the
+  // user can fix the env without clicking through to Facebook first.
+  const envProblems = [];
+  if (fbConfig.appId && !isPlausibleFbAppId(fbConfig.appId)) {
+    envProblems.push({
+      key: 'FB_APP_ID',
+      kind: 'bad_format',
+      message:
+        'FB_APP_ID ต้องเป็นตัวเลขล้วน (8–20 หลัก) แต่ค่าที่ตั้งไว้ไม่ใช่ ' +
+        'อาจจะติด "FB_APP_ID=" นำหน้า — ให้ใส่เฉพาะตัวเลข',
+    });
+  }
+  if (fbConfig.appSecret && fbConfig.appSecret.length < 10) {
+    envProblems.push({
+      key: 'FB_APP_SECRET',
+      kind: 'too_short',
+      message: 'FB_APP_SECRET สั้นผิดปกติ — เช็คว่าวางถูกค่า',
+    });
+  }
+
   res.json({
     connected: webhookReady || replyEnabled,
     webhookReady,
@@ -3084,6 +3150,7 @@ app.get('/api/fb/integration/status', async (_req, res) => {
     apiVersion: fbConfig.apiVersion,
     pageHealth,
     needsReconnect: anyPageBroken,
+    envProblems,
     /** Booleans only — helps confirm Railway/production actually loaded each key (names must match exactly). */
     envPresent: {
       FB_APP_ID: Boolean(fbConfig.appId),
@@ -3096,10 +3163,25 @@ app.get('/api/fb/integration/status', async (_req, res) => {
 
 app.get('/api/fb/oauth/start', (req, res) => {
   syncFbConfigFromEnv();
-  if (!fbOauthAvailable) {
-    return res
-      .status(400)
-      .send('FB_APP_ID and FB_APP_SECRET must be set in .env before using Connect Facebook.');
+  // Validate BEFORE redirecting to facebook.com — if FB_APP_ID is malformed
+  // (e.g. someone pasted "FB_APP_ID=162..." into Railway's value field) the
+  // user otherwise lands on Facebook's "Invalid App ID" wrench page with no
+  // way to know what's wrong. Bouncing them back to Settings with a
+  // structured error is much more useful.
+  if (!fbConfig.appId) {
+    return res.redirect(302, '/settings?fbConnect=missing_app_id');
+  }
+  if (!isPlausibleFbAppId(fbConfig.appId)) {
+    console.error(
+      '[FB OAuth] refusing to redirect: FB_APP_ID is not a numeric string ' +
+      `(got length ${fbConfig.appId.length}, sample "${fbConfig.appId.slice(0, 32)}…"). ` +
+      'Most likely the Railway env value contains the variable name as a prefix ' +
+      '(e.g. "FB_APP_ID=1620000000") — set just the numeric ID instead.',
+    );
+    return res.redirect(302, '/settings?fbConnect=bad_app_id');
+  }
+  if (!fbConfig.appSecret || fbConfig.appSecret.length < 10) {
+    return res.redirect(302, '/settings?fbConnect=missing_app_secret');
   }
   const state = crypto.randomBytes(16).toString('hex');
   fbOauthStates.set(state, { createdAt: Date.now() });

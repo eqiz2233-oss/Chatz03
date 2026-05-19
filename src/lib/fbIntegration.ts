@@ -30,6 +30,13 @@ export interface FbPageHealthRecord {
   at: string;
 }
 
+export interface FbEnvProblem {
+  key: string;
+  /** Stable code so the UI can branch; `message` is a friendly Thai string. */
+  kind: 'bad_format' | 'too_short' | string;
+  message: string;
+}
+
 export interface FbIntegrationStatus {
   /** True when webhook verify token and/or a Page token is present (channel can be live). */
   connected: boolean;
@@ -54,6 +61,12 @@ export interface FbIntegrationStatus {
   pageHealth?: Record<string, FbPageHealthRecord>;
   /** True if any currently-connected Page has a token-style error pending. */
   needsReconnect?: boolean;
+  /**
+   * Server-side env value problems (most common: FB_APP_ID still carries
+   * the `FB_APP_ID=` prefix because the whole .env line was pasted into
+   * the Railway value field). Empty array when everything looks sane.
+   */
+  envProblems?: FbEnvProblem[];
   /** Which env vars the running server sees (never includes secret values). */
   envPresent?: FbIntegrationEnvPresent | null;
 }
