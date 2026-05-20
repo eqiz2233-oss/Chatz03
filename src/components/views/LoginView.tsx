@@ -3,12 +3,14 @@ import { useAuth } from '../../context/AuthContext';
 import { AuthShell } from '../auth/AuthShell';
 import {
   AuthError,
+  CollisionBanner,
   OauthRow,
   PasswordInput,
   authInputClass,
   authSubmitClass,
   mapSigninError,
   useOauth,
+  type OauthCollisionInfo,
 } from '../auth/shared';
 
 /**
@@ -50,8 +52,23 @@ export function LoginView() {
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  /** Set when an OAuth login succeeds with the provider but a Chatz
+   *  account on that email was created through a different method. */
+  const [collision, setCollision] = useState<OauthCollisionInfo | null>(null);
 
-  const { oauth, googleBtnRef, handleFacebook, handleLine, handleProviderUnavailable } = useOauth(setErr, setBusy);
+  const { oauth, googleBtnRef, handleFacebook, handleLine, handleProviderUnavailable } = useOauth(
+    setErr,
+    setBusy,
+    // When the collision banner shows we want to focus the username
+    // field for fast keyboard re-entry — pre-fill if we know it.
+    (info) => {
+      setErr(null);
+      setCollision(info);
+      if (info.existingMethods.includes('password') && info.existingUsername) {
+        setUsername(info.existingUsername);
+      }
+    },
+  );
 
   // Detect ?reset=<token> from the password-reset email and switch to
   // reset mode + prefetch a preview of which account the token belongs to.
@@ -74,6 +91,35 @@ export function LoginView() {
         setErr('โหลดข้อมูลรีเซ็ตไม่สำเร็จ');
       }
     })();
+  }, []);
+
+  // Email-collision redirect from a server-side OAuth callback (currently
+  // only the LINE flow uses redirect; Google + Facebook surface the same
+  // info via JSON from their POST endpoints). The query carries the
+  // provider that was attempted, the methods the existing account
+  // actually supports, and an optional pre-fill hint.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('signin') !== 'email_in_use') return;
+    const providerRaw = (params.get('provider') || '').toLowerCase();
+    const provider: OauthCollisionInfo['provider'] =
+      providerRaw === 'facebook' || providerRaw === 'line' || providerRaw === 'google'
+        ? providerRaw
+        : 'line';
+    const existingMethods = (params.get('existing') || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const existingUsername = params.get('hint');
+    const email = params.get('email') || undefined;
+    setCollision({ provider, email, existingUsername, existingMethods });
+    if (existingMethods.includes('password') && existingUsername) {
+      setUsername(existingUsername);
+    }
+    // Strip the query so refresh doesn't reshow it.
+    const u = new URL(window.location.href);
+    ['signin', 'provider', 'existing', 'hint', 'email'].forEach((k) => u.searchParams.delete(k));
+    window.history.replaceState({}, '', u.pathname + (u.search || '') + u.hash);
   }, []);
 
   // LINE Login round-trips through the server. When it fails, the server
@@ -209,6 +255,12 @@ export function LoginView() {
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
             ยินดีต้อนรับกลับ พร้อมเริ่มงานวันนี้
           </p>
+
+          {collision && (
+            <div className="mt-4">
+              <CollisionBanner info={collision} onDismiss={() => setCollision(null)} />
+            </div>
+          )}
 
           <form onSubmit={onSubmitSignin} className="mt-5 space-y-2.5">
             <input

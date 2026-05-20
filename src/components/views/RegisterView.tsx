@@ -3,12 +3,14 @@ import { useAuth } from '../../context/AuthContext';
 import { AuthShell } from '../auth/AuthShell';
 import {
   AuthError,
+  CollisionBanner,
   OauthRow,
   PasswordInput,
   authInputClass,
   authSubmitClass,
   mapSignupError,
   useOauth,
+  type OauthCollisionInfo,
 } from '../auth/shared';
 
 /**
@@ -30,8 +32,16 @@ export function RegisterView() {
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [collision, setCollision] = useState<OauthCollisionInfo | null>(null);
 
-  const { oauth, googleBtnRef, handleFacebook, handleLine, handleProviderUnavailable } = useOauth(setErr, setBusy);
+  const { oauth, googleBtnRef, handleFacebook, handleLine, handleProviderUnavailable } = useOauth(
+    setErr,
+    setBusy,
+    (info) => {
+      setErr(null);
+      setCollision(info);
+    },
+  );
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -57,6 +67,12 @@ export function RegisterView() {
       <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
         เริ่มใช้งานฟรี — เชื่อม LINE / Facebook / IG ได้ทันที
       </p>
+
+      {collision && (
+        <div className="mt-4">
+          <CollisionBanner info={collision} onDismiss={() => setCollision(null)} />
+        </div>
+      )}
 
       <form onSubmit={onSubmit} className="mt-5 space-y-2.5">
         <input

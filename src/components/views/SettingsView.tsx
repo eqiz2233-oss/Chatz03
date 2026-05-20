@@ -572,6 +572,8 @@ function SafetyPrivacySection({ t, locale }: { t: (k: string) => string; locale:
       {/* 1. ความปลอดภัยของบัญชี — password (AccountCard) + sessions + 2FA */}
       <AccountCard t={t} locale={locale} />
 
+      <LinkedAccountsCard locale={locale} />
+
       <SectionCard
         title={th ? 'การลงชื่อเข้าใช้และการยืนยันตัวตน' : 'Sign-in & verification'}
         desc={th
@@ -1425,6 +1427,83 @@ const locale = (typeof window !== 'undefined' && document.documentElement.lang =
  * Matches the visual pattern used by Facebook/LINE/IG settings:
  * no decorative emoji, no chip, just a clear hierarchy.
  */
+/**
+ * Linked accounts panel — shows which sign-in methods the current user
+ * supports (password + any linked OAuth providers). Read-only for now;
+ * "Link Google", "Unlink LINE" actions come in a follow-up.
+ *
+ * This is the user-facing complement to the collision banner on /login:
+ * if a customer hits the banner saying "use your existing method", they
+ * can come here later and confirm what's attached, then plan their
+ * follow-up link.
+ */
+function LinkedAccountsCard({ locale }: { locale: Locale }) {
+  const th = locale === 'th';
+  const [methods, setMethods] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const r = await fetch('/api/auth/me/methods', { credentials: 'include' });
+        if (!r.ok) return;
+        const j = (await r.json()) as { methods: string[] };
+        if (!cancelled && Array.isArray(j.methods)) setMethods(j.methods);
+      } catch {
+        /* offline ok — section just won't render anything until next refresh */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Order matters: password first (matches how login is usually offered),
+  // then OAuth providers in the same order as the /login chip row.
+  const providers: Array<{ key: string; label: string }> = [
+    { key: 'password', label: th ? 'รหัสผ่าน' : 'Password' },
+    { key: 'google',   label: 'Google' },
+    { key: 'facebook', label: 'Facebook' },
+    { key: 'line',     label: 'LINE' },
+  ];
+
+  return (
+    <SectionCard
+      title={th ? 'บัญชีที่เชื่อม' : 'Linked accounts'}
+      desc={th
+        ? 'วิธีลงชื่อเข้าใช้ทั้งหมดที่บัญชีนี้รองรับ — กดดูที่หน้าเข้าสู่ระบบเพื่อเลือกวิธี'
+        : 'All sign-in methods this account supports — pick any on the login page'}
+    >
+      {methods === null ? (
+        <div className="py-2 text-xs text-slate-400 dark:text-slate-500">
+          {th ? 'กำลังโหลด…' : 'Loading…'}
+        </div>
+      ) : (
+        <div className="divide-y divide-slate-100 dark:divide-slate-800">
+          {providers.map((p) => {
+            const linked = methods.includes(p.key);
+            return (
+              <SettingRow
+                key={p.key}
+                label={p.label}
+                hint={linked
+                  ? (th ? 'ใช้เข้าสู่ระบบบัญชีนี้ได้' : 'Can be used to sign in to this account')
+                  : (th ? 'ยังไม่ได้เชื่อม' : 'Not linked')}
+              >
+                {linked ? (
+                  <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                    ✓ {th ? 'เชื่อมแล้ว' : 'Linked'}
+                  </span>
+                ) : (
+                  <ComingSoonChip locale={locale} />
+                )}
+              </SettingRow>
+            );
+          })}
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
 function SectionCard({
   title,
   desc,

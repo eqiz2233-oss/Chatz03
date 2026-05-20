@@ -64,6 +64,7 @@ import {
   loginWithGoogle,
   loginWithFacebook,
   loginWithLine,
+  signInMethodsForUser,
   requestPasswordReset,
   previewPasswordReset,
   completePasswordReset,
@@ -3922,6 +3923,21 @@ app.post('/api/auth/oauth/google', rateLimit({ bucket: 'auth-oauth', limit: 10, 
     const credential = String(req.body?.credential || '');
     const result = await loginWithGoogle(credential);
     if (!result.ok) {
+      // 'email_in_use' is special: the user authenticated with Google
+      // successfully but there's already a Chatz account on that email
+      // signed up via a different method. We DON'T auto-merge anymore
+      // (security: account-takeover risk). The frontend posts to this
+      // endpoint via fetch (popup-less GSI flow), so we surface the
+      // collision details in the JSON body — the page reads them and
+      // shows the same banner the LINE / FB redirect flows use.
+      if (result.reason === 'email_in_use') {
+        return res.status(409).json({
+          error: 'email_in_use',
+          existingMethods: result.existingMethods,
+          existingUsername: result.existingUsername,
+          email: result.email,
+        });
+      }
       const code = result.reason === 'google_not_configured' ? 503
         : result.reason === 'invalid_google_token' || result.reason === 'wrong_audience' ? 401
         : 400;
@@ -3941,6 +3957,14 @@ app.post('/api/auth/oauth/facebook', rateLimit({ bucket: 'auth-oauth', limit: 10
     const accessToken = String(req.body?.accessToken || '');
     const result = await loginWithFacebook(accessToken);
     if (!result.ok) {
+      if (result.reason === 'email_in_use') {
+        return res.status(409).json({
+          error: 'email_in_use',
+          existingMethods: result.existingMethods,
+          existingUsername: result.existingUsername,
+          email: result.email,
+        });
+      }
       const code = result.reason === 'facebook_not_configured' ? 503
         : result.reason === 'invalid_fb_token' ? 401
         : 400;
@@ -4058,6 +4082,20 @@ app.get('/api/auth/oauth/line/callback', async (req, res) => {
       email: null,
     });
     if (!result.ok) {
+      if (result.reason === 'email_in_use') {
+        // LINE basic-profile scope doesn't expose email, so this branch
+        // is rare today — but if openid + email scope is enabled and
+        // LINE returns a verified email that already exists in Chatz,
+        // route to the same collision banner the other providers use.
+        const params = new URLSearchParams({
+          signin: 'email_in_use',
+          provider: 'line',
+          existing: (result.existingMethods || []).join(','),
+        });
+        if (result.existingUsername) params.set('hint', result.existingUsername);
+        if (result.email) params.set('email', result.email);
+        return res.redirect(302, '/login?' + params.toString());
+      }
       console.warn('[LINE login] upsertOauthUser failed:', result.reason);
       return res.redirect(302, '/login?lineLogin=session_failed');
     }
@@ -4087,6 +4125,24 @@ app.get('/api/auth/me', async (req, res) => {
     const activeShopId = u.activeShopId || shops[0]?.id || DEFAULT_SHOP_ID;
     const activeShop = shops.find((s) => s.id === activeShopId) || shops[0] || null;
     res.json({ user: u, shops, activeShop });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+/**
+ * Sign-in methods currently attached to the logged-in user.
+ * Used by Settings → Privacy & Security → Linked accounts to show which
+ * providers can sign into this account. Returns an array like
+ * ['password', 'google'] — the same shape consumed by the collision
+ * banner on /login.
+ */
+app.get('/api/auth/me/methods', async (req, res) => {
+  try {
+    const u = req.user;
+    if (!u) return res.status(401).json({ error: 'unauthenticated' });
+    const methods = await signInMethodsForUser(u);
+    res.json({ methods });
   } catch (e) {
     res.status(500).json({ error: String(e?.message || e) });
   }

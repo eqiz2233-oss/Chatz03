@@ -28,7 +28,19 @@ export interface SignupInput {
   email?: string;
 }
 
-type AuthResult = { ok: true } | { ok: false; error: string };
+type AuthResult =
+  | { ok: true }
+  | {
+      ok: false;
+      error: string;
+      /** Set by the OAuth endpoints when the user authenticated successfully
+       *  with the provider, but a Chatz account already exists on that email
+       *  via a different sign-in method. Lets the UI show the "use original
+       *  method first, then link from Settings" banner. */
+      existingMethods?: string[];
+      existingUsername?: string | null;
+      email?: string;
+    };
 
 /** One row from `/api/auth/me`'s `shops` array — a shop the current user is a member of. */
 export interface ShopMembership {
@@ -146,8 +158,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           body: JSON.stringify(body),
         });
         if (!r.ok) {
-          const j = await r.json().catch(() => ({}));
-          return { ok: false, error: j?.error || `HTTP ${r.status}` };
+          const j = (await r.json().catch(() => ({}))) as {
+            error?: string;
+            existingMethods?: string[];
+            existingUsername?: string | null;
+            email?: string;
+          };
+          return {
+            ok: false,
+            error: j?.error || `HTTP ${r.status}`,
+            existingMethods: j?.existingMethods,
+            existingUsername: j?.existingUsername ?? null,
+            email: j?.email,
+          };
         }
         // Refresh from /api/auth/me so we get user + shops + activeShop in one shot.
         await refresh();

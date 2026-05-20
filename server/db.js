@@ -67,6 +67,10 @@ const memo = {
    *  Persistent audit trail so payment disputes can be reconstructed even after
    *  the in-memory `slipsById` cap (500) evicts the record. */
   slipVerifications: [],
+  /** One row per (provider, sub) identity. A single user can have multiple
+   *  rows (e.g. Google + LINE both linked to the same Chatz account).
+   *  See db helpers findUserIdByOauthIdentity / addOauthIdentity below. */
+  userOauthIdentities: [],
   chatEvents: [],
   kv: {},
 };
@@ -91,6 +95,7 @@ function loadJsonSync() {
     memo.orders = Array.isArray(raw?.orders) ? raw.orders : [];
     memo.slipActions = Array.isArray(raw?.slipActions) ? raw.slipActions : [];
     memo.slipVerifications = Array.isArray(raw?.slipVerifications) ? raw.slipVerifications : [];
+    memo.userOauthIdentities = Array.isArray(raw?.userOauthIdentities) ? raw.userOauthIdentities : [];
     memo.chatEvents = Array.isArray(raw?.chatEvents) ? raw.chatEvents : [];
     memo.kv = raw?.kv && typeof raw.kv === 'object' ? raw.kv : {};
   } catch (e) {
@@ -192,6 +197,21 @@ export async function initDb() {
     );
     CREATE INDEX IF NOT EXISTS slip_verifications_shop_idx ON slip_verifications(shop_id, at DESC);
     CREATE INDEX IF NOT EXISTS slip_verifications_ref_idx  ON slip_verifications(shop_id, ref) WHERE ref IS NOT NULL;
+    -- Multi-OAuth identity table. A Chatz user can sign in via password
+    -- AND multiple OAuth providers (Google + LINE + Facebook) simultane-
+    -- ously. The legacy users.oauth_provider/oauth_sub columns are kept
+    -- in place for read fallback during the transition; new writes go
+    -- here. PK (provider, sub) prevents the same Google identity from
+    -- being attached to two Chatz accounts.
+    CREATE TABLE IF NOT EXISTS user_oauth_identities (
+      user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL,
+      sub      TEXT NOT NULL,
+      linked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (provider, sub),
+      UNIQUE (user_id, provider)
+    );
+    CREATE INDEX IF NOT EXISTS user_oauth_identities_user_idx ON user_oauth_identities(user_id);
     CREATE TABLE IF NOT EXISTS chat_events (
       id BIGSERIAL PRIMARY KEY,
       channel TEXT NOT NULL,
@@ -291,6 +311,36 @@ async function runMigrations() {
     for (const o of memo.orders)      { if (!o.shopId) { o.shopId = DEFAULT_SHOP_ID; dirty = true; } }
     for (const s of memo.slipActions) { if (!s.shopId) { s.shopId = DEFAULT_SHOP_ID; dirty = true; } }
     for (const e of memo.chatEvents)  { if (!e.shopId) { e.shopId = DEFAULT_SHOP_ID; dirty = true; } }
+    if (dirty) scheduleJsonSave();
+  }
+
+  // 4. Backfill user_oauth_identities from the legacy single-provider
+  //    columns on the users table. Existing OAuth-linked accounts must
+  //    keep working after we switch the read path to the new table.
+  if (pool) {
+    await pool.query(
+      `INSERT INTO user_oauth_identities (user_id, provider, sub)
+         SELECT id, oauth_provider, oauth_sub FROM users
+         WHERE oauth_provider IS NOT NULL AND oauth_sub IS NOT NULL
+       ON CONFLICT (provider, sub) DO NOTHING`,
+    );
+  } else {
+    let dirty = false;
+    for (const u of memo.users) {
+      if (!u.oauth_provider || !u.oauth_sub) continue;
+      const exists = memo.userOauthIdentities.some(
+        (i) => i.provider === u.oauth_provider && String(i.sub) === String(u.oauth_sub),
+      );
+      if (!exists) {
+        memo.userOauthIdentities.push({
+          user_id: u.id,
+          provider: u.oauth_provider,
+          sub: String(u.oauth_sub),
+          linked_at: u.created_at || new Date().toISOString(),
+        });
+        dirty = true;
+      }
+    }
     if (dirty) scheduleJsonSave();
   }
 }
@@ -628,6 +678,123 @@ export async function findUserByOauth(provider, sub) {
     return rows[0] || null;
   }
   return memo.users.find((x) => x.oauth_provider === provider && String(x.oauth_sub) === String(sub)) || null;
+}
+
+// --------------------------------------------------------------------------
+// MULTI-OAUTH IDENTITIES  (user_oauth_identities table)
+// --------------------------------------------------------------------------
+//
+// Each row is one identity (provider, sub) → user. A single user can have
+// many rows (one per linked provider). PK on (provider, sub) prevents the
+// same identity from being attached to two different Chatz accounts.
+
+/**
+ * Resolve an OAuth identity to a Chatz user_id.
+ * Checks the new identity table first, then falls back to the legacy
+ * users.oauth_provider/oauth_sub columns so existing accounts created
+ * before this migration still log in. (The runMigrations backfill copies
+ * legacy identities into the new table so the fallback only matters
+ * during the boot window of the upgrade deploy.)
+ */
+export async function findUserIdByOauthIdentity(provider, sub) {
+  if (!provider || !sub) return null;
+  if (pool) {
+    const { rows } = await pool.query(
+      'SELECT user_id FROM user_oauth_identities WHERE provider=$1 AND sub=$2 LIMIT 1',
+      [provider, String(sub)],
+    );
+    if (rows[0]?.user_id) return rows[0].user_id;
+    // Legacy fallback.
+    const legacy = await pool.query(
+      'SELECT id FROM users WHERE oauth_provider=$1 AND oauth_sub=$2 LIMIT 1',
+      [provider, String(sub)],
+    );
+    return legacy.rows[0]?.id || null;
+  }
+  const row = memo.userOauthIdentities.find(
+    (i) => i.provider === provider && String(i.sub) === String(sub),
+  );
+  if (row?.user_id) return row.user_id;
+  const legacy = memo.users.find(
+    (u) => u.oauth_provider === provider && String(u.oauth_sub) === String(sub),
+  );
+  return legacy?.id || null;
+}
+
+/**
+ * Link an OAuth identity to an existing Chatz user. Idempotent — calling
+ * twice with the same (userId, provider, sub) is a no-op. Returns false
+ * if the identity is already attached to a *different* user (collision).
+ */
+export async function addOauthIdentity(userId, provider, sub) {
+  if (!userId || !provider || !sub) return false;
+  if (pool) {
+    try {
+      await pool.query(
+        `INSERT INTO user_oauth_identities (user_id, provider, sub)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (provider, sub) DO NOTHING`,
+        [userId, provider, String(sub)],
+      );
+      // Verify the row now belongs to *this* user (not a stale collision
+      // from a different user_id we just no-op'd over).
+      const { rows } = await pool.query(
+        'SELECT user_id FROM user_oauth_identities WHERE provider=$1 AND sub=$2',
+        [provider, String(sub)],
+      );
+      return rows[0]?.user_id === userId;
+    } catch (e) {
+      console.warn('[db] addOauthIdentity failed:', e?.message || e);
+      return false;
+    }
+  }
+  const existing = memo.userOauthIdentities.find(
+    (i) => i.provider === provider && String(i.sub) === String(sub),
+  );
+  if (existing) return existing.user_id === userId;
+  memo.userOauthIdentities.push({
+    user_id: userId,
+    provider,
+    sub: String(sub),
+    linked_at: new Date().toISOString(),
+  });
+  scheduleJsonSave();
+  return true;
+}
+
+/** List every OAuth identity (provider + linked_at) attached to a user. */
+export async function listOauthIdentitiesForUser(userId) {
+  if (!userId) return [];
+  if (pool) {
+    const { rows } = await pool.query(
+      'SELECT provider, sub, linked_at FROM user_oauth_identities WHERE user_id=$1 ORDER BY linked_at',
+      [userId],
+    );
+    return rows;
+  }
+  return memo.userOauthIdentities
+    .filter((i) => i.user_id === userId)
+    .map((i) => ({ provider: i.provider, sub: i.sub, linked_at: i.linked_at }))
+    .sort((a, b) => String(a.linked_at).localeCompare(String(b.linked_at)));
+}
+
+/** Unlink an OAuth identity from a user (used by Settings → Linked accounts). */
+export async function removeOauthIdentity(userId, provider) {
+  if (!userId || !provider) return false;
+  if (pool) {
+    const r = await pool.query(
+      'DELETE FROM user_oauth_identities WHERE user_id=$1 AND provider=$2',
+      [userId, provider],
+    );
+    return (r.rowCount || 0) > 0;
+  }
+  const before = memo.userOauthIdentities.length;
+  memo.userOauthIdentities = memo.userOauthIdentities.filter(
+    (i) => !(i.user_id === userId && i.provider === provider),
+  );
+  const changed = memo.userOauthIdentities.length !== before;
+  if (changed) scheduleJsonSave();
+  return changed;
 }
 
 /** Attach OAuth identity to an existing password user (e.g. linking Google to an existing account). */

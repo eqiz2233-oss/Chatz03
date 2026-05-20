@@ -73,7 +73,26 @@ export function mapOauthError(code: string): string {
  * wiring so both auth screens get identical behavior; the component
  * renders the icon row in the exact style used by both screens.
  */
-export function useOauth(onError: (msg: string | null) => void, onBusy: (b: boolean) => void) {
+/** Shape passed to onCollision when an OAuth login succeeds with the
+ *  provider but the email already belongs to a Chatz account created
+ *  through a different sign-in method. The UI uses this to render a
+ *  banner instead of a flat error toast. */
+export interface OauthCollisionInfo {
+  /** Which provider the user just authenticated with. */
+  provider: 'google' | 'facebook' | 'line';
+  /** Existing account's email (the address Google / Facebook returned). */
+  email?: string;
+  /** Existing account's username — used to pre-fill the password form. */
+  existingUsername?: string | null;
+  /** Sign-in methods the existing account already supports. */
+  existingMethods: string[];
+}
+
+export function useOauth(
+  onError: (msg: string | null) => void,
+  onBusy: (b: boolean) => void,
+  onCollision?: (info: OauthCollisionInfo) => void,
+) {
   const { loginWithGoogle, loginWithFacebook } = useAuth();
   const [oauth, setOauth] = useState<OauthConfig | null>(null);
   const googleBtnRef = useRef<HTMLDivElement>(null);
@@ -100,10 +119,21 @@ export function useOauth(onError: (msg: string | null) => void, onBusy: (b: bool
         onBusy(true);
         const r = await loginWithGoogle(credential);
         onBusy(false);
-        if (!r.ok) onError(mapOauthError(r.error));
+        if (!r.ok) {
+          if (r.error === 'email_in_use' && onCollision && r.existingMethods) {
+            onCollision({
+              provider: 'google',
+              email: r.email,
+              existingUsername: r.existingUsername ?? null,
+              existingMethods: r.existingMethods,
+            });
+          } else {
+            onError(mapOauthError(r.error));
+          }
+        }
       },
     });
-  }, [oauth, loginWithGoogle, onError, onBusy]);
+  }, [oauth, loginWithGoogle, onError, onBusy, onCollision]);
 
   const handleFacebook = useCallback(async () => {
     // When env isn't set we still want to react to the click — show a
@@ -123,8 +153,19 @@ export function useOauth(onError: (msg: string | null) => void, onBusy: (b: bool
     }
     const auth = await loginWithFacebook(r.accessToken);
     onBusy(false);
-    if (!auth.ok) onError(mapOauthError(auth.error));
-  }, [oauth, loginWithFacebook, onError, onBusy]);
+    if (!auth.ok) {
+      if (auth.error === 'email_in_use' && onCollision && auth.existingMethods) {
+        onCollision({
+          provider: 'facebook',
+          email: auth.email,
+          existingUsername: auth.existingUsername ?? null,
+          existingMethods: auth.existingMethods,
+        });
+      } else {
+        onError(mapOauthError(auth.error));
+      }
+    }
+  }, [oauth, loginWithFacebook, onError, onBusy, onCollision]);
 
   /**
    * Click handler used by the always-rendered Google + LINE fallback
@@ -327,6 +368,75 @@ export function AuthError({ message }: { message: string | null }) {
   return (
     <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-[13px] text-rose-700 motion-safe:animate-[fadeUp_300ms_ease-out] dark:border-rose-900/50 dark:bg-rose-950/50 dark:text-rose-200">
       {message}
+    </div>
+  );
+}
+
+// ─── Collision banner ──────────────────────────────────────────────────────
+//
+// Surfaced when the user authenticated with an OAuth provider, but their
+// email already maps to a Chatz account that was created through a
+// different sign-in method. We refuse to silently merge (account-takeover
+// risk) and instead tell them which method to use.
+
+const PROVIDER_TH: Record<string, string> = {
+  password: 'รหัสผ่าน',
+  google: 'Google',
+  facebook: 'Facebook',
+  line: 'LINE',
+};
+
+export function CollisionBanner({
+  info,
+  onDismiss,
+}: {
+  info: OauthCollisionInfo;
+  onDismiss: () => void;
+}) {
+  const triedTh = PROVIDER_TH[info.provider] || info.provider;
+  const existingTh = info.existingMethods.map((m) => PROVIDER_TH[m] || m).join(' / ');
+  const emailMasked = info.email
+    ? info.email.replace(/(^.).+(@.*$)/, '$1***$2')
+    : null;
+  return (
+    <div className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-[13px] motion-safe:animate-[fadeUp_300ms_ease-out] dark:border-amber-900/50 dark:bg-amber-950/40">
+      <div className="flex items-start gap-3">
+        <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-amber-500 text-white">
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="font-semibold text-amber-900 dark:text-amber-100">
+            มีบัญชีอยู่แล้วด้วย {existingTh}
+          </div>
+          <p className="mt-0.5 text-amber-800 dark:text-amber-200">
+            {emailMasked ? (
+              <>
+                บัญชี <b className="font-mono">{emailMasked}</b> สมัครไว้แล้วโดยใช้ <b>{existingTh}</b> —
+                ไม่ใช่ <b>{triedTh}</b>
+              </>
+            ) : (
+              <>บัญชีนี้สมัครไว้แล้วโดยใช้ <b>{existingTh}</b></>
+            )}
+          </p>
+          <p className="mt-2 text-[12px] text-amber-700 dark:text-amber-300">
+            เข้าสู่ระบบด้วย <b>{existingTh}</b> ก่อน
+            แล้วเชื่อม {triedTh} เข้ากับบัญชีของคุณได้ที่ Settings → ความปลอดภัยและความเป็นส่วนตัว
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="ปิด"
+          className="shrink-0 rounded-md p-1 text-amber-700 transition-colors hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900/40"
+        >
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </div>
     </div>
   );
 }

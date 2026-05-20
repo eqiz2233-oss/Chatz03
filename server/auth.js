@@ -14,6 +14,10 @@ import {
   findUserById,
   findUserByEmail,
   findUserByOauth,
+  findUserIdByOauthIdentity,
+  addOauthIdentity,
+  listOauthIdentitiesForUser,
+  removeOauthIdentity,
   countUsers,
   createUser,
   linkOauthToUser,
@@ -316,26 +320,46 @@ export async function loginWithLine({ sub, displayName, avatarUrl, email }) {
  *   3. None → create a new account with a username derived from email/name.
  */
 async function upsertOauthUser({ provider, sub, email, displayName, avatarUrl }) {
-  let user = await findUserByOauth(provider, sub);
-  if (user) {
-    return await establishSession(user);
-  }
-
-  if (email) {
-    const byEmail = await findUserByEmail(email);
-    if (byEmail) {
-      user = await linkOauthToUser(byEmail.id, {
-        oauthProvider: provider,
-        oauthSub: sub,
-        email,
-        avatarUrl,
-      });
-      return await establishSession(user || byEmail);
+  // 1. Returning user — this exact (provider, sub) already maps to a user.
+  //    findUserIdByOauthIdentity checks the new identities table first and
+  //    falls back to the legacy users.oauth_provider/sub columns, so accounts
+  //    that pre-date the multi-identity migration still log in cleanly.
+  const existingUserId = await findUserIdByOauthIdentity(provider, sub);
+  if (existingUserId) {
+    const user = await findUserById(existingUserId);
+    if (user) {
+      // Touch-migrate: ensure the new identities table has the row even if
+      // the lookup hit the legacy fallback.
+      await addOauthIdentity(user.id, provider, sub);
+      return await establishSession(user);
     }
   }
 
-  // Fresh account. Derive a username — start from email local-part or
-  // displayName, sanitize, then disambiguate with a random suffix on collision.
+  // 2. Email collision. DO NOT auto-link silently — that's a known account-
+  //    takeover vector (attacker registers a password account using a
+  //    victim's email; victim later signs in with their real Google and the
+  //    accounts get merged). Instead we bounce the user back to /login and
+  //    ask them to sign in with the original method, then link Google from
+  //    Settings while authenticated. Matches Slack / Notion / Linear.
+  if (email) {
+    const byEmail = await findUserByEmail(email);
+    if (byEmail) {
+      const methods = await signInMethodsForUser(byEmail);
+      return {
+        ok: false,
+        reason: 'email_in_use',
+        // Give the UI enough context to compose a helpful banner. None of
+        // these reveal anything Google didn't already tell us about the
+        // user: the email was just verified by Google upstream.
+        email,
+        existingMethods: methods,
+        existingUsername: byEmail.username || null,
+      };
+    }
+  }
+
+  // 3. Fresh account. Derive a username — start from email local-part or
+  //    displayName, sanitize, then disambiguate with a random suffix.
   const seed = (email && email.split('@')[0])
     || (displayName && displayName.toLowerCase().replace(/\s+/g, '.'))
     || provider;
@@ -351,18 +375,73 @@ async function upsertOauthUser({ provider, sub, email, displayName, avatarUrl })
   }
 
   const id = crypto.randomUUID();
-  user = await createUser({
+  const user = await createUser({
     id,
     username,
     role: 'owner',
     displayName: displayName || null,
     email: email || null,
+    // We still set the legacy columns on first-create for backwards-compat
+    // reads. The identity table is the new source of truth for lookups.
     oauthProvider: provider,
     oauthSub: String(sub),
     avatarUrl: avatarUrl || null,
   });
+  await addOauthIdentity(id, provider, sub);
   await addShopMember({ shopId: DEFAULT_SHOP_ID, userId: id, role: 'owner' });
   return await establishSession(user);
+}
+
+/**
+ * Enumerate every way `user` can currently sign in. Used by:
+ *   • the OAuth callback collision path to tell the redirect banner
+ *     which method to suggest ("เข้าสู่ระบบด้วย Google");
+ *   • Settings → Linked accounts to render the per-provider chips.
+ */
+export async function signInMethodsForUser(user) {
+  const methods = [];
+  if (user?.password_hash) methods.push('password');
+  const identities = await listOauthIdentitiesForUser(user.id);
+  for (const id of identities) {
+    if (!methods.includes(id.provider)) methods.push(id.provider);
+  }
+  // Legacy single-provider column — usually superseded by the migration
+  // backfill but kept as belt-and-braces.
+  if (user?.oauth_provider && !methods.includes(user.oauth_provider)) {
+    methods.push(user.oauth_provider);
+  }
+  return methods;
+}
+
+/**
+ * Link a new OAuth identity onto an already-logged-in user. Used by the
+ * Settings → Linked accounts UI: user authenticates first, then proves
+ * ownership of (e.g.) a Google account that hasn't been associated yet.
+ * Refuses if the OAuth identity is already attached to a different user
+ * (returns reason='identity_in_use'), so we never silently steal a
+ * provider's identity from another Chatz account.
+ */
+export async function linkOauthIdentityToCurrentUser(currentUserId, { provider, sub }) {
+  if (!currentUserId || !provider || !sub) return { ok: false, reason: 'bad_input' };
+  const owner = await findUserIdByOauthIdentity(provider, sub);
+  if (owner && owner !== currentUserId) return { ok: false, reason: 'identity_in_use' };
+  const ok = await addOauthIdentity(currentUserId, provider, sub);
+  return ok ? { ok: true } : { ok: false, reason: 'link_failed' };
+}
+
+/** Unlink an OAuth identity from the current user. We forbid removing the
+ *  last sign-in method — without password + zero identities the user would
+ *  be locked out forever. */
+export async function unlinkOauthIdentity(currentUserId, provider) {
+  if (!currentUserId || !provider) return { ok: false, reason: 'bad_input' };
+  const user = await findUserById(currentUserId);
+  if (!user) return { ok: false, reason: 'user_not_found' };
+  const methods = await signInMethodsForUser(user);
+  // Refuse if removing this provider would leave the user with nothing.
+  const after = methods.filter((m) => m !== provider);
+  if (after.length === 0) return { ok: false, reason: 'last_method' };
+  const ok = await removeOauthIdentity(currentUserId, provider);
+  return ok ? { ok: true } : { ok: false, reason: 'unlink_failed' };
 }
 
 export async function logout(token) {
