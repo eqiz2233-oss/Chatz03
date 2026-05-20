@@ -122,6 +122,25 @@ export function LoginView() {
     window.history.replaceState({}, '', u.pathname + (u.search || '') + u.hash);
   }, []);
 
+  // Email verification — the verify link in the email redirects to
+  // /settings?verifyEmail=ok|invalid. If the user clicked from a device
+  // where they are NOT logged in, App.tsx routes them here (LoginView)
+  // and the message would be lost without this handler. Surface the
+  // outcome as a notice banner + strip the query.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const verify = params.get('verifyEmail');
+    if (!verify) return;
+    if (verify === 'ok') {
+      setNotice('ยืนยันอีเมลสำเร็จ ✓ — เข้าสู่ระบบเพื่อเริ่มใช้งาน');
+    } else if (verify === 'invalid') {
+      setErr('ลิงก์ยืนยันอีเมลหมดอายุหรือไม่ถูกต้อง — เข้าสู่ระบบแล้วส่งใหม่ที่ Settings → โปรไฟล์');
+    }
+    const u = new URL(window.location.href);
+    u.searchParams.delete('verifyEmail');
+    window.history.replaceState({}, '', u.pathname + (u.search || '') + u.hash);
+  }, []);
+
   // LINE Login round-trips through the server. When it fails, the server
   // redirects to /login?lineLogin=<reason>. Surface a clear Thai error
   // instead of leaving the user to guess. Then strip the query so a

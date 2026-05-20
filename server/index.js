@@ -53,6 +53,7 @@ import {
   updateUserProfile,
   deleteUserAccount,
   findUserByEmail,
+  findUserById,
   findUserByUsername,
   DEFAULT_SHOP_ID,
 } from './db.js';
@@ -783,6 +784,15 @@ async function enrichIgProfile(igsid, thread, igBusinessAccountId) {
       const msg = d.error.message || String(d.error);
       console.warn(`IG getProfile error [code=${code}] igsid=${igsid}:`, msg);
       thread.profileError = `IG#${code}: ${msg}`;
+      // Same persistent-error freeze as the Facebook path — without it,
+      // a revoked IG token would cause /v21.0/{igsid} to be retried
+      // every 30 s forever. The IG-side targetId for unfreezing is the
+      // IG Business Account ID, not the Page ID; we pass that through
+      // so OAuth reconnect via markMetaPageHealthy clears it.
+      if (isPersistentFbProfileError(code)) {
+        freezeFbProfileEnrichment(thread, igBusinessAccountId, code, msg);
+        return;
+      }
       await enrichIgProfileViaConversations(igsid, thread, igBusinessAccountId);
       return;
     }
@@ -4221,12 +4231,20 @@ app.get('/api/auth/me', async (req, res) => {
  * providers can sign into this account. Returns an array like
  * ['password', 'google'] — the same shape consumed by the collision
  * banner on /login.
+ *
+ * IMPORTANT: signInMethodsForUser inspects user.password_hash to decide
+ * whether 'password' is a method. req.user is the public-safe view
+ * (password_hash stripped for security), so we must re-load the raw
+ * DB row here. Using req.user directly would silently report every
+ * password-account user as having NO password method.
  */
 app.get('/api/auth/me/methods', async (req, res) => {
   try {
     const u = req.user;
     if (!u) return res.status(401).json({ error: 'unauthenticated' });
-    const methods = await signInMethodsForUser(u);
+    const raw = await findUserById(u.id);
+    if (!raw) return res.status(404).json({ error: 'not_found' });
+    const methods = await signInMethodsForUser(raw);
     res.json({ methods });
   } catch (e) {
     res.status(500).json({ error: String(e?.message || e) });

@@ -133,10 +133,17 @@ async function call(jar, method, path, body) {
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
-  // Node 18+ exposes res.headers.getSetCookie(); older runtimes use .raw().
-  const set = typeof res.headers.getSetCookie === 'function'
-    ? res.headers.getSetCookie()
-    : (res.headers.raw?.()['set-cookie'] || []);
+  // Native fetch on Node 19.7+ exposes res.headers.getSetCookie(); on 18.x
+  // we fall back to .get('set-cookie') which folds multiple Set-Cookie
+  // headers into a comma-joined string. That's lossy in the general case
+  // but fine here — the server only ever emits the one chatz_sid cookie
+  // per response, so we just wrap whatever .get returns into an array.
+  const set =
+    typeof res.headers.getSetCookie === 'function'
+      ? res.headers.getSetCookie()
+      : res.headers.get('set-cookie')
+        ? [res.headers.get('set-cookie')]
+        : [];
   jar.set(set);
   let data = null;
   try { data = await res.json(); } catch { /* non-json */ }
