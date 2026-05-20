@@ -1288,6 +1288,8 @@ const DEFAULT_BOT_SETTINGS: BotSettings = {
 
 interface AiStatus {
   enabled: boolean;
+  /** 'openai' | 'anthropic' | null — null means no API key is wired up. */
+  provider: string | null;
   model: string | null;
   hasApiKey: boolean;
   lastError: { code: string; message: string; at: string } | null;
@@ -1296,13 +1298,25 @@ interface AiStatus {
   totalFailures: number;
 }
 
-/** Map a server-side error code to a short Thai explanation + how-to-fix. */
-function aiErrorExplain(code: string): { th: string; fix: string } {
+/** Human-friendly provider label for the Settings badge. */
+function providerLabel(p: string | null): string {
+  if (p === 'openai') return 'ChatGPT (OpenAI)';
+  if (p === 'anthropic') return 'Claude (Anthropic)';
+  return 'AI';
+}
+
+/** Map a server-side error code to a short Thai explanation + how-to-fix.
+ *  Provider is passed in so the "ตั้ง XYZ ใน Railway" hint names the
+ *  right env var. */
+function aiErrorExplain(code: string, provider: string | null): { th: string; fix: string } {
+  const keyEnv = provider === 'openai' ? 'OPENAI_API_KEY'
+    : provider === 'anthropic' ? 'ANTHROPIC_API_KEY'
+    : 'OPENAI_API_KEY หรือ ANTHROPIC_API_KEY';
   switch (code) {
     case 'invalid_api_key':
       return {
         th: 'API key ไม่ถูกต้องหรือหมดอายุ',
-        fix: 'ตรวจสอบ ANTHROPIC_API_KEY ใน Railway → Variables',
+        fix: `ตรวจสอบ ${keyEnv} ใน Railway → Variables`,
       };
     case 'rate_limited':
       return {
@@ -1313,6 +1327,11 @@ function aiErrorExplain(code: string): { th: string; fix: string } {
       return {
         th: 'คำสั่งที่ส่งให้ AI ไม่ถูกต้อง',
         fix: 'แจ้งทีมงานพร้อมรายละเอียดด้านล่าง',
+      };
+    case 'upstream_error':
+      return {
+        th: `เซิร์ฟเวอร์ของ ${providerLabel(provider)} ขัดข้อง`,
+        fix: 'รอสักครู่ ระบบจะลองเองอีกครั้ง',
       };
     default:
       return {
@@ -1340,6 +1359,7 @@ function AiBotSection({ t }: { t: (k: string) => string }) {
         if (cancelled) return;
         setAi({
           enabled: Boolean(j.enabled),
+          provider: j.provider ?? null,
           model: j.model ?? null,
           hasApiKey: Boolean(j.hasApiKey),
           lastError: j.lastError ?? null,
@@ -1430,9 +1450,11 @@ function AiBotSection({ t }: { t: (k: string) => string }) {
               </svg>
             </div>
             <div className="min-w-0 flex-1 text-sm">
-              <div className="font-semibold text-emerald-900 dark:text-emerald-100">AI ปิดการขาย พร้อมใช้งาน</div>
+              <div className="font-semibold text-emerald-900 dark:text-emerald-100">
+                {providerLabel(ai.provider)} พร้อมใช้งาน
+              </div>
               <div className="mt-0.5 text-xs text-emerald-700 dark:text-emerald-300">
-                ใช้โมเดล <span className="font-mono">{ai.model}</span>
+                โมเดล <span className="font-mono">{ai.model}</span>
                 {ai.totalCalls > 0 && (
                   <> · ตอบไปแล้ว <b>{ai.totalCalls.toLocaleString()}</b> ครั้ง</>
                 )}
@@ -1445,7 +1467,7 @@ function AiBotSection({ t }: { t: (k: string) => string }) {
           </div>
         ) : ai.enabled && ai.lastError ? (
           (() => {
-            const { th: errTh, fix } = aiErrorExplain(ai.lastError.code);
+            const { th: errTh, fix } = aiErrorExplain(ai.lastError.code, ai.provider);
             return (
               <div className="flex items-start gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 dark:border-rose-900/50 dark:bg-rose-950/40">
                 <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-rose-500 text-white">
@@ -1455,7 +1477,7 @@ function AiBotSection({ t }: { t: (k: string) => string }) {
                 </div>
                 <div className="min-w-0 flex-1 text-sm">
                   <div className="font-semibold text-rose-900 dark:text-rose-100">
-                    AI ขัดข้อง — {errTh}
+                    {providerLabel(ai.provider)} ขัดข้อง — {errTh}
                   </div>
                   <div className="mt-0.5 text-xs text-rose-800 dark:text-rose-200">
                     {fix}
@@ -1478,9 +1500,11 @@ function AiBotSection({ t }: { t: (k: string) => string }) {
               </svg>
             </div>
             <div className="min-w-0 flex-1 text-sm">
-              <div className="font-semibold text-amber-900 dark:text-amber-100">AI ปิดการขาย ยังไม่ทำงาน</div>
+              <div className="font-semibold text-amber-900 dark:text-amber-100">AI ตอบกลับยังไม่ทำงาน</div>
               <div className="mt-0.5 text-xs text-amber-800 dark:text-amber-200">
-                ตั้งค่า <span className="font-mono">ANTHROPIC_API_KEY</span> ใน Railway → Variables เพื่อเปิดใช้งาน บอทจะตอบลูกค้าอัตโนมัติด้วยข้อมูลแบรนด์ + สินค้าของคุณ
+                ตั้งค่า <span className="font-mono">OPENAI_API_KEY</span> (สำหรับ ChatGPT) หรือ{' '}
+                <span className="font-mono">ANTHROPIC_API_KEY</span> (สำหรับ Claude) ใน Railway → Variables
+                เพื่อเปิดใช้งาน บอทจะตอบลูกค้าอัตโนมัติด้วยข้อมูลแบรนด์ + สินค้าของคุณ
               </div>
             </div>
           </div>

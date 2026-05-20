@@ -1,62 +1,108 @@
 // AI auto-reply engine.
 //
-// When a customer sends a message in LINE / FB Messenger / Instagram DM, this
-// module asks Claude to write a reply on the shop's behalf — grounded in:
+// When a customer sends a message in LINE / FB Messenger / Instagram DM,
+// this module asks an LLM to write a reply on the shop's behalf —
+// grounded in:
 //   1. The shop's brand voice + payment info from Settings → Bot
 //   2. The product catalog the shop owner has built in My Shop
 //   3. The recent conversation history on this thread
 //
-// Architecture notes:
-//   * Default model is Claude Opus 4.7 (claude-opus-4-7) with adaptive
-//     thinking. Override with AI_MODEL env if a cheaper Haiku/Sonnet is
-//     preferred for a high-volume shop.
-//   * The system prompt + catalog are placed before the cache_control
-//     breakpoint so multiple replies in a busy chat reuse the cache and
-//     burn ~10% of the price for the prefix on subsequent calls. The
-//     volatile customer message stays after the breakpoint.
-//   * No `temperature` / `top_p` / `top_k` — Opus 4.7 removed these.
+// Provider selection (auto-detect from env, override with AI_PROVIDER):
+//
+//   AI_PROVIDER=openai      → OpenAI Chat Completions  (default if
+//                             OPENAI_API_KEY is set)
+//   AI_PROVIDER=anthropic   → Anthropic Messages
+//                             (default if ANTHROPIC_API_KEY is set)
+//
+//   AI_MODEL=...            optional override. Sensible defaults:
+//                             OpenAI    → gpt-4o-mini  (fast, ~10× cheaper
+//                                          than gpt-4o, plenty for Thai
+//                                          shop chat)
+//                             Anthropic → claude-opus-4-7
+//
+// The wire calls are intentionally different (OpenAI via fetch to avoid
+// a new npm dep; Anthropic via the @anthropic-ai/sdk we already ship),
+// but the public surface — generateReply / generateSlipThankYou /
+// isAiEnabled / aiModel / aiHealth — stays identical so callers don't
+// have to know which engine is answering.
 
 import Anthropic from '@anthropic-ai/sdk';
 
-const apiKey = (process.env.ANTHROPIC_API_KEY || '').trim();
-const MODEL = (process.env.AI_MODEL || 'claude-opus-4-7').trim();
-const EFFORT = (process.env.AI_EFFORT || 'medium').trim(); // low | medium | high | xhigh | max
+// ─── Env reads (defensive — strip stray "KEY=" prefix from Railway paste) ──
+
+function readEnv(name) {
+  let v = process.env[name];
+  if (typeof v !== 'string') return '';
+  v = v.trim();
+  if (!v) return '';
+  const prefix = `${name}=`;
+  if (v.startsWith(prefix)) v = v.slice(prefix.length).trim();
+  if (v.length >= 2) {
+    const f = v[0];
+    const l = v[v.length - 1];
+    if ((f === '"' && l === '"') || (f === "'" && l === "'")) v = v.slice(1, -1).trim();
+  }
+  return v;
+}
+
+const ANTHROPIC_KEY = readEnv('ANTHROPIC_API_KEY');
+const OPENAI_KEY = readEnv('OPENAI_API_KEY');
+
+// Pick provider: explicit env wins, otherwise prefer whichever key is set.
+// OpenAI wins ties because gpt-4o-mini is so much cheaper that defaulting
+// to it saves real money for a small shop.
+const explicitProvider = readEnv('AI_PROVIDER').toLowerCase();
+/** @type {'openai'|'anthropic'|null} */
+const PROVIDER =
+  explicitProvider === 'openai' || explicitProvider === 'anthropic'
+    ? explicitProvider
+    : OPENAI_KEY ? 'openai'
+    : ANTHROPIC_KEY ? 'anthropic'
+    : null;
+
+const MODEL =
+  readEnv('AI_MODEL') ||
+  (PROVIDER === 'openai'    ? 'gpt-4o-mini'
+   : PROVIDER === 'anthropic' ? 'claude-opus-4-7'
+   :                            '');
+
+const ANTHROPIC_EFFORT = readEnv('AI_EFFORT') || 'medium'; // anthropic only
 const MAX_RECENT_MESSAGES = 14;
 const MAX_REPLY_TOKENS = 1024;
 
 /** @type {Anthropic|null} */
-let client = null;
-if (apiKey) {
+let anthropicClient = null;
+if (PROVIDER === 'anthropic' && ANTHROPIC_KEY) {
   try {
-    client = new Anthropic({ apiKey });
+    anthropicClient = new Anthropic({ apiKey: ANTHROPIC_KEY });
   } catch (e) {
     console.warn('[ai] Anthropic init failed:', e?.message || e);
   }
 }
 
-export function isAiEnabled() {
-  return Boolean(client);
-}
+// ─── Health surface ────────────────────────────────────────────────────────
 
-export function aiModel() {
-  return MODEL;
-}
-
-/**
- * Last error observed when calling Anthropic. Surfaced via /api/ai/health
- * so the Settings page can show a red "AI offline" badge instead of
- * silently failing every customer reply.
- */
-let lastError = null;       // { code: string, message: string, at: string } | null
-let lastSuccessAt = null;   // ISO string or null
+let lastError = null;       // { code, message, at } | null
+let lastSuccessAt = null;   // ISO string | null
 let totalCalls = 0;
 let totalFailures = 0;
 
+export function isAiEnabled() {
+  if (PROVIDER === 'openai') return Boolean(OPENAI_KEY);
+  if (PROVIDER === 'anthropic') return Boolean(anthropicClient);
+  return false;
+}
+
+export function aiModel() {
+  return isAiEnabled() ? MODEL : null;
+}
+
 export function aiHealth() {
   return {
-    enabled: Boolean(client),
-    model: client ? MODEL : null,
-    hasApiKey: Boolean(apiKey),
+    enabled: isAiEnabled(),
+    provider: PROVIDER,
+    model: aiModel(),
+    hasApiKey: PROVIDER === 'openai' ? Boolean(OPENAI_KEY) : Boolean(ANTHROPIC_KEY),
     lastError,
     lastSuccessAt,
     totalCalls,
@@ -76,17 +122,8 @@ function recordFailure(code, message) {
   lastError = { code, message, at: new Date().toISOString() };
 }
 
-// ---------------------------------------------------------------------------
-// Prompt construction
-// ---------------------------------------------------------------------------
+// ─── Persona + prompt construction (provider-agnostic) ─────────────────────
 
-/**
- * Persona-specific tone-of-voice blocks. The shop owner picks one of these
- * in the Auto-reply page; what they pick must noticeably change how the bot
- * speaks, otherwise the setting is decorative — which is the bug this map
- * fixes. Each block is short and prescriptive (not just adjectives) so the
- * model can act on it.
- */
 const PERSONA_TONE = {
   default: [
     'Tone: polite, easy to read, never stiff.',
@@ -186,13 +223,6 @@ function buildCatalogText(products) {
   return lines.join('\n');
 }
 
-/**
- * Convert the in-memory thread to Anthropic message turns. We map
- * customer→user and (agent|ai)→assistant. Adjacent same-role turns are
- * merged because Anthropic accepts them but it confuses the model less.
- * Empty / image-only messages become a short text placeholder so the
- * conversation stays coherent.
- */
 function buildHistoryMessages(threadMessages) {
   if (!Array.isArray(threadMessages)) return [];
   const recent = threadMessages.slice(-MAX_RECENT_MESSAGES);
@@ -217,26 +247,124 @@ function buildHistoryMessages(threadMessages) {
   return out;
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
+// ─── Provider-specific call paths ──────────────────────────────────────────
+
+/**
+ * Common call shape used internally — fed by both the live-reply path and
+ * the slip thank-you path. systemBlocks is split into [base, catalog] so
+ * the Anthropic side can place the ephemeral cache breakpoint between
+ * them; OpenAI just concatenates because Chat Completions has no
+ * equivalent of Anthropic's manual cache_control.
+ */
+async function chatComplete({ systemBlocks, messages, maxTokens }) {
+  if (PROVIDER === 'openai') return chatCompleteOpenAI({ systemBlocks, messages, maxTokens });
+  if (PROVIDER === 'anthropic') return chatCompleteAnthropic({ systemBlocks, messages, maxTokens });
+  return null;
+}
+
+async function chatCompleteOpenAI({ systemBlocks, messages, maxTokens }) {
+  // OpenAI accepts a single system message; concatenate the blocks.
+  const systemText = systemBlocks.filter(Boolean).join('\n\n');
+  try {
+    const r = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${OPENAI_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: maxTokens,
+        // 0.7 is a sensible middle for shop chat — coherent but not robotic.
+        // Lower (0.3) if a shop reports the bot improvising too much.
+        temperature: 0.7,
+        messages: [
+          { role: 'system', content: systemText },
+          ...messages,
+        ],
+      }),
+    });
+    if (!r.ok) {
+      const errPayload = await r.json().catch(() => ({}));
+      const message = errPayload?.error?.message || `HTTP ${r.status}`;
+      const code =
+        r.status === 401 ? 'invalid_api_key'
+        : r.status === 429 ? 'rate_limited'
+        : r.status >= 500 ? 'upstream_error'
+        : 'bad_request';
+      console.warn('[ai] OpenAI failure', r.status, message);
+      recordFailure(code, message);
+      return null;
+    }
+    const data = await r.json();
+    const txt = data?.choices?.[0]?.message?.content?.trim() || '';
+    if (txt) {
+      recordSuccess();
+      return txt;
+    }
+    // Successful call, just no usable text — don't count as a failure.
+    recordSuccess();
+    return null;
+  } catch (e) {
+    const message = String(e?.message || e);
+    console.warn('[ai] OpenAI exception:', message);
+    recordFailure('unknown', message);
+    return null;
+  }
+}
+
+async function chatCompleteAnthropic({ systemBlocks, messages, maxTokens }) {
+  if (!anthropicClient) return null;
+  try {
+    const response = await anthropicClient.messages.create({
+      model: MODEL,
+      max_tokens: maxTokens,
+      thinking: { type: 'adaptive' },
+      output_config: { effort: ANTHROPIC_EFFORT },
+      system: [
+        { type: 'text', text: systemBlocks[0] || '' },
+        { type: 'text', text: systemBlocks[1] || '', cache_control: { type: 'ephemeral' } },
+      ],
+      messages,
+    });
+    for (const block of response.content) {
+      if (block.type === 'text' && block.text) {
+        const txt = block.text.trim();
+        if (txt) {
+          recordSuccess();
+          return txt;
+        }
+      }
+    }
+    recordSuccess();
+    return null;
+  } catch (e) {
+    const message = String(e?.message || e);
+    if (e instanceof Anthropic.RateLimitError) {
+      console.warn('[ai] Anthropic rate limited');
+      recordFailure('rate_limited', message);
+    } else if (e instanceof Anthropic.AuthenticationError) {
+      console.error('[ai] invalid ANTHROPIC_API_KEY');
+      recordFailure('invalid_api_key', message);
+    } else if (e instanceof Anthropic.BadRequestError) {
+      console.error('[ai] Anthropic bad request:', message);
+      recordFailure('bad_request', message);
+    } else {
+      console.warn('[ai] Anthropic reply failed:', message);
+      recordFailure('unknown', message);
+    }
+    return null;
+  }
+}
+
+// ─── Public API ────────────────────────────────────────────────────────────
 
 /**
  * Generate a reply to the latest customer message. Returns null on any
  * disabled / error path so the caller can decide whether to stay silent.
- *
- * @param {Object} params
- * @param {string} params.customerText       The latest message from the customer
- * @param {string} params.customerName
- * @param {'line'|'fb'|'ig'} params.channel
- * @param {Array}  params.threadMessages     Existing thread messages (oldest → newest)
- * @param {Array}  params.products
- * @param {Object} params.botSettings
- * @param {'th'|'en'} [params.locale]
- * @returns {Promise<string|null>}
  */
 export async function generateReply(params) {
-  if (!client) return null;
+  if (!isAiEnabled()) return null;
   const customerText = String(params?.customerText || '').trim();
   if (!customerText) return null;
 
@@ -251,98 +379,39 @@ export async function generateReply(params) {
   });
   const catalog = buildCatalogText(products);
 
-  // History already ends at the latest customer turn — don't append it again.
   const messages = buildHistoryMessages(threadMessages);
   if (messages.length === 0) {
     messages.push({ role: 'user', content: customerText });
   }
 
-  try {
-    const response = await client.messages.create({
-      model: MODEL,
-      max_tokens: MAX_REPLY_TOKENS,
-      // Adaptive thinking lets Claude decide when to reason: simple "hi"
-      // gets no thinking, "ลด 10% ได้ไหม" gets some.
-      thinking: { type: 'adaptive' },
-      output_config: { effort: EFFORT },
-      // System prompt + catalog are stable across many replies — cache them.
-      // The customer's volatile message is in `messages`, after the breakpoint.
-      system: [
-        { type: 'text', text: systemBase },
-        { type: 'text', text: catalog, cache_control: { type: 'ephemeral' } },
-      ],
-      messages,
-    });
-
-    for (const block of response.content) {
-      if (block.type === 'text' && block.text) {
-        const txt = block.text.trim();
-        if (txt) {
-          recordSuccess();
-          return txt;
-        }
-      }
-    }
-    recordSuccess(); // call succeeded, just no text — not a failure
-    return null;
-  } catch (e) {
-    // Common: AuthenticationError (bad key), RateLimitError. Don't crash the
-    // webhook; log and stay silent so the human can take over.
-    const message = String(e?.message || e);
-    if (e instanceof Anthropic.RateLimitError) {
-      console.warn('[ai] rate limited — staying silent');
-      recordFailure('rate_limited', message);
-    } else if (e instanceof Anthropic.AuthenticationError) {
-      console.error('[ai] invalid ANTHROPIC_API_KEY');
-      recordFailure('invalid_api_key', message);
-    } else if (e instanceof Anthropic.BadRequestError) {
-      console.error('[ai] bad request:', message);
-      recordFailure('bad_request', message);
-    } else {
-      console.warn('[ai] reply failed:', message);
-      recordFailure('unknown', message);
-    }
-    return null;
-  }
+  return await chatComplete({
+    systemBlocks: [systemBase, catalog],
+    messages,
+    maxTokens: MAX_REPLY_TOKENS,
+  });
 }
 
 /**
- * Write a short Thai thank-you message to send right after a customer's
- * payment slip is verified by EasySlip. Used by the slip auto-confirm path.
- *
- * @param {Object} params
- * @param {string} params.customerName
- * @param {number} params.amount
- * @param {string} [params.bank]
- * @param {Object} params.botSettings
+ * Short Thai thank-you for a verified payment slip. Same prompt build as
+ * the live reply but with a synthesized user turn that describes what
+ * just happened.
  */
 export async function generateSlipThankYou({ customerName, amount, bank, botSettings }) {
-  if (!client) return null;
-  try {
-    const sys = buildSystemPrompt({
-      shopName: botSettings?.shopProfile?.shopName || '',
-      brandVoice: botSettings?.brandVoice || '',
-      paymentInfo: botSettings?.paymentInfo || {},
-      locale: 'th',
-      persona: botSettings?.botPersona,
-    });
-    const userMsg =
-      `ลูกค้าชื่อ "${customerName || 'ลูกค้า'}" เพิ่งส่งสลิปโอนเงิน ${amount ? `฿${amount.toLocaleString()}` : ''}${bank ? ` ผ่าน ${bank}` : ''} ` +
-      'และระบบยืนยันว่าสลิปถูกต้องแล้ว เขียนข้อความไทยสั้น ๆ (1-2 ประโยค) ขอบคุณลูกค้า ' +
-      'แล้วขอที่อยู่จัดส่ง + ชื่อผู้รับ + เบอร์โทร พร้อมแจ้งว่าจะส่งภายในวันนี้ค่ะ';
-    const response = await client.messages.create({
-      model: MODEL,
-      max_tokens: 256,
-      thinking: { type: 'adaptive' },
-      output_config: { effort: 'low' },
-      system: sys,
-      messages: [{ role: 'user', content: userMsg }],
-    });
-    for (const block of response.content) {
-      if (block.type === 'text' && block.text) return block.text.trim();
-    }
-  } catch (e) {
-    console.warn('[ai] thank-you failed:', e?.message || e);
-  }
-  return null;
+  if (!isAiEnabled()) return null;
+  const sys = buildSystemPrompt({
+    shopName: botSettings?.shopProfile?.shopName || '',
+    brandVoice: botSettings?.brandVoice || '',
+    paymentInfo: botSettings?.paymentInfo || {},
+    locale: 'th',
+    persona: botSettings?.botPersona,
+  });
+  const userMsg =
+    `ลูกค้าชื่อ "${customerName || 'ลูกค้า'}" เพิ่งส่งสลิปโอนเงิน ${amount ? `฿${amount.toLocaleString()}` : ''}${bank ? ` ผ่าน ${bank}` : ''} ` +
+    'และระบบยืนยันว่าสลิปถูกต้องแล้ว เขียนข้อความไทยสั้น ๆ (1-2 ประโยค) ขอบคุณลูกค้า ' +
+    'แล้วขอที่อยู่จัดส่ง + ชื่อผู้รับ + เบอร์โทร พร้อมแจ้งว่าจะส่งภายในวันนี้ค่ะ';
+  return await chatComplete({
+    systemBlocks: [sys, ''],
+    messages: [{ role: 'user', content: userMsg }],
+    maxTokens: 256,
+  });
 }
