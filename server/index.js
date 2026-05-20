@@ -454,6 +454,45 @@ const fbProfileBackfillAttempts = new Map(); // threadKey -> unix ms
 // enough that the seller's first conversation gets named within the
 // span of reading the very first inbound message.
 const FB_PROFILE_BACKFILL_COOLDOWN_MS = 30 * 1000;
+// Separate, MUCH longer cooldown for threads where Graph returned a
+// persistent error (revoked token, permission denied) — retrying every
+// 30 s would burn API quota and spam logs without ever succeeding until
+// the operator reconnects the Page. The frozen flag is reset by the
+// OAuth reconnect path via markMetaPageHealthy().
+const FB_PROFILE_BACKFILL_FROZEN_MS = 6 * 60 * 60 * 1000; // 6 hours
+/** Map<threadKey, { until: ms; pageId: string|null; reason: string }> */
+const fbProfileFrozen = new Map();
+
+/** FB Graph error codes that won't recover on their own — only a
+ *  user-initiated reconnect or permission change can unblock them. */
+function isPersistentFbProfileError(code) {
+  return (
+    code === 190 ||                  // invalid/expired OAuth token
+    code === 102 ||                  // session expired
+    code === 200 ||                  // permissions error (scope revoked)
+    code === 230 ||                  // PSID locked (user hasn't messaged in 24h)
+    code === 100 ||                  // permission missing
+    (code >= 458 && code <= 467)     // Facebook Login error family
+  );
+}
+
+function freezeFbProfileEnrichment(thread, pageId, code, msg) {
+  fbProfileFrozen.set(thread.key, {
+    until: Date.now() + FB_PROFILE_BACKFILL_FROZEN_MS,
+    pageId: pageId ? String(pageId) : (thread.pageId || null),
+    reason: `FB#${code}: ${msg}`,
+  });
+}
+
+/** Called by the OAuth reconnect path when the user fixes a broken Page —
+ *  any threads frozen because of that Page's token should retry now. */
+function unfreezeFbProfilesForPage(pageId) {
+  if (!pageId) return;
+  const target = String(pageId);
+  for (const [key, info] of fbProfileFrozen) {
+    if (info.pageId === target) fbProfileFrozen.delete(key);
+  }
+}
 
 /**
  * Get-or-create a Meta (Facebook / Instagram) thread. Each thread is
@@ -620,10 +659,21 @@ async function enrichFbProfile(psid, thread, pageId) {
       //   190 = invalid/expired access token
       //   100 = permission missing (`pages_messaging` or `pages_show_list`)
       //   200 = user hasn't messaged this page in 24h (Page-Scoped ID locked)
+      //   230 = PSID locked outside the 24h messaging window
       const code = d.error.code;
       const msg = d.error.message || String(d.error);
       console.warn(`FB getProfile error [code=${code}] psid=${psid}:`, msg);
       thread.profileError = `FB#${code}: ${msg}`;
+      // Persistent error codes (revoked token, permission denied, PSID
+      // locked) won't fix themselves on retry. Freeze enrichment for this
+      // thread until the operator reconnects the Page. Without this we
+      // would re-hit Graph every 30 s forever and burn quota.
+      if (isPersistentFbProfileError(code)) {
+        freezeFbProfileEnrichment(thread, pageId, code, msg);
+        // Don't bother trying the conversations endpoint either — it uses
+        // the same token and would also fail with the same code.
+        return;
+      }
       // Conversations-endpoint fallback for the common case of permission denial.
       await enrichFbProfileViaConversations(psid, thread, pageId);
       return;
@@ -927,6 +977,13 @@ function scheduleFbProfileBackfill() {
   for (const thread of fbThreads.values()) {
     const missingName = looksFallbackDisplayName(thread.displayName, thread.channel);
     if (!missingName) continue;
+    // Frozen because of a persistent token/permission error — skip until
+    // the cooldown expires (6h) or the operator reconnects the Page,
+    // which clears the entry via unfreezeFbProfilesForPage().
+    const frozen = fbProfileFrozen.get(thread.key);
+    if (frozen && frozen.until > now) continue;
+    if (frozen && frozen.until <= now) fbProfileFrozen.delete(thread.key);
+
     const lastTryAt = fbProfileBackfillAttempts.get(thread.key) || 0;
     if (now - lastTryAt < FB_PROFILE_BACKFILL_COOLDOWN_MS) continue;
     fbProfileBackfillAttempts.set(thread.key, now);
@@ -2913,6 +2970,9 @@ function markMetaPageUnhealthy(pageId, classified) {
 
 function markMetaPageHealthy(pageId) {
   if (metaPageHealth.has(pageId)) metaPageHealth.delete(pageId);
+  // Also thaw any profile-enrichment freezes for this Page so display
+  // names start coming through again on the next inbox poll.
+  unfreezeFbProfilesForPage(pageId);
 }
 
 function getMetaPageHealth(pageId) {
@@ -4897,29 +4957,127 @@ app.listen(port, '0.0.0.0', async () => {
     await initDb();
     await bootstrapAuth();
     await loadPersistedLineConfig();
-    console.log(`[db] persistence: ${hasPg ? 'Postgres (DATABASE_URL)' : 'JSON file (set DATABASE_URL for production)'}`);
   } catch (e) {
     console.error('[db] init failed:', e?.message || e);
   }
   const base = (process.env.PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '') || `http://localhost:${port}`;
   console.log(`Backend listening on http://0.0.0.0:${port}`);
-  console.log(`Public base URL : ${base}${process.env.PUBLIC_BASE_URL ? '' : '  (set PUBLIC_BASE_URL in .env for production OAuth)'}`);
-  console.log(`LINE Webhook URL: ${base}/api/line/webhook`);
-  console.log(`FB   Webhook URL: ${base}/api/fb/webhook`);
-  console.log(`FB OAuth start  : ${base}/api/fb/oauth/start`);
-  console.log(`FB OAuth callback (whitelist this in Meta App): ${base}/api/fb/oauth/callback`);
-  console.log(`Loaded .env from: ${path.join(__dirname, '..', '.env')}`);
-  console.log(
-    '[FB env]',
-    `verify=${fbHasVerify ? 1 : 0} pageTok=${fbConfig.fallbackPageAccessToken ? 1 : 0} appId=${fbConfig.appId ? 1 : 0} appSecret=${fbHasAppSecret ? 1 : 0}`,
-  );
-  if (!hasLineSecret()) console.warn('LINE channel secret not set yet — webhook + inbox sync disabled until paste-and-save in Settings → Connect.');
-  if (!hasLineToken()) console.warn('LINE channel access token not set yet — push + profile disabled until paste-and-save in Settings → Connect.');
+  console.log(`Public base URL : ${base}${process.env.PUBLIC_BASE_URL ? '' : '  (set PUBLIC_BASE_URL for production OAuth)'}`);
+
+  // Single consolidated env / feature summary the operator can read at a
+  // glance from Railway logs to confirm Variables are wired correctly.
+  // Each row uses ✓ / ✗ / ⚠ to make a missing key impossible to overlook.
+  logBootEnvSummary(base);
+
   // Restored threads from chat-store may have null displayName — kick a
   // backfill pass so names show up before the first UI poll arrives.
   scheduleLineProfileBackfill();
-  if (!fbHasPageToken()) console.warn('No connected Page yet — user must click Connect Facebook in Settings.');
-  if (!fbHasVerify) console.warn('Missing FB_VERIFY_TOKEN (FB webhook subscription will fail)');
-  if (!fbHasAppSecret) console.warn('Missing FB_APP_SECRET (FB webhook signature check disabled — NOT recommended for production)');
-  if (!fbConfig.appId) console.warn('Missing FB_APP_ID (Connect Facebook button will be disabled)');
 });
+
+/**
+ * Pretty-print one block per feature with a clear status icon. Mirrors
+ * what the user would see in Settings, but ALL in one place at boot —
+ * the fastest way to confirm Railway env is complete.
+ */
+function logBootEnvSummary(baseUrl) {
+  const aiState = aiHealth();
+  const isProd = process.env.NODE_ENV === 'production';
+
+  const row = (icon, label, detail) =>
+    console.log(`  ${icon} ${label.padEnd(28)} ${detail}`);
+
+  console.log('');
+  console.log('═══ Chatz boot summary ═══');
+
+  // Database
+  row(
+    hasPg ? '✓' : (isProd ? '✗' : '⚠'),
+    'Database',
+    hasPg ? 'Postgres (DATABASE_URL)' : 'JSON file fallback (data lost on redeploy)',
+  );
+
+  // Production safety
+  row(
+    isProd ? '✓' : '⚠',
+    'NODE_ENV',
+    isProd ? 'production (Secure cookies on)' : `${process.env.NODE_ENV || '(unset)'} — OAuth cookies will not have Secure flag`,
+  );
+
+  // AI provider
+  row(
+    aiState.enabled ? '✓' : '✗',
+    'AI auto-reply',
+    aiState.enabled
+      ? `${aiState.provider} · ${aiState.model}`
+      : 'disabled (set OPENAI_API_KEY or ANTHROPIC_API_KEY)',
+  );
+
+  // Email (Resend)
+  const emailLive = isEmailEnabled();
+  row(
+    emailLive ? '✓' : '⚠',
+    'Email (Resend)',
+    emailLive
+      ? `from ${readEnv('EMAIL_FROM') || '(default Resend domain)'}`
+      : 'no RESEND_API_KEY — emails logged to console only',
+  );
+
+  // Facebook / Instagram
+  const fbOk = fbConfig.appId && isPlausibleFbAppId(fbConfig.appId) && fbHasAppSecret && fbHasVerify;
+  row(
+    fbOk ? '✓' : '⚠',
+    'Facebook / Instagram',
+    fbOk ? 'OAuth + webhook ready'
+      : !fbConfig.appId ? 'no FB_APP_ID — Connect FB disabled'
+      : !isPlausibleFbAppId(fbConfig.appId) ? 'FB_APP_ID malformed (digits only, no "FB_APP_ID=" prefix)'
+      : !fbHasAppSecret ? 'no FB_APP_SECRET — webhook unsigned'
+      : 'no FB_VERIFY_TOKEN — webhook setup will fail',
+  );
+
+  // LINE Messaging API — Module Channel (OAuth) preferred
+  const lineModuleOk = LINE_MODULE_CHANNEL_ID && LINE_MODULE_CHANNEL_SECRET;
+  const linePasteOk = hasLineSecret() && hasLineToken();
+  row(
+    lineModuleOk ? '✓' : (linePasteOk ? '⚠' : '✗'),
+    'LINE OA messaging',
+    lineModuleOk ? 'Module Channel (one-click OAuth ready)'
+      : linePasteOk ? 'paste-token mode (single OA, env-bound)'
+      : 'disabled — set LINE_MODULE_CHANNEL_ID + SECRET for multi-shop OAuth, or LINE_CHANNEL_* for single-OA env',
+  );
+
+  // LINE Login
+  const lineLogin = readEnv('LINE_LOGIN_CHANNEL_ID') && readEnv('LINE_LOGIN_CHANNEL_SECRET');
+  row(
+    lineLogin ? '✓' : '⚠',
+    'LINE Login',
+    lineLogin ? 'sign-in with LINE enabled' : 'no LINE_LOGIN_CHANNEL_ID — "Sign in with LINE" button shows setup hint on click',
+  );
+
+  // Google Sign-In
+  const googleOk = readEnv('GOOGLE_CLIENT_ID');
+  row(
+    googleOk ? '✓' : '⚠',
+    'Google Sign-In',
+    googleOk ? 'configured' : 'no GOOGLE_CLIENT_ID — "Sign in with Google" button shows setup hint on click',
+  );
+
+  // EasySlip
+  const slipOk = readEnv('EASYSLIP_TOKEN');
+  row(
+    slipOk ? '✓' : '⚠',
+    'EasySlip verification',
+    slipOk ? 'live verification' : 'no EASYSLIP_TOKEN — slips saved to inbox but not auto-verified',
+  );
+
+  console.log('');
+  console.log('  Webhooks:');
+  console.log(`    LINE → ${baseUrl}/api/line/webhook`);
+  console.log(`    FB   → ${baseUrl}/api/fb/webhook`);
+  console.log(`    OAuth callbacks:`);
+  console.log(`      FB:   ${baseUrl}/api/fb/oauth/callback`);
+  console.log(`      LINE: ${baseUrl}/api/line/oauth/callback`);
+  console.log(`      LINE Login: ${baseUrl}/api/auth/oauth/line/callback`);
+  console.log('═══════════════════════════');
+  console.log('');
+}
+
