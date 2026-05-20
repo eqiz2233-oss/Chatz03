@@ -51,7 +51,7 @@ export function LoginView() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const { oauth, googleBtnRef, handleFacebook } = useOauth(setErr, setBusy);
+  const { oauth, googleBtnRef, handleFacebook, handleLine, handleProviderUnavailable } = useOauth(setErr, setBusy);
 
   // Detect ?reset=<token> from the password-reset email and switch to
   // reset mode + prefetch a preview of which account the token belongs to.
@@ -270,23 +270,26 @@ export function LoginView() {
             </a>
           </p>
 
-          {(oauth?.google.enabled || oauth?.facebook.enabled) && (
-            <div className="mt-4">
-              <div className="mb-3 flex items-center gap-3">
-                <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
-                <span className="text-[11px] uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                  หรือ
-                </span>
-                <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
-              </div>
-              <OauthRow
-                oauth={oauth}
-                googleBtnRef={googleBtnRef}
-                onFacebook={handleFacebook}
-                busy={busy}
-              />
+          {/* OAuth row always renders — disabled providers still show a
+              chip so the operator knows which env to wire up next. The
+              individual buttons handle their own "not configured" toast. */}
+          <div className="mt-4">
+            <div className="mb-3 flex items-center gap-3">
+              <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
+              <span className="text-[11px] uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                หรือ
+              </span>
+              <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
             </div>
-          )}
+            <OauthRow
+              oauth={oauth}
+              googleBtnRef={googleBtnRef}
+              onFacebook={handleFacebook}
+              onLine={handleLine}
+              onUnavailable={handleProviderUnavailable}
+              busy={busy}
+            />
+          </div>
         </>
       )}
     </AuthShell>

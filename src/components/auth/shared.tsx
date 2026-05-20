@@ -49,9 +49,12 @@ export function mapSignupError(code: string): string {
 }
 
 export function mapOauthError(code: string): string {
-  if (code === 'google_not_configured') return 'Google Sign-In ยังไม่ได้ตั้งค่าฝั่งเซิร์ฟเวอร์';
+  if (code === 'google_not_configured')
+    return 'Google Sign-In ยังไม่ได้ตั้งค่า — ตั้ง GOOGLE_CLIENT_ID ใน Railway Variables';
   if (code === 'facebook_not_configured')
-    return 'Facebook Login ยังไม่ได้ตั้งค่าฝั่งเซิร์ฟเวอร์ (ตรวจค่า FB_APP_ID + FB_APP_SECRET ใน Railway Variables)';
+    return 'Facebook Login ยังไม่ได้ตั้งค่า — ตั้ง FB_APP_ID + FB_APP_SECRET ใน Railway Variables';
+  if (code === 'line_not_configured')
+    return 'LINE Login ยังไม่ได้ตั้งค่า — ตั้ง LINE_LOGIN_CHANNEL_ID + LINE_LOGIN_CHANNEL_SECRET ใน Railway Variables';
   if (code === 'invalid_google_token' || code === 'wrong_audience') return 'Google ปฏิเสธ token — ลองอีกครั้ง';
   if (code === 'invalid_fb_token') return 'Facebook ปฏิเสธ token — ลองอีกครั้ง';
   if (code === 'email_not_verified') return 'อีเมล Google ยังไม่ได้ยืนยัน';
@@ -103,7 +106,13 @@ export function useOauth(onError: (msg: string | null) => void, onBusy: (b: bool
   }, [oauth, loginWithGoogle, onError, onBusy]);
 
   const handleFacebook = useCallback(async () => {
-    if (!oauth?.facebook.enabled || !oauth.facebook.appId) return;
+    // When env isn't set we still want to react to the click — show a
+    // toast explaining what to set on Railway. The OauthRow renders a
+    // fallback button in that case and calls this same handler.
+    if (!oauth?.facebook.enabled || !oauth.facebook.appId) {
+      onError(mapOauthError('facebook_not_configured'));
+      return;
+    }
     onError(null);
     onBusy(true);
     const r = await loginWithFacebookPopup(oauth.facebook.appId);
@@ -117,63 +126,142 @@ export function useOauth(onError: (msg: string | null) => void, onBusy: (b: bool
     if (!auth.ok) onError(mapOauthError(auth.error));
   }, [oauth, loginWithFacebook, onError, onBusy]);
 
-  return { oauth, googleBtnRef, handleFacebook };
+  /**
+   * Click handler used by the always-rendered Google + LINE fallback
+   * buttons when those providers aren't configured server-side. Picks the
+   * right error code so `mapOauthError` produces a clear Thai message
+   * instead of leaving the user staring at a dead button.
+   */
+  const handleProviderUnavailable = useCallback(
+    (provider: 'google' | 'line' | 'facebook') => {
+      const code =
+        provider === 'google'    ? 'google_not_configured'
+        : provider === 'line'    ? 'line_not_configured'
+        :                          'facebook_not_configured';
+      onError(mapOauthError(code));
+    },
+    [onError],
+  );
+
+  /** Triggered by the LINE chip when the server reports it's configured. */
+  const handleLine = useCallback(() => {
+    if (!oauth?.line.enabled) {
+      handleProviderUnavailable('line');
+      return;
+    }
+    // Server-side redirect flow — leave the page entirely.
+    window.location.href = '/api/auth/oauth/line/start';
+  }, [oauth, handleProviderUnavailable]);
+
+  return { oauth, googleBtnRef, handleFacebook, handleLine, handleProviderUnavailable };
 }
 
+/**
+ * Three OAuth icon chips — Google, Facebook, LINE — *always* rendered, in
+ * that order. Pre-launch operators almost always see one or two providers
+ * disabled because their Railway env isn't wired up yet; hiding the chips
+ * leaves them wondering "why doesn't Google show?". Showing all three and
+ * surfacing the missing env on click is much clearer.
+ *
+ * Behaviour per provider:
+ *   • enabled  — chip is the real OAuth entry point (GSI button / FB
+ *     popup / LINE full-page redirect).
+ *   • disabled — chip still renders identically; clicking shows a Thai
+ *     toast naming the exact Railway var to set.
+ */
 export function OauthRow({
   oauth,
   googleBtnRef,
   onFacebook,
+  onLine,
+  onUnavailable,
   busy,
 }: {
   oauth: OauthConfig | null;
   googleBtnRef: React.RefObject<HTMLDivElement>;
   onFacebook: () => void;
+  onLine: () => void;
+  onUnavailable: (provider: 'google' | 'facebook' | 'line') => void;
   busy: boolean;
 }) {
-  const hasAny = oauth?.google.enabled || oauth?.facebook.enabled;
-  if (!hasAny) return null;
+  const chipCls =
+    'grid h-10 w-10 place-items-center rounded-md border border-slate-300 bg-white transition-all duration-300 ease-out hover:-translate-y-[1px] hover:shadow-md focus-visible:ring-2 focus-visible:ring-brand-300 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900';
   return (
     <div className="flex items-center justify-center gap-3">
-      {oauth?.google.enabled && (
-        // GSI library paints its own square icon button (40×40) here. We
-        // give it a clean wrapper so it visually aligns with the FB chip.
+      {/* Google */}
+      {oauth?.google.enabled ? (
+        // GSI library paints its own square icon button (40×40) into this
+        // ref div. Outer span gives it a clean slot that lines up with the
+        // FB + LINE chips below.
         <div className="inline-flex items-center justify-center" ref={googleBtnRef} />
-      )}
-      {oauth?.facebook.enabled && (
+      ) : (
         <button
           type="button"
-          onClick={onFacebook}
-          disabled={busy}
-          aria-label="เข้าสู่ระบบด้วย Facebook"
-          className="grid h-10 w-10 place-items-center rounded-md border border-slate-300 bg-white transition-all duration-300 ease-out hover:-translate-y-[1px] hover:shadow-md focus-visible:ring-2 focus-visible:ring-brand-300 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900"
+          onClick={() => onUnavailable('google')}
+          aria-label="เข้าสู่ระบบด้วย Google (ยังไม่ได้ตั้งค่า)"
+          className={chipCls}
         >
-          <svg viewBox="0 0 24 24" className="h-5 w-5">
-            <path
-              fill="#1877F2"
-              d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073c0 6.018 4.388 11.012 10.125 11.927v-8.437H7.078v-3.49h3.047V9.413c0-3.026 1.792-4.697 4.533-4.697 1.312 0 2.686.235 2.686.235v2.971h-1.513c-1.49 0-1.953.93-1.953 1.886v2.265h3.328l-.532 3.49h-2.796v8.437C19.612 23.085 24 18.091 24 12.073"
-            />
-          </svg>
+          <GoogleIcon />
         </button>
       )}
-      {oauth?.line.enabled && (
-        // LINE Login uses a full-page redirect (no popup). Plain <a href>
-        // is the right tool — preserves the user's history and avoids
-        // popup-blocker friction we get on iOS Safari.
-        <a
-          href="/api/auth/oauth/line/start"
-          aria-label="เข้าสู่ระบบด้วย LINE"
-          className="grid h-10 w-10 place-items-center rounded-md border border-slate-300 bg-white transition-all duration-300 ease-out hover:-translate-y-[1px] hover:shadow-md focus-visible:ring-2 focus-visible:ring-brand-300 dark:border-slate-700 dark:bg-slate-900"
-        >
-          <svg viewBox="0 0 24 24" className="h-5 w-5">
-            <path
-              fill="#06C755"
-              d="M19.365 9.863c.349 0 .63.285.63.631 0 .345-.281.63-.63.63H17.61v1.125h1.755c.349 0 .63.283.63.63 0 .344-.281.629-.63.629h-2.386c-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.63-.63h2.386c.346 0 .627.285.627.63 0 .349-.281.63-.63.63H17.61v1.125h1.755zM15.61 12.99a.626.626 0 0 1-.627.629.616.616 0 0 1-.51-.252l-2.443-3.317v2.94c0 .344-.282.629-.63.629a.628.628 0 0 1-.628-.629V8.108c0-.27.174-.51.434-.595.058-.022.124-.034.192-.034.197 0 .375.105.495.272l2.462 3.33V8.108c0-.345.282-.63.63-.63.346 0 .627.285.627.63v4.882zM9.116 13.62a.627.627 0 0 1-.629-.629V8.108c0-.345.282-.63.63-.63.345 0 .628.285.628.63v4.883c0 .344-.282.629-.629.629zm-2.249 0H4.481a.628.628 0 0 1-.629-.629V8.108c0-.345.283-.63.63-.63.347 0 .628.285.628.63v4.252h1.757c.345 0 .626.283.626.63 0 .344-.281.629-.626.629M24 10.314C24 4.943 18.615.572 12 .572S0 4.943 0 10.314c0 4.811 4.27 8.842 10.035 9.608.391.082.923.258 1.058.59.12.301.079.766.038 1.08l-.164 1.02c-.045.301-.24 1.186 1.049.645 1.291-.539 6.916-4.078 9.436-6.975C23.176 14.393 24 12.458 24 10.314"
-            />
-          </svg>
-        </a>
-      )}
+
+      {/* Facebook */}
+      <button
+        type="button"
+        onClick={onFacebook}
+        disabled={busy}
+        aria-label="เข้าสู่ระบบด้วย Facebook"
+        className={chipCls}
+      >
+        <svg viewBox="0 0 24 24" className="h-5 w-5">
+          <path
+            fill="#1877F2"
+            d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073c0 6.018 4.388 11.012 10.125 11.927v-8.437H7.078v-3.49h3.047V9.413c0-3.026 1.792-4.697 4.533-4.697 1.312 0 2.686.235 2.686.235v2.971h-1.513c-1.49 0-1.953.93-1.953 1.886v2.265h3.328l-.532 3.49h-2.796v8.437C19.612 23.085 24 18.091 24 12.073"
+          />
+        </svg>
+      </button>
+
+      {/* LINE */}
+      <button
+        type="button"
+        onClick={onLine}
+        aria-label="เข้าสู่ระบบด้วย LINE"
+        className={chipCls}
+      >
+        <svg viewBox="0 0 24 24" className="h-5 w-5">
+          <path
+            fill="#06C755"
+            d="M19.365 9.863c.349 0 .63.285.63.631 0 .345-.281.63-.63.63H17.61v1.125h1.755c.349 0 .63.283.63.63 0 .344-.281.629-.63.629h-2.386c-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.63-.63h2.386c.346 0 .627.285.627.63 0 .349-.281.63-.63.63H17.61v1.125h1.755zM15.61 12.99a.626.626 0 0 1-.627.629.616.616 0 0 1-.51-.252l-2.443-3.317v2.94c0 .344-.282.629-.63.629a.628.628 0 0 1-.628-.629V8.108c0-.27.174-.51.434-.595.058-.022.124-.034.192-.034.197 0 .375.105.495.272l2.462 3.33V8.108c0-.345.282-.63.63-.63.346 0 .627.285.627.63v4.882zM9.116 13.62a.627.627 0 0 1-.629-.629V8.108c0-.345.282-.63.63-.63.345 0 .628.285.628.63v4.883c0 .344-.282.629-.629.629zm-2.249 0H4.481a.628.628 0 0 1-.629-.629V8.108c0-.345.283-.63.63-.63.347 0 .628.285.628.63v4.252h1.757c.345 0 .626.283.626.63 0 .344-.281.629-.626.629M24 10.314C24 4.943 18.615.572 12 .572S0 4.943 0 10.314c0 4.811 4.27 8.842 10.035 9.608.391.082.923.258 1.058.59.12.301.079.766.038 1.08l-.164 1.02c-.045.301-.24 1.186 1.049.645 1.291-.539 6.916-4.078 9.436-6.975C23.176 14.393 24 12.458 24 10.314"
+          />
+        </svg>
+      </button>
     </div>
+  );
+}
+
+/** Multi-color Google "G" mark — used in the fallback chip when GSI is
+ *  not configured (the GSI library would otherwise inject a styled
+ *  button, but it can't without a clientId). */
+function GoogleIcon() {
+  return (
+    <svg viewBox="0 0 48 48" className="h-5 w-5" aria-hidden>
+      <path
+        fill="#FFC107"
+        d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"
+      />
+      <path
+        fill="#FF3D00"
+        d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z"
+      />
+      <path
+        fill="#4CAF50"
+        d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238C29.211 35.091 26.715 36 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"
+      />
+      <path
+        fill="#1976D2"
+        d="M43.611 20.083H42V20H24v8h11.303c-.792 2.237-2.231 4.166-4.087 5.571.001-.001.002-.001.003-.002l6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"
+      />
+    </svg>
   );
 }
 
