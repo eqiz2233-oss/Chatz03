@@ -315,16 +315,29 @@ async function chatCompleteOpenAI({ systemBlocks, messages, maxTokens }) {
 
 async function chatCompleteAnthropic({ systemBlocks, messages, maxTokens }) {
   if (!anthropicClient) return null;
+  // Build the system array carefully — Anthropic rejects content blocks
+  // with empty text. The slip-thank-you path passes ['', catalog] sometimes
+  // (no live catalog context), so we must filter empties out instead of
+  // forwarding them. Only the LAST kept block gets the ephemeral
+  // cache_control so the prefix is still cache-eligible across the
+  // big-text base + smaller volatile bits.
+  const systemArr = [];
+  const kept = systemBlocks.map((s) => (typeof s === 'string' ? s.trim() : '')).filter(Boolean);
+  for (let i = 0; i < kept.length; i++) {
+    const isLast = i === kept.length - 1;
+    systemArr.push(
+      isLast
+        ? { type: 'text', text: kept[i], cache_control: { type: 'ephemeral' } }
+        : { type: 'text', text: kept[i] },
+    );
+  }
   try {
     const response = await anthropicClient.messages.create({
       model: MODEL,
       max_tokens: maxTokens,
       thinking: { type: 'adaptive' },
       output_config: { effort: ANTHROPIC_EFFORT },
-      system: [
-        { type: 'text', text: systemBlocks[0] || '' },
-        { type: 'text', text: systemBlocks[1] || '', cache_control: { type: 'ephemeral' } },
-      ],
+      system: systemArr.length > 0 ? systemArr : undefined,
       messages,
     });
     for (const block of response.content) {

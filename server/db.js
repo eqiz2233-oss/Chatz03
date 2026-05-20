@@ -1000,33 +1000,44 @@ export async function findEmailVerificationToken(token) {
   return { token: r.token, userId: r.user_id, email: r.email, expiresAt: r.expires_at };
 }
 
-/** One-shot: delete the token and stamp users.email_verified_at. */
+/** One-shot: delete the token and stamp users.email_verified_at.
+ *  Returns the consumed token *only if the user's current email still
+ *  matches what the token was issued against*. If the user changed their
+ *  email between "send link" and "click link", we want the caller to see
+ *  null so the UI shows "ลิงก์หมดอายุ" instead of falsely saying
+ *  "verified" when the email_verified_at column wasn't actually stamped. */
 export async function consumeEmailVerificationToken(token) {
   const found = await findEmailVerificationToken(token);
   if (!found) return null;
   if (pool) {
-    // Atomic delete-and-stamp so two parallel callbacks can't both succeed.
-    const r = await pool.query(
+    // Atomic delete first so two parallel callbacks can't both succeed.
+    const del = await pool.query(
       'DELETE FROM email_verification_tokens WHERE token=$1',
       [token],
     );
-    if (r.rowCount === 0) return null;
+    if (del.rowCount === 0) return null;
     // Only flip the verified flag if the email on the user record still
-    // matches what we sent the token to. If the user changed their email
-    // between send and click, the old token becomes meaningless.
-    await pool.query(
+    // matches what we sent the token to. The UPDATE's rowCount tells us
+    // whether the WHERE clause hit — 0 means the email changed and this
+    // token is moot.
+    const upd = await pool.query(
       `UPDATE users
           SET email_verified_at = NOW()
         WHERE id = $1 AND LOWER(COALESCE(email, '')) = $2`,
       [found.userId, found.email],
     );
+    if (upd.rowCount === 0) return null;
     return found;
   }
   memo.emailVerificationTokens = (memo.emailVerificationTokens || []).filter((x) => x.token !== token);
   const u = memo.users.find((x) => x.id === found.userId);
-  if (u && (u.email || '').toLowerCase() === found.email) {
-    u.email_verified_at = new Date().toISOString();
+  if (!u || (u.email || '').toLowerCase() !== found.email) {
+    // Email diverged — token is moot. Token row is already deleted; the
+    // user can request a fresh link from Settings.
+    scheduleJsonSave();
+    return null;
   }
+  u.email_verified_at = new Date().toISOString();
   scheduleJsonSave();
   return found;
 }
