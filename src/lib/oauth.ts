@@ -8,7 +8,16 @@
 export interface OauthConfig {
   google: { enabled: boolean; clientId: string | null };
   facebook: { enabled: boolean; appId: string | null };
+  /** LINE Login uses a full-page redirect flow, so the frontend only
+   *  needs to know whether the server is wired up — never the secret. */
+  line: { enabled: boolean };
 }
+
+const EMPTY_OAUTH_CONFIG: OauthConfig = {
+  google: { enabled: false, clientId: null },
+  facebook: { enabled: false, appId: null },
+  line: { enabled: false },
+};
 
 /**
  * Pull the public OAuth config (which providers the server has env vars for)
@@ -18,9 +27,14 @@ export async function fetchOauthConfig(): Promise<OauthConfig> {
   try {
     const r = await fetch('/api/auth/oauth-config', { credentials: 'include' });
     if (!r.ok) throw new Error(String(r.status));
-    return (await r.json()) as OauthConfig;
+    const j = (await r.json()) as Partial<OauthConfig>;
+    return {
+      google: j.google ?? EMPTY_OAUTH_CONFIG.google,
+      facebook: j.facebook ?? EMPTY_OAUTH_CONFIG.facebook,
+      line: j.line ?? EMPTY_OAUTH_CONFIG.line,
+    };
   } catch {
-    return { google: { enabled: false, clientId: null }, facebook: { enabled: false, appId: null } };
+    return EMPTY_OAUTH_CONFIG;
   }
 }
 
@@ -168,6 +182,16 @@ let fbInitialized = false;
 export async function loginWithFacebookPopup(appId: string): Promise<
   { ok: true; accessToken: string } | { ok: false; reason: string }
 > {
+  // Defensive client-side check. If the server's config call returned a
+  // malformed appId (e.g. still carrying "FB_APP_ID=" prefix because of a
+  // Railway paste mistake) we'd otherwise hand it to FB.init and the
+  // login dialog would either silently fail or open onto Facebook's
+  // "Invalid App ID" wrench page with no way back. Better to short-
+  // circuit here so the calling component can show a clear toast.
+  if (!appId || !/^\d{8,20}$/.test(appId)) {
+    return { ok: false, reason: 'facebook_not_configured' };
+  }
+
   const FB = await awaitFacebook();
   if (!FB) return { ok: false, reason: 'fb_sdk_not_loaded' };
 
@@ -180,16 +204,39 @@ export async function loginWithFacebookPopup(appId: string): Promise<
     }
   }
 
+  // Wrap FB.login in a 45s timeout. The Facebook SDK has a history of
+  // never invoking the callback when the popup is blocked, when the
+  // user closes it via the OS chrome (not the FB UI), or when the
+  // embedded login frame fails to load. Without this timeout the agent
+  // would see nothing on click — "FB ไม่ขึ้นอะไรเลย" — and never know
+  // why. 45s comfortably exceeds a normal login round-trip.
   return new Promise((resolve) => {
-    FB.login(
-      (resp) => {
-        if (resp.status === 'connected' && resp.authResponse?.accessToken) {
-          resolve({ ok: true, accessToken: resp.authResponse.accessToken });
-        } else {
-          resolve({ ok: false, reason: resp.status === 'not_authorized' ? 'not_authorized' : 'cancelled' });
-        }
-      },
-      { scope: 'public_profile,email' },
-    );
+    let settled = false;
+    const finish = (v: { ok: true; accessToken: string } | { ok: false; reason: string }) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      resolve(v);
+    };
+    const timer = window.setTimeout(() => {
+      finish({ ok: false, reason: 'fb_popup_timeout' });
+    }, 45_000);
+    try {
+      FB.login(
+        (resp) => {
+          if (resp.status === 'connected' && resp.authResponse?.accessToken) {
+            finish({ ok: true, accessToken: resp.authResponse.accessToken });
+          } else {
+            finish({
+              ok: false,
+              reason: resp.status === 'not_authorized' ? 'not_authorized' : 'cancelled',
+            });
+          }
+        },
+        { scope: 'public_profile,email' },
+      );
+    } catch (e) {
+      finish({ ok: false, reason: String((e as Error)?.message || e) });
+    }
   });
 }

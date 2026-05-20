@@ -182,7 +182,12 @@ const GOOGLE_TOKENINFO_URL = 'https://oauth2.googleapis.com/tokeninfo';
  * GOOGLE_CLIENT_ID to match.
  */
 export async function loginWithGoogle(credential) {
-  const expectedClientId = (process.env.GOOGLE_CLIENT_ID || '').trim();
+  // Same defensive read as the rest of the codebase — strips a stray
+  // "GOOGLE_CLIENT_ID=" prefix that Railway value fields sometimes carry.
+  const raw = String(process.env.GOOGLE_CLIENT_ID || '').trim();
+  const expectedClientId = raw.startsWith('GOOGLE_CLIENT_ID=')
+    ? raw.slice('GOOGLE_CLIENT_ID='.length).trim()
+    : raw;
   if (!expectedClientId) return { ok: false, reason: 'google_not_configured' };
   if (!credential) return { ok: false, reason: 'no_credential' };
 
@@ -229,8 +234,12 @@ export async function loginWithGoogle(credential) {
  * the Page-OAuth flow).
  */
 export async function loginWithFacebook(accessToken) {
-  const appId = (process.env.FB_APP_ID || '').trim();
-  const appSecret = (process.env.FB_APP_SECRET || '').trim();
+  // Defensive env read — strips the common "FB_APP_ID=..." paste mistake
+  // that would otherwise be forwarded to Facebook as the literal value.
+  const rawId = String(process.env.FB_APP_ID || '').trim();
+  const rawSec = String(process.env.FB_APP_SECRET || '').trim();
+  const appId = rawId.startsWith('FB_APP_ID=') ? rawId.slice('FB_APP_ID='.length).trim() : rawId;
+  const appSecret = rawSec.startsWith('FB_APP_SECRET=') ? rawSec.slice('FB_APP_SECRET='.length).trim() : rawSec;
   if (!appId || !appSecret) return { ok: false, reason: 'facebook_not_configured' };
   if (!accessToken) return { ok: false, reason: 'no_token' };
 
@@ -270,6 +279,30 @@ export async function loginWithFacebook(accessToken) {
     email: profile.email || null,
     displayName: profile.name || null,
     avatarUrl: profile?.picture?.data?.url || null,
+  });
+}
+
+// ─── OAuth: LINE ─────────────────────────────────────────────────────────────
+
+/**
+ * Establish a session for a user authenticated via LINE Login.
+ *
+ * Unlike Google (which we verify via tokeninfo) and Facebook (debug_token),
+ * the LINE auth flow is fully server-side in this codebase: the callback
+ * endpoint already exchanged the authorization code for tokens and fetched
+ * the profile via Bearer auth. By the time this function runs, the (sub,
+ * displayName, avatarUrl) tuple is trusted. We just route into the same
+ * upsert path as the other providers so identity merging-by-email works
+ * uniformly across Google / Facebook / LINE.
+ */
+export async function loginWithLine({ sub, displayName, avatarUrl, email }) {
+  if (!sub) return { ok: false, reason: 'no_sub' };
+  return await upsertOauthUser({
+    provider: 'line',
+    sub: String(sub),
+    email: email || null,
+    displayName: displayName || null,
+    avatarUrl: avatarUrl || null,
   });
 }
 

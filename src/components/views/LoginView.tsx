@@ -76,6 +76,29 @@ export function LoginView() {
     })();
   }, []);
 
+  // LINE Login round-trips through the server. When it fails, the server
+  // redirects to /login?lineLogin=<reason>. Surface a clear Thai error
+  // instead of leaving the user to guess. Then strip the query so a
+  // refresh doesn't re-show it.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const reason = params.get('lineLogin');
+    if (!reason) return;
+    const msg =
+      reason === 'not_configured'    ? 'LINE Login ยังไม่ได้ตั้งค่าฝั่งเซิร์ฟเวอร์ (ต้องตั้ง LINE_LOGIN_CHANNEL_ID + SECRET ใน Railway)'
+      : reason === 'denied'          ? 'ยกเลิกการเข้าสู่ระบบด้วย LINE'
+      : reason === 'bad_state'       ? 'ลิงก์เข้าสู่ระบบหมดอายุ ลองอีกครั้ง'
+      : reason === 'token_failed'    ? 'แลก token กับ LINE ไม่สำเร็จ'
+      : reason === 'profile_failed'  ? 'อ่านโปรไฟล์จาก LINE ไม่สำเร็จ'
+      : reason === 'session_failed'  ? 'สร้างเซสชันไม่สำเร็จ — ลองอีกครั้ง'
+      : reason === 'error'           ? 'เกิดข้อผิดพลาดในการเข้าสู่ระบบด้วย LINE'
+      : null;
+    if (msg) setErr(msg);
+    const u = new URL(window.location.href);
+    u.searchParams.delete('lineLogin');
+    window.history.replaceState({}, '', u.pathname + (u.search || '') + u.hash);
+  }, []);
+
   const switchMode = (next: Mode) => {
     if (next === mode) return;
     setMode(next);

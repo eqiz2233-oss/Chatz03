@@ -50,12 +50,16 @@ export function mapSignupError(code: string): string {
 
 export function mapOauthError(code: string): string {
   if (code === 'google_not_configured') return 'Google Sign-In ยังไม่ได้ตั้งค่าฝั่งเซิร์ฟเวอร์';
-  if (code === 'facebook_not_configured') return 'Facebook Login ยังไม่ได้ตั้งค่าฝั่งเซิร์ฟเวอร์';
+  if (code === 'facebook_not_configured')
+    return 'Facebook Login ยังไม่ได้ตั้งค่าฝั่งเซิร์ฟเวอร์ (ตรวจค่า FB_APP_ID + FB_APP_SECRET ใน Railway Variables)';
   if (code === 'invalid_google_token' || code === 'wrong_audience') return 'Google ปฏิเสธ token — ลองอีกครั้ง';
   if (code === 'invalid_fb_token') return 'Facebook ปฏิเสธ token — ลองอีกครั้ง';
   if (code === 'email_not_verified') return 'อีเมล Google ยังไม่ได้ยืนยัน';
   if (code === 'not_authorized') return 'คุณยังไม่ได้อนุญาตให้แอปเข้าถึงข้อมูล Facebook';
   if (code === 'gsi_not_loaded' || code === 'fb_sdk_not_loaded') return 'โหลด SDK ของผู้ให้บริการไม่สำเร็จ ลองรีเฟรชหน้า';
+  if (code === 'fb_popup_timeout')
+    return 'หน้าต่าง Facebook ไม่ตอบสนอง — ตรวจว่าเบราว์เซอร์ไม่บล็อก popup แล้วลองอีกครั้ง';
+  if (code === 'cancelled') return ''; // user closed — no error toast
   return `OAuth error: ${code}`;
 }
 
@@ -151,6 +155,23 @@ export function OauthRow({
             />
           </svg>
         </button>
+      )}
+      {oauth?.line.enabled && (
+        // LINE Login uses a full-page redirect (no popup). Plain <a href>
+        // is the right tool — preserves the user's history and avoids
+        // popup-blocker friction we get on iOS Safari.
+        <a
+          href="/api/auth/oauth/line/start"
+          aria-label="เข้าสู่ระบบด้วย LINE"
+          className="grid h-10 w-10 place-items-center rounded-md border border-slate-300 bg-white transition-all duration-300 ease-out hover:-translate-y-[1px] hover:shadow-md focus-visible:ring-2 focus-visible:ring-brand-300 dark:border-slate-700 dark:bg-slate-900"
+        >
+          <svg viewBox="0 0 24 24" className="h-5 w-5">
+            <path
+              fill="#06C755"
+              d="M19.365 9.863c.349 0 .63.285.63.631 0 .345-.281.63-.63.63H17.61v1.125h1.755c.349 0 .63.283.63.63 0 .344-.281.629-.63.629h-2.386c-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.63-.63h2.386c.346 0 .627.285.627.63 0 .349-.281.63-.63.63H17.61v1.125h1.755zM15.61 12.99a.626.626 0 0 1-.627.629.616.616 0 0 1-.51-.252l-2.443-3.317v2.94c0 .344-.282.629-.63.629a.628.628 0 0 1-.628-.629V8.108c0-.27.174-.51.434-.595.058-.022.124-.034.192-.034.197 0 .375.105.495.272l2.462 3.33V8.108c0-.345.282-.63.63-.63.346 0 .627.285.627.63v4.882zM9.116 13.62a.627.627 0 0 1-.629-.629V8.108c0-.345.282-.63.63-.63.345 0 .628.285.628.63v4.883c0 .344-.282.629-.629.629zm-2.249 0H4.481a.628.628 0 0 1-.629-.629V8.108c0-.345.283-.63.63-.63.347 0 .628.285.628.63v4.252h1.757c.345 0 .626.283.626.63 0 .344-.281.629-.626.629M24 10.314C24 4.943 18.615.572 12 .572S0 4.943 0 10.314c0 4.811 4.27 8.842 10.035 9.608.391.082.923.258 1.058.59.12.301.079.766.038 1.08l-.164 1.02c-.045.301-.24 1.186 1.049.645 1.291-.539 6.916-4.078 9.436-6.975C23.176 14.393 24 12.458 24 10.314"
+            />
+          </svg>
+        </a>
       )}
     </div>
   );

@@ -63,6 +63,7 @@ import {
   signup as authSignup,
   loginWithGoogle,
   loginWithFacebook,
+  loginWithLine,
   requestPasswordReset,
   previewPasswordReset,
   completePasswordReset,
@@ -1700,6 +1701,8 @@ const AUTH_ALLOWLIST = [
   '/api/auth/oauth-config',
   '/api/auth/oauth/google',
   '/api/auth/oauth/facebook',
+  '/api/auth/oauth/line/start',
+  '/api/auth/oauth/line/callback',
   '/api/shops/invites/', // GET preview is public; POST accept still checks req.user
   '/invite/',            // SPA route — frontend renders the accept screen
 
@@ -3805,18 +3808,37 @@ app.post('/api/auth/login', rateLimit({ bucket: 'auth-login', limit: 5, windowMs
 
 /**
  * Public OAuth config — the frontend reads this to know whether to render
- * the "Sign in with Google / Facebook" buttons and what client IDs to use.
- * Client IDs are public; nothing sensitive returned.
+ * the "Sign in with Google / Facebook / LINE" buttons and what client IDs
+ * to use. Client IDs are public; nothing sensitive returned.
+ *
+ * Crucially we go through `readEnv()` (strips a stray "KEY=" prefix that
+ * the user sometimes pastes into Railway's value field) AND we shape-
+ * check the FB App ID, so we never arm a button that's guaranteed to land
+ * the user on Facebook's "Invalid App ID" wrench page. If the env is bad,
+ * `enabled` is false and the frontend hides the button.
  */
 app.get('/api/auth/oauth-config', (_req, res) => {
+  const googleClientId = readEnv('GOOGLE_CLIENT_ID');
+  const fbAppId = readEnv('FB_APP_ID');
+  const fbAppSecret = readEnv('FB_APP_SECRET');
+  const lineLoginId = readEnv('LINE_LOGIN_CHANNEL_ID');
+  const lineLoginSecret = readEnv('LINE_LOGIN_CHANNEL_SECRET');
   res.json({
     google: {
-      enabled: Boolean((process.env.GOOGLE_CLIENT_ID || '').trim()),
-      clientId: (process.env.GOOGLE_CLIENT_ID || '').trim() || null,
+      enabled: Boolean(googleClientId),
+      clientId: googleClientId || null,
     },
     facebook: {
-      enabled: Boolean((process.env.FB_APP_ID || '').trim() && (process.env.FB_APP_SECRET || '').trim()),
-      appId: (process.env.FB_APP_ID || '').trim() || null,
+      // Hide the FB button until BOTH (a) appId looks valid and (b) the
+      // secret length is plausible. Saves the user from clicking and
+      // getting an unhelpful Facebook error page.
+      enabled: isPlausibleFbAppId(fbAppId) && fbAppSecret.length >= 10,
+      appId: fbAppId || null,
+    },
+    line: {
+      // Server-side redirect flow — frontend just needs to know whether
+      // to render the button, never sees the secret.
+      enabled: Boolean(lineLoginId && lineLoginSecret),
     },
   });
 });
@@ -3929,6 +3951,121 @@ app.post('/api/auth/oauth/facebook', rateLimit({ bucket: 'auth-oauth', limit: 10
   } catch (e) {
     console.error('[auth] facebook login failed:', e?.message || e);
     res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// ─── LINE Login ──────────────────────────────────────────────────────────────
+//
+// Pure server-side OAuth 2.1 flow against access.line.me. We use a full-page
+// redirect (not a popup) so we don't need a window.postMessage bridge in the
+// callback HTML — the agent comes back to /inbox already signed in.
+//
+// Env vars (both required, set on Railway):
+//   LINE_LOGIN_CHANNEL_ID      — public, numeric (LINE Login channel)
+//   LINE_LOGIN_CHANNEL_SECRET  — 32-char hex
+//
+// These are SEPARATE from LINE_MODULE_CHANNEL_* (which powers the shop-side
+// LINE-OA connect flow) and from LINE_CHANNEL_* (Messaging API). The same
+// LINE Developers console issues all three but each is a distinct channel.
+
+/** CSRF state cache for the LINE Login round-trip. Key → createdAt. */
+const lineLoginStates = new Map();
+
+function lineLoginConfig() {
+  return {
+    channelId: readEnv('LINE_LOGIN_CHANNEL_ID'),
+    channelSecret: readEnv('LINE_LOGIN_CHANNEL_SECRET'),
+  };
+}
+
+app.get('/api/auth/oauth/line/start', (req, res) => {
+  const { channelId, channelSecret } = lineLoginConfig();
+  if (!channelId || !channelSecret) {
+    // Same shape as the FB guard: redirect back to /login with a code so
+    // the UI can show a clear Thai error instead of dumping the user on
+    // LINE's generic page.
+    return res.redirect(302, '/login?lineLogin=not_configured');
+  }
+  const state = crypto.randomBytes(16).toString('hex');
+  lineLoginStates.set(state, { createdAt: Date.now() });
+  // GC old states (>10 min)
+  for (const [k, v] of lineLoginStates) {
+    if (Date.now() - v.createdAt > 10 * 60 * 1000) lineLoginStates.delete(k);
+  }
+  const redirectUri = `${publicBaseUrl(req)}/api/auth/oauth/line/callback`;
+  const url =
+    `https://access.line.me/oauth2/v2.1/authorize` +
+    `?response_type=code` +
+    `&client_id=${encodeURIComponent(channelId)}` +
+    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+    `&state=${state}` +
+    `&scope=${encodeURIComponent('profile openid')}` +
+    `&bot_prompt=normal`;
+  res.redirect(302, url);
+});
+
+app.get('/api/auth/oauth/line/callback', async (req, res) => {
+  const { code, state, error } = req.query;
+  if (error) return res.redirect(302, '/login?lineLogin=denied');
+  if (!code || !state || !lineLoginStates.has(String(state))) {
+    return res.redirect(302, '/login?lineLogin=bad_state');
+  }
+  lineLoginStates.delete(String(state));
+
+  const { channelId, channelSecret } = lineLoginConfig();
+  if (!channelId || !channelSecret) {
+    return res.redirect(302, '/login?lineLogin=not_configured');
+  }
+  const redirectUri = `${publicBaseUrl(req)}/api/auth/oauth/line/callback`;
+
+  try {
+    // 1. Exchange auth code for access_token + id_token.
+    const tokRes = await fetch('https://api.line.me/oauth2/v2.1/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code: String(code),
+        redirect_uri: redirectUri,
+        client_id: channelId,
+        client_secret: channelSecret,
+      }),
+    });
+    const tok = await tokRes.json();
+    if (!tokRes.ok || !tok?.access_token) {
+      console.warn('[LINE login] token exchange failed:', tok?.error || tokRes.statusText);
+      return res.redirect(302, '/login?lineLogin=token_failed');
+    }
+
+    // 2. Profile via Bearer.
+    const profRes = await fetch('https://api.line.me/v2/profile', {
+      headers: { Authorization: `Bearer ${tok.access_token}` },
+    });
+    const prof = await profRes.json();
+    if (!profRes.ok || !prof?.userId) {
+      console.warn('[LINE login] profile fetch failed:', prof?.error || profRes.statusText);
+      return res.redirect(302, '/login?lineLogin=profile_failed');
+    }
+
+    // 3. Establish a Chatz session. Email is not in the basic LINE Login
+    //    payload — needs the `email` scope which requires extra screening
+    //    from LINE Business Center. We leave email null; identity merging
+    //    falls back to provider+sub matching, which is fine.
+    const result = await loginWithLine({
+      sub: prof.userId,
+      displayName: prof.displayName || null,
+      avatarUrl: prof.pictureUrl || null,
+      email: null,
+    });
+    if (!result.ok) {
+      console.warn('[LINE login] upsertOauthUser failed:', result.reason);
+      return res.redirect(302, '/login?lineLogin=session_failed');
+    }
+    setSessionCookie(res, result.token);
+    res.redirect(302, '/inbox');
+  } catch (e) {
+    console.error('[LINE login] callback failed:', e?.message || e);
+    res.redirect(302, '/login?lineLogin=error');
   }
 });
 
