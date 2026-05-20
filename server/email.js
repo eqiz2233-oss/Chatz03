@@ -97,6 +97,41 @@ If you didn't request this, you can ignore this email — your account stays as 
   return { text, html };
 }
 
+/**
+ * Render an email-verification email. Sent from Settings → Profile →
+ * "ส่งอีเมลยืนยัน" so the shop owner can prove ownership of the address
+ * they signed up with (Chatz never blocks them from using the app
+ * pre-verification; verification just adds a small "✓ ยืนยันแล้ว" badge
+ * and lets us trust the address for password resets, billing emails,
+ * security notifications, etc.).
+ */
+export function verifyEmailEmail({ name, verifyUrl }) {
+  const display = name || 'there';
+  const text = `Hi ${display},
+
+Please confirm this is your email address by opening:
+${verifyUrl}
+
+The link is valid for 24 hours. If you didn't sign up for Chatz, you
+can ignore this email.
+
+— Chatz
+`;
+  const html = `<!doctype html><html><body style="font:15px/1.6 -apple-system,system-ui,sans-serif;color:#0f172a;max-width:520px;margin:0 auto;padding:24px">
+<p>Hi ${escHtml(display)},</p>
+<p>Please confirm this is your email address on file with Chatz.</p>
+<p style="margin:24px 0">
+  <a href="${escHtml(verifyUrl)}" style="background:#7c3aed;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600">Verify my email</a>
+</p>
+<p style="color:#64748b;font-size:13px">Or paste this link into your browser: <br><code style="background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px">${escHtml(verifyUrl)}</code></p>
+<p style="color:#64748b;font-size:13px">The link is valid for <b>24 hours</b>.</p>
+<hr style="border:0;border-top:1px solid #e2e8f0;margin:24px 0">
+<p style="color:#94a3b8;font-size:12px">If you didn't sign up for Chatz, you can ignore this email.</p>
+<p style="color:#94a3b8;font-size:12px">— Chatz</p>
+</body></html>`;
+  return { text, html };
+}
+
 function escHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({
     '&': '&amp;',

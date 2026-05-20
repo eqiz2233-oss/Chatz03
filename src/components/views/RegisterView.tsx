@@ -29,6 +29,19 @@ export function RegisterView() {
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  /**
+   * Honeypot. A real-looking field that is invisible to humans (CSS
+   * + ARIA + tabIndex=-1) but is sitting right there in the DOM for any
+   * bot that scrapes the form and fills every input. When this value is
+   * non-empty on submit we know the request is automated and refuse it.
+   * The field name `company_website` is deliberately generic so naive
+   * form-fillers don't skip it.
+   */
+  const [companyWebsite, setCompanyWebsite] = useState('');
+  /** Form-render timestamp — bots tend to submit within milliseconds of
+   *  arriving on the page; humans take seconds. We surface this to the
+   *  server so it can ratchet up scrutiny on suspiciously-fast submits. */
+  const [renderedAt] = useState(() => Date.now());
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -51,13 +64,25 @@ export function RegisterView() {
       username: username.trim(),
       password,
       displayName: displayName.trim() || undefined,
-      email: email.trim() || undefined,
+      email: email.trim(),
+      // Anti-bot signals — the honeypot value (should be empty) and how
+      // long the form has been on screen (humans take seconds; bots are
+      // sub-second). The server decides whether to reject.
+      botCheck: {
+        companyWebsite,
+        formAgeMs: Date.now() - renderedAt,
+      },
     });
     setBusy(false);
     if (!result.ok) setErr(mapSignupError(result.error));
   }
 
-  const canSubmit = username.trim().length >= 2 && password.length >= 6;
+  // Email is now required (used for password reset and the verification
+  // flow in Settings). Username and password still required as before.
+  const canSubmit =
+    username.trim().length >= 2 &&
+    password.length >= 6 &&
+    email.trim().length > 3;
 
   return (
     <AuthShell>
@@ -95,9 +120,27 @@ export function RegisterView() {
           autoComplete="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          placeholder="อีเมล (ไม่บังคับ)"
+          placeholder="อีเมล (สำหรับรีเซ็ตรหัสผ่าน)"
+          required
           className={authInputClass}
         />
+        {/* Honeypot field — invisible to humans (off-screen + aria-hidden +
+            tabIndex=-1) but bots that auto-fill every input touch it. If
+            it's not empty at submit time the server treats the request as
+            automated and refuses. autoComplete='off' tells password
+            managers to leave it alone. */}
+        <div aria-hidden="true" className="absolute left-[-9999px] h-0 w-0 overflow-hidden">
+          <label htmlFor="company_website">Company website (leave blank)</label>
+          <input
+            id="company_website"
+            name="company_website"
+            type="text"
+            tabIndex={-1}
+            autoComplete="off"
+            value={companyWebsite}
+            onChange={(e) => setCompanyWebsite(e.target.value)}
+          />
+        </div>
         <PasswordInput
           value={password}
           onChange={setPassword}

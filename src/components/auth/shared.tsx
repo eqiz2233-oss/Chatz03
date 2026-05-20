@@ -42,9 +42,11 @@ export function mapSigninError(code: string): string {
 export function mapSignupError(code: string): string {
   if (code === 'username_taken') return 'ชื่อผู้ใช้นี้ถูกใช้แล้ว ลองชื่ออื่น';
   if (code === 'email_taken') return 'อีเมลนี้ถูกใช้แล้ว';
+  if (code === 'email_required') return 'กรุณาใส่อีเมล — ใช้สำหรับรีเซ็ตรหัสผ่าน';
   if (code === 'bad_username') return 'ชื่อผู้ใช้ใช้ได้แค่ a-z, 0-9, . _ - (2-32 ตัว)';
   if (code === 'password_too_short') return 'รหัสผ่านต้องอย่างน้อย 6 ตัวอักษร';
   if (code === 'bad_email') return 'รูปแบบอีเมลไม่ถูกต้อง';
+  if (code === 'bot_detected') return 'การสมัครถูกระงับ — ตรวจพบสัญญาณการทำงานอัตโนมัติ';
   return `สร้างบัญชีไม่สำเร็จ (${code})`;
 }
 

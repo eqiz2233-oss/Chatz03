@@ -14,6 +14,13 @@ export interface AuthUser {
   role: string;
   displayName: string | null;
   email?: string | null;
+  /** ISO timestamp set when the user clicks the link from a verification
+   *  email. `null` means the email on file hasn't been confirmed yet —
+   *  the user can still use Chatz; the badge in Settings is just absent. */
+  emailVerifiedAt?: string | null;
+  /** Server uses snake_case directly off the DB row in some paths; the
+   *  field is included here so the frontend can read either spelling. */
+  email_verified_at?: string | null;
   avatarUrl?: string | null;
   /** Which OAuth provider seeded this account (if any). */
   oauthProvider?: 'google' | 'facebook' | null;
@@ -26,6 +33,15 @@ export interface SignupInput {
   password: string;
   displayName?: string;
   email?: string;
+  /** Anti-bot signals collected by the signup form. The server inspects
+   *  these but never echoes them back — purely an internal check. */
+  botCheck?: {
+    /** Honeypot input value. Should ALWAYS be empty for real users. */
+    companyWebsite?: string;
+    /** Milliseconds between the form being rendered and the user
+     *  submitting it. Below ~1s strongly suggests an automated post. */
+    formAgeMs?: number;
+  };
 }
 
 type AuthResult =

@@ -27,13 +27,16 @@ import {
   createPasswordResetToken,
   findPasswordResetToken,
   consumePasswordResetToken,
+  createEmailVerificationToken,
+  consumeEmailVerificationToken,
+  isUserEmailVerified,
   kvGet,
   kvSet,
   listShopsForUser,
   isShopMember,
   DEFAULT_SHOP_ID,
 } from './db.js';
-import { sendEmail, passwordResetEmail, isEmailEnabled } from './email.js';
+import { sendEmail, passwordResetEmail, verifyEmailEmail, isEmailEnabled } from './email.js';
 
 const COOKIE_NAME = 'chatz_sid';
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -140,21 +143,25 @@ const USERNAME_REGEX = /^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$/;
  * Create a new password-based account and auto-sign-in.
  *   - Username: 2-32 chars, lowercase alphanumeric + . _ -
  *   - Password: at least 6 chars
- *   - Email optional, but if given must be unique
+ *   - Email REQUIRED — used for password reset, verification, and so the
+ *     account isn't a throwaway. We don't verify ownership at signup
+ *     (the verification flow lives in Settings) but we do require a
+ *     plausibly-formatted address that's unique in the system.
  * Returns the same shape as login() so callers can treat them uniformly.
  */
 export async function signup({ username, password, displayName, email }) {
   const uRaw = String(username || '').trim().toLowerCase();
   const p = String(password || '');
   const dn = displayName ? String(displayName).trim().slice(0, 80) : null;
-  const e = email ? String(email).trim().toLowerCase() : null;
+  const e = email ? String(email).trim().toLowerCase() : '';
 
   if (!USERNAME_REGEX.test(uRaw)) return { ok: false, reason: 'bad_username' };
   if (p.length < 6) return { ok: false, reason: 'password_too_short' };
-  if (e && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return { ok: false, reason: 'bad_email' };
+  if (!e) return { ok: false, reason: 'email_required' };
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return { ok: false, reason: 'bad_email' };
 
   if (await findUserByUsername(uRaw)) return { ok: false, reason: 'username_taken' };
-  if (e && (await findUserByEmail(e))) return { ok: false, reason: 'email_taken' };
+  if (await findUserByEmail(e)) return { ok: false, reason: 'email_taken' };
 
   const hash = await bcrypt.hash(p, 10);
   const id = crypto.randomUUID();
@@ -429,6 +436,65 @@ export async function linkOauthIdentityToCurrentUser(currentUserId, { provider, 
   return ok ? { ok: true } : { ok: false, reason: 'link_failed' };
 }
 
+// ─── Email verification ──────────────────────────────────────────────────────
+//
+// Verification is opt-in and lives in Settings — the user can use Chatz
+// fully unverified. The check exists to:
+//   1. Cut down on throwaway-email signups when paired with the honeypot.
+//   2. Let us trust the address before relying on it for password resets,
+//      billing receipts, security notifications.
+//   3. Earn the user a small "ยืนยันแล้ว ✓" badge they can show.
+//
+// Tokens are 32 random bytes (base64url) and expire after 24h. Tokens are
+// single-use — consume clears the row.
+
+/**
+ * Issue a verification token and email the link.
+ * Caller: Settings → "ส่งอีเมลยืนยัน". Always responds {ok:true} when the
+ * email could plausibly be sent so we don't leak which addresses exist;
+ * the actual provider-side success is logged but not surfaced.
+ */
+export async function sendVerificationEmail({ userId, baseUrl }) {
+  if (!userId || !baseUrl) return { ok: false, reason: 'bad_input' };
+  const user = await findUserById(userId);
+  if (!user?.email) return { ok: false, reason: 'no_email' };
+  if (isUserEmailVerified(user)) return { ok: false, reason: 'already_verified' };
+
+  const token = crypto.randomBytes(32).toString('base64url');
+  await createEmailVerificationToken(user.id, token, user.email);
+  const verifyUrl = `${String(baseUrl).replace(/\/+$/, '')}/api/auth/email/verify/${encodeURIComponent(token)}`;
+  const { text, html } = verifyEmailEmail({
+    name: user.display_name || user.username || '',
+    verifyUrl,
+  });
+  const r = await sendEmail({
+    to: user.email,
+    subject: 'ยืนยันอีเมลของคุณ — Chatz',
+    text,
+    html,
+  });
+  if (!isEmailEnabled() && r.dev) {
+    // Surface the dev-mode log line as a hint to the operator that
+    // RESEND_API_KEY isn't set yet. The HTTP response still claims OK so
+    // the user-facing UX doesn't expose the absence of an email provider.
+    console.warn('[auth] verification email logged to console (no RESEND_API_KEY set)');
+  }
+  return { ok: r.ok, provider: r.dev ? 'dev' : 'live' };
+}
+
+/**
+ * Consume a verification token. On success returns {ok:true, userId, email};
+ * on failure returns {ok:false, reason}. Reasons are intentionally generic
+ * — the user-facing copy turns them into a single "expired or invalid"
+ * line so this endpoint never confirms token-existence to a fishing call.
+ */
+export async function verifyEmailToken(token) {
+  if (!token) return { ok: false, reason: 'invalid' };
+  const consumed = await consumeEmailVerificationToken(String(token));
+  if (!consumed) return { ok: false, reason: 'invalid' };
+  return { ok: true, userId: consumed.userId, email: consumed.email };
+}
+
 /** Unlink an OAuth identity from the current user. We forbid removing the
  *  last sign-in method — without password + zero identities the user would
  *  be locked out forever. */
@@ -502,12 +568,20 @@ export async function setActiveShopForRequest(req, shopId) {
 
 export function publicUser(user, extras = {}) {
   if (!user) return null;
+  // Normalize the email-verified timestamp: DB returns email_verified_at
+  // (snake_case from Postgres) in pool mode, or the same key from the
+  // JSON memo fallback. Frontend reads camelCase, so we map once here.
+  const verifiedAt =
+    user.email_verified_at != null ? user.email_verified_at
+    : user.emailVerifiedAt != null ? user.emailVerifiedAt
+    : null;
   return {
     id: user.id,
     username: user.username,
     role: user.role,
     displayName: user.display_name || user.displayName || null,
     email: user.email || null,
+    emailVerifiedAt: verifiedAt,
     avatarUrl: user.avatar_url || user.avatarUrl || null,
     oauthProvider: user.oauth_provider || user.oauthProvider || null,
     ...extras,

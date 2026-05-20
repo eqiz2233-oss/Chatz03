@@ -65,6 +65,8 @@ import {
   loginWithFacebook,
   loginWithLine,
   signInMethodsForUser,
+  sendVerificationEmail,
+  verifyEmailToken,
   requestPasswordReset,
   previewPasswordReset,
   completePasswordReset,
@@ -1704,6 +1706,7 @@ const AUTH_ALLOWLIST = [
   '/api/auth/oauth/facebook',
   '/api/auth/oauth/line/start',
   '/api/auth/oauth/line/callback',
+  '/api/auth/email/verify/', // token is in path — public so user can click from any device
   '/api/shops/invites/', // GET preview is public; POST accept still checks req.user
   '/invite/',            // SPA route — frontend renders the accept screen
 
@@ -3844,9 +3847,29 @@ app.get('/api/auth/oauth-config', (_req, res) => {
   });
 });
 
-/** Create a new password-based account. Auto-signs the user in on success. */
+/** Create a new password-based account. Auto-signs the user in on success.
+ *  Anti-bot defenses (in addition to rate-limit above):
+ *   • Honeypot input — `botCheck.companyWebsite` MUST be empty. Bots that
+ *     scrape the form and fill every input hit it; humans can't see it.
+ *   • Form-age check — a submit less than 800ms after the form rendered
+ *     is almost certainly automated (real users take 5–30s).
+ *  Both signals reply with 'bot_detected'. We deliberately don't
+ *  distinguish which one tripped so a probing bot can't tune around it.
+ */
 app.post('/api/auth/signup', rateLimit({ bucket: 'auth-signup', limit: 5, windowMs: 60_000 }), express.json({ limit: '4kb' }), async (req, res) => {
   try {
+    const bot = req.body?.botCheck || {};
+    const honeypot = typeof bot.companyWebsite === 'string' ? bot.companyWebsite.trim() : '';
+    const formAgeMs = Number(bot.formAgeMs);
+    if (honeypot) {
+      console.warn('[signup] honeypot tripped', { ip: req.ip, ua: req.headers['user-agent'] });
+      return res.status(400).json({ error: 'bot_detected' });
+    }
+    if (Number.isFinite(formAgeMs) && formAgeMs > 0 && formAgeMs < 800) {
+      console.warn('[signup] suspiciously fast submit', { ageMs: formAgeMs, ip: req.ip });
+      return res.status(400).json({ error: 'bot_detected' });
+    }
+
     const result = await authSignup({
       username: req.body?.username,
       password: req.body?.password,
@@ -3854,7 +3877,9 @@ app.post('/api/auth/signup', rateLimit({ bucket: 'auth-signup', limit: 5, window
       email: req.body?.email,
     });
     if (!result.ok) {
-      const code = result.reason === 'username_taken' || result.reason === 'email_taken' ? 409 : 400;
+      const code = result.reason === 'username_taken' || result.reason === 'email_taken' ? 409
+        : result.reason === 'email_required' ? 400
+        : 400;
       return res.status(code).json({ error: result.reason });
     }
     setSessionCookie(res, result.token);
@@ -4146,6 +4171,47 @@ app.get('/api/auth/me/methods', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: String(e?.message || e) });
   }
+});
+
+/**
+ * Send a verification link to the logged-in user's email address.
+ * Triggered from Settings → "ส่งอีเมลยืนยัน". Rate-limited tight because
+ * sending email costs money and gives a bot a free outbound channel.
+ */
+app.post(
+  '/api/auth/email/send-verification',
+  rateLimit({ bucket: 'email-verify-send', limit: 5, windowMs: 60 * 60 * 1000 }), // 5/hour/IP
+  async (req, res) => {
+    try {
+      const u = req.user;
+      if (!u) return res.status(401).json({ error: 'unauthenticated' });
+      const r = await sendVerificationEmail({ userId: u.id, baseUrl: publicBaseUrl(req) });
+      if (!r.ok) {
+        const code = r.reason === 'no_email' ? 400
+          : r.reason === 'already_verified' ? 409
+          : 500;
+        return res.status(code).json({ error: r.reason || 'send_failed' });
+      }
+      // Don't surface which address was emailed — the user already
+      // knows it from Settings, and saying it back is just chatter.
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ error: String(e?.message || e) });
+    }
+  },
+);
+
+/**
+ * Click target from the verification email. Consumes the token and
+ * redirects back to /settings with a banner-friendly query string. We
+ * deliberately do NOT require a session — the user might be clicking the
+ * link on a different device than the one they're logged in on (phone vs
+ * laptop). The token itself proves ownership.
+ */
+app.get('/api/auth/email/verify/:token', async (req, res) => {
+  const r = await verifyEmailToken(req.params?.token || '');
+  if (r.ok) return res.redirect(302, '/settings?verifyEmail=ok');
+  return res.redirect(302, '/settings?verifyEmail=invalid');
 });
 
 /** Switch the active shop for the current session. Body: { shopId }. */

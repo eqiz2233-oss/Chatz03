@@ -223,17 +223,85 @@ function AppearanceSection({
  * don't sit next to common edits.
  */
 function ProfileSection({ locale }: { locale: Locale }) {
-  const { user, updateProfile } = useAuth();
+  const { user, updateProfile, refresh } = useAuth();
   const th = locale === 'th';
   const [displayName, setDisplayName] = useState(user?.displayName || '');
   const [email, setEmail] = useState(user?.email || '');
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  /** Result of the most recent "ส่งอีเมลยืนยัน" click, or the redirect
+   *  back from the verification link. Cleared when the user dismisses. */
+  const [verifyMsg, setVerifyMsg] = useState<
+    { kind: 'ok' | 'err' | 'sent'; text: string } | null
+  >(null);
+  const [sending, setSending] = useState(false);
+
+  // Email is verified if the server set `emailVerifiedAt` (camelCase from
+  // the API mapper) — fall back to the raw snake_case field in case it
+  // bypassed mapping.
+  const emailVerified = Boolean(user?.emailVerifiedAt || user?.email_verified_at);
 
   useEffect(() => {
     setDisplayName(user?.displayName || '');
     setEmail(user?.email || '');
   }, [user]);
+
+  // Pick up the ?verifyEmail=ok | invalid query string the server appends
+  // when redirecting back from the verification link. Strip the query so
+  // refresh doesn't reshow it.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const v = params.get('verifyEmail');
+    if (!v) return;
+    if (v === 'ok') {
+      setVerifyMsg({ kind: 'ok', text: th ? 'ยืนยันอีเมลสำเร็จ ✓' : 'Email verified ✓' });
+      // Pull the freshly-stamped user record so the badge flips green.
+      void refresh();
+    } else {
+      setVerifyMsg({
+        kind: 'err',
+        text: th
+          ? 'ลิงก์ยืนยันหมดอายุหรือไม่ถูกต้อง — ลองส่งใหม่'
+          : 'Verification link expired or invalid — try sending a new one',
+      });
+    }
+    const u = new URL(window.location.href);
+    u.searchParams.delete('verifyEmail');
+    window.history.replaceState({}, '', u.pathname + (u.search || '') + u.hash);
+  }, [th, refresh]);
+
+  async function onSendVerify() {
+    setSending(true);
+    setVerifyMsg(null);
+    try {
+      const r = await fetch('/api/auth/email/send-verification', {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (r.ok) {
+        setVerifyMsg({
+          kind: 'sent',
+          text: th
+            ? 'ส่งอีเมลยืนยันแล้ว — ตรวจกล่องจดหมายของคุณ'
+            : 'Verification email sent — check your inbox',
+        });
+      } else {
+        const j = (await r.json().catch(() => ({}))) as { error?: string };
+        const code = j?.error || 'send_failed';
+        setVerifyMsg({
+          kind: 'err',
+          text:
+            code === 'no_email' ? (th ? 'ใส่อีเมลก่อนแล้วบันทึก' : 'Add an email first')
+            : code === 'already_verified' ? (th ? 'อีเมลนี้ยืนยันแล้ว' : 'Email is already verified')
+            : (th ? 'ส่งอีเมลไม่สำเร็จ' : 'Could not send'),
+        });
+      }
+    } catch {
+      setVerifyMsg({ kind: 'err', text: th ? 'เครือข่ายขัดข้อง' : 'Network error' });
+    } finally {
+      setSending(false);
+    }
+  }
 
   const dirty = (displayName.trim() !== (user?.displayName || '')) || (email.trim() !== (user?.email || ''));
 
@@ -296,9 +364,23 @@ function ProfileSection({ locale }: { locale: Locale }) {
           </div>
 
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">
-              {th ? 'อีเมล' : 'Email'}
-            </label>
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                {th ? 'อีเมล' : 'Email'}
+              </label>
+              {user?.email && (
+                emailVerified ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                    <I.Check className="h-3 w-3" />
+                    {th ? 'ยืนยันแล้ว' : 'Verified'}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-200">
+                    {th ? 'ยังไม่ยืนยัน' : 'Not verified'}
+                  </span>
+                )
+              )}
+            </div>
             <input
               type="email"
               value={email}
@@ -311,6 +393,43 @@ function ProfileSection({ locale }: { locale: Locale }) {
                 ? 'ใช้สำหรับรีเซ็ตรหัสและรับแจ้งเตือนสำคัญ'
                 : 'Used for password reset and important alerts'}
             </p>
+            {/* Verification flow — only show when there IS an email AND
+                it isn't already verified. Saving the form with a new email
+                address clears the verified flag server-side, so this row
+                reappears automatically after an email change. */}
+            {user?.email && !emailVerified && (
+              <div className="mt-2 flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/70 px-3 py-2 dark:border-amber-900/50 dark:bg-amber-950/30">
+                <p className="text-xs text-amber-800 dark:text-amber-200">
+                  {th
+                    ? 'ยืนยันอีเมลเพื่อรับลิงก์รีเซ็ตรหัสและการแจ้งเตือนสำคัญ'
+                    : 'Verify your email to receive password resets and important alerts'}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void onSendVerify()}
+                  disabled={sending}
+                  className="shrink-0 rounded-full bg-amber-600 px-3 py-1 text-[11px] font-semibold text-white shadow-sm transition-all duration-300 hover:bg-amber-700 active:scale-[0.98] disabled:opacity-50"
+                >
+                  {sending
+                    ? (th ? 'กำลังส่ง…' : 'Sending…')
+                    : (th ? 'ส่งอีเมลยืนยัน' : 'Send verification')}
+                </button>
+              </div>
+            )}
+            {verifyMsg && (
+              <div
+                className={
+                  'mt-2 rounded-lg px-3 py-2 text-xs ' +
+                  (verifyMsg.kind === 'ok'
+                    ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200'
+                    : verifyMsg.kind === 'sent'
+                    ? 'bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-200'
+                    : 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-200')
+                }
+              >
+                {verifyMsg.text}
+              </div>
+            )}
           </div>
 
           <div>

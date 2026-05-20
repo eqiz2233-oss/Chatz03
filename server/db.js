@@ -71,6 +71,8 @@ const memo = {
    *  rows (e.g. Google + LINE both linked to the same Chatz account).
    *  See db helpers findUserIdByOauthIdentity / addOauthIdentity below. */
   userOauthIdentities: [],
+  /** 24-hour single-use email-verification tokens. */
+  emailVerificationTokens: [],
   chatEvents: [],
   kv: {},
 };
@@ -96,6 +98,7 @@ function loadJsonSync() {
     memo.slipActions = Array.isArray(raw?.slipActions) ? raw.slipActions : [];
     memo.slipVerifications = Array.isArray(raw?.slipVerifications) ? raw.slipVerifications : [];
     memo.userOauthIdentities = Array.isArray(raw?.userOauthIdentities) ? raw.userOauthIdentities : [];
+    memo.emailVerificationTokens = Array.isArray(raw?.emailVerificationTokens) ? raw.emailVerificationTokens : [];
     memo.chatEvents = Array.isArray(raw?.chatEvents) ? raw.chatEvents : [];
     memo.kv = raw?.kv && typeof raw.kv === 'object' ? raw.kv : {};
   } catch (e) {
@@ -212,6 +215,16 @@ export async function initDb() {
       UNIQUE (user_id, provider)
     );
     CREATE INDEX IF NOT EXISTS user_oauth_identities_user_idx ON user_oauth_identities(user_id);
+    -- Email verification — one outstanding token per user. The token is
+    -- random and ~250 bits of entropy; we still expire it after 24h.
+    CREATE TABLE IF NOT EXISTS email_verification_tokens (
+      token      TEXT PRIMARY KEY,
+      user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      email      TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS email_verification_tokens_user_idx ON email_verification_tokens(user_id);
     CREATE TABLE IF NOT EXISTS chat_events (
       id BIGSERIAL PRIMARY KEY,
       channel TEXT NOT NULL,
@@ -243,6 +256,7 @@ export async function initDb() {
   // password_hash is now nullable (OAuth users don't have a password).
   await pool.query(`
     ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS oauth_provider TEXT;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS oauth_sub TEXT;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
@@ -919,30 +933,156 @@ export async function consumePasswordResetToken(token) {
   return true;
 }
 
-/** Partial-update the public profile fields a user can edit themselves. */
+// --------------------------------------------------------------------------
+// EMAIL VERIFICATION TOKENS
+// --------------------------------------------------------------------------
+//
+// 24-hour single-use tokens that prove the user controls the email address
+// on their account. Sent from Settings → Profile → "ส่งอีเมลยืนยัน". The
+// click flow:
+//
+//   user types email at signup
+//        ↓
+//   logs in, uses Chatz immediately (no verification required)
+//        ↓
+//   Settings → "ส่งอีเมลยืนยัน" → server creates a token + emails it
+//        ↓
+//   user clicks /api/auth/email/verify/<token> in their inbox
+//        ↓
+//   server marks users.email_verified_at = NOW(), redirects to /settings
+
+const EMAIL_VERIFY_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Issue a single-use email-verification token. Replaces any prior token
+ *  for the same (user, email) so the most recent "send" link is the only
+ *  one that works. */
+export async function createEmailVerificationToken(userId, token, email) {
+  if (!userId || !token || !email) return null;
+  const expiresAt = new Date(Date.now() + EMAIL_VERIFY_TTL_MS).toISOString();
+  if (pool) {
+    await pool.query(
+      'DELETE FROM email_verification_tokens WHERE user_id=$1',
+      [userId],
+    );
+    await pool.query(
+      'INSERT INTO email_verification_tokens (token, user_id, email, expires_at) VALUES ($1,$2,$3,$4)',
+      [token, userId, String(email).toLowerCase(), expiresAt],
+    );
+    return { token, userId, email, expiresAt };
+  }
+  memo.emailVerificationTokens = (memo.emailVerificationTokens || []).filter((t) => t.user_id !== userId);
+  memo.emailVerificationTokens.push({
+    token,
+    user_id: userId,
+    email: String(email).toLowerCase(),
+    expires_at: expiresAt,
+  });
+  scheduleJsonSave();
+  return { token, userId, email, expiresAt };
+}
+
+/** Look up a verification token. Returns null when missing or expired. */
+export async function findEmailVerificationToken(token) {
+  if (!token) return null;
+  if (pool) {
+    const { rows } = await pool.query(
+      'SELECT token, user_id, email, expires_at FROM email_verification_tokens WHERE token=$1 LIMIT 1',
+      [token],
+    );
+    const r = rows[0];
+    if (!r) return null;
+    if (new Date(r.expires_at).getTime() < Date.now()) return null;
+    return { token: r.token, userId: r.user_id, email: r.email, expiresAt: r.expires_at };
+  }
+  const r = (memo.emailVerificationTokens || []).find((x) => x.token === token);
+  if (!r) return null;
+  if (new Date(r.expires_at).getTime() < Date.now()) return null;
+  return { token: r.token, userId: r.user_id, email: r.email, expiresAt: r.expires_at };
+}
+
+/** One-shot: delete the token and stamp users.email_verified_at. */
+export async function consumeEmailVerificationToken(token) {
+  const found = await findEmailVerificationToken(token);
+  if (!found) return null;
+  if (pool) {
+    // Atomic delete-and-stamp so two parallel callbacks can't both succeed.
+    const r = await pool.query(
+      'DELETE FROM email_verification_tokens WHERE token=$1',
+      [token],
+    );
+    if (r.rowCount === 0) return null;
+    // Only flip the verified flag if the email on the user record still
+    // matches what we sent the token to. If the user changed their email
+    // between send and click, the old token becomes meaningless.
+    await pool.query(
+      `UPDATE users
+          SET email_verified_at = NOW()
+        WHERE id = $1 AND LOWER(COALESCE(email, '')) = $2`,
+      [found.userId, found.email],
+    );
+    return found;
+  }
+  memo.emailVerificationTokens = (memo.emailVerificationTokens || []).filter((x) => x.token !== token);
+  const u = memo.users.find((x) => x.id === found.userId);
+  if (u && (u.email || '').toLowerCase() === found.email) {
+    u.email_verified_at = new Date().toISOString();
+  }
+  scheduleJsonSave();
+  return found;
+}
+
+/** Has the user verified their current email address? */
+export function isUserEmailVerified(user) {
+  if (!user) return false;
+  return Boolean(user.email && user.email_verified_at);
+}
+
+/** Partial-update the public profile fields a user can edit themselves.
+ *  Changing the email address clears `email_verified_at` — the new
+ *  address hasn't been confirmed yet, so the badge resets and the user
+ *  has to send a fresh verification link. */
 export async function updateUserProfile(userId, { displayName, email, avatarUrl } = {}) {
   if (!userId) return null;
   if (pool) {
-    await pool.query(
-      `UPDATE users SET
-         display_name = COALESCE($1, display_name),
-         email        = COALESCE($2, email),
-         avatar_url   = COALESCE($3, avatar_url)
-       WHERE id = $4`,
-      [
-        displayName ?? null,
-        email ? String(email).toLowerCase() : null,
-        avatarUrl ?? null,
-        userId,
-      ],
-    );
+    const newEmail = email !== undefined ? (email ? String(email).toLowerCase() : null) : undefined;
+    if (newEmail !== undefined) {
+      // Two-step so we know whether to clear verification status.
+      await pool.query(
+        `UPDATE users SET
+           display_name = COALESCE($1, display_name),
+           email        = $2,
+           avatar_url   = COALESCE($3, avatar_url),
+           email_verified_at = CASE
+             WHEN LOWER(COALESCE(email, '')) = LOWER(COALESCE($2, ''))
+               THEN email_verified_at
+             ELSE NULL
+           END
+         WHERE id = $4`,
+        [displayName ?? null, newEmail, avatarUrl ?? null, userId],
+      );
+    } else {
+      await pool.query(
+        `UPDATE users SET
+           display_name = COALESCE($1, display_name),
+           avatar_url   = COALESCE($2, avatar_url)
+         WHERE id = $3`,
+        [displayName ?? null, avatarUrl ?? null, userId],
+      );
+    }
     const { rows } = await pool.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [userId]);
     return rows[0] || null;
   }
   const u = memo.users.find((x) => x.id === userId);
   if (!u) return null;
   if (displayName !== undefined) u.display_name = displayName;
-  if (email !== undefined) u.email = email ? String(email).toLowerCase() : null;
+  if (email !== undefined) {
+    const newE = email ? String(email).toLowerCase() : null;
+    if (newE !== (u.email || null)) {
+      // Email changed — invalidate any prior verification badge.
+      u.email_verified_at = null;
+    }
+    u.email = newE;
+  }
   if (avatarUrl !== undefined) u.avatar_url = avatarUrl;
   scheduleJsonSave();
   return u;
